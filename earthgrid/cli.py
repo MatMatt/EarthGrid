@@ -34,10 +34,18 @@ def main():
     beacon_p.add_argument("--name", default=settings.node_name, help="Beacon name")
     beacon_p.add_argument("--beacon-peers", nargs="*", default=[], help="Other beacon URLs to federate with")
 
+    # --- Setup ---
+    setup_p = sub.add_parser("setup", help="Interactive first-time setup")
+    setup_p.add_argument("--port", type=int, default=8400)
+
     # --- Info ---
     sub.add_parser("info", help="Show version and config")
 
     args = parser.parse_args()
+
+    if args.command == "setup":
+        _interactive_setup(args)
+        return
 
     if args.command == "info" or args.command is None:
         print(f"EarthGrid v{__version__}")
@@ -101,6 +109,87 @@ def main():
             port=args.port,
             log_level="info",
         )
+
+
+def _interactive_setup(args):
+    """Interactive first-time setup."""
+    import json
+    from pathlib import Path
+
+    print(f"🌍 EarthGrid v{__version__} — Setup\n")
+
+    # Storage
+    while True:
+        try:
+            gb = input("How much disk space to contribute? [50] GB: ").strip()
+            gb = float(gb) if gb else 50.0
+            if gb < 1:
+                print("  Minimum 1 GB")
+                continue
+            break
+        except ValueError:
+            print("  Please enter a number")
+
+    # Beacon
+    beacon_input = input("Also run as beacon? (helps others find data) [Y/n]: ").strip().lower()
+    also_beacon = beacon_input != "n"
+
+    # Store path
+    default_store = Path.home() / ".earthgrid" / "data"
+    store_input = input(f"Data directory? [{default_store}]: ").strip()
+    store_path = Path(store_input) if store_input else default_store
+
+    # Beacon URL (to connect to the network)
+    beacon_url = input("Beacon URL to join? (leave empty for standalone): ").strip()
+
+    # Port
+    port = args.port
+
+    # Write config
+    config_dir = Path.home() / ".earthgrid"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.json"
+
+    config = {
+        "storage_limit_gb": gb,
+        "also_beacon": also_beacon,
+        "store_path": str(store_path / "store"),
+        "catalog_path": str(store_path / "catalog.db"),
+        "port": port,
+    }
+    if beacon_url:
+        config["beacon_url"] = beacon_url
+
+    config_file.write_text(json.dumps(config, indent=2))
+
+    # Create store directory
+    store_path.mkdir(parents=True, exist_ok=True)
+
+    # Write .env for easy override
+    env_file = config_dir / ".env"
+    env_lines = [
+        f"EARTHGRID_STORAGE_LIMIT_GB={gb}",
+        f"EARTHGRID_ALSO_BEACON={'true' if also_beacon else 'false'}",
+        f"EARTHGRID_STORE_PATH={store_path / 'store'}",
+        f"EARTHGRID_CATALOG_PATH={store_path / 'catalog.db'}",
+        f"EARTHGRID_PORT={port}",
+    ]
+    if beacon_url:
+        env_lines.append(f"EARTHGRID_BEACON_URL={beacon_url}")
+    env_file.write_text("\n".join(env_lines) + "\n")
+
+    print(f"\n✅ EarthGrid configured!")
+    print(f"   Storage:  {gb} GB at {store_path}")
+    print(f"   Beacon:   {'yes' if also_beacon else 'no'}")
+    print(f"   Port:     {port}")
+    print(f"   Config:   {config_file}")
+    if beacon_url:
+        print(f"   Joins:    {beacon_url}")
+    print(f"\nStart with:")
+    if also_beacon:
+        print(f"   earthgrid node --also-beacon")
+    else:
+        print(f"   earthgrid node")
 
 
 if __name__ == "__main__":

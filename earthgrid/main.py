@@ -21,7 +21,7 @@ app = FastAPI(
 )
 
 # Initialize components
-chunk_store = ChunkStore(settings.store_path)
+chunk_store = ChunkStore(settings.store_path, limit_gb=settings.storage_limit_gb)
 catalog = Catalog(settings.catalog_path)
 federation = Federation(settings.peers)
 
@@ -93,6 +93,8 @@ def node_info():
         "node_name": settings.node_name,
         "chunks": chunk_store.chunk_count,
         "chunks_bytes": chunk_store.total_bytes,
+        "storage_limit_gb": settings.storage_limit_gb,
+        "storage_used_pct": round(chunk_store.total_bytes / (settings.storage_limit_gb * 1024**3) * 100, 1) if settings.storage_limit_gb > 0 else 0,
         "item_count": summary["item_count"],
         "collections": summary["collections"],
         "peers": len(federation.peers),

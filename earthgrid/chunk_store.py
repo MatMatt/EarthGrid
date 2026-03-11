@@ -3,12 +3,18 @@ import hashlib
 from pathlib import Path
 
 
+class StorageLimitError(Exception):
+    """Raised when storage limit would be exceeded."""
+    pass
+
+
 class ChunkStore:
     """Store and retrieve data chunks by their SHA-256 hash."""
 
-    def __init__(self, store_path: Path):
+    def __init__(self, store_path: Path, limit_gb: float = 0):
         self.store_path = store_path
         self.store_path.mkdir(parents=True, exist_ok=True)
+        self.limit_bytes = int(limit_gb * 1024 * 1024 * 1024) if limit_gb > 0 else 0
 
     def _chunk_path(self, sha: str) -> Path:
         """Two-level directory: ab/cd/abcd1234..."""
@@ -20,10 +26,14 @@ class ChunkStore:
         return hashlib.sha256(data).hexdigest()
 
     def put(self, data: bytes) -> str:
-        """Store chunk, return its SHA-256 hash."""
+        """Store chunk, return its SHA-256 hash. Raises StorageLimitError if full."""
         sha = self.hash_bytes(data)
         path = self._chunk_path(sha)
         if not path.exists():
+            if self.limit_bytes > 0 and (self.total_bytes + len(data)) > self.limit_bytes:
+                raise StorageLimitError(
+                    f"Storage limit reached ({self.limit_bytes / 1024**3:.1f} GB)"
+                )
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
         return sha
