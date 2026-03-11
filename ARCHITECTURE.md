@@ -37,13 +37,28 @@ Every node operates with two storage pools:
 - Guardian chunks are lower priority for eviction (only removed if truly full)
 - Incentive: you guard others' data, others guard yours
 
+#### Erasure Coding (inspired by Wuala)
+- Instead of storing N full copies → split each chunk into M fragments using Reed-Solomon codes
+- Only K of M fragments needed to reconstruct (e.g. K=7, M=10)
+- **Storage overhead ~1.4x** instead of 3x for full replication
+- At petabyte scale this is the difference between feasible and impossible
+- Fragments distributed across different nodes (geographic diversity preferred)
+- Node goes offline → remaining fragments still sufficient → network has time to re-fragment
+
+#### Storage Trading
+- Nodes contribute local disk → receive equivalent capacity in the network
+- 1:1 trade: give 100 GB of guardian storage → your active data is protected across 100 GB of others' guardian storage
+- No tokens, no money — pure resource exchange
+- Freeloaders get lower replication priority (contribute nothing → your data is less protected)
+- Creates natural incentive to participate without financial barriers
+
 #### Replication Policy
-- Every chunk has a **replication target** (default: 3 copies across the network)
-- Network continuously monitors replication count per chunk
-- When a node goes offline → its chunks become under-replicated → guardian assignments shift
+- Every chunk has a **replication target** (default: fragments on 10 nodes, 7 needed to reconstruct)
+- Network continuously monitors fragment availability per chunk
+- When a node goes offline → its fragments become under-replicated → re-fragmentation triggers
 - Popular data naturally exceeds target (many nodes want it)
 - Rare/niche data relies on guardian storage to stay above minimum
-- Critical datasets (e.g. climate records) can have higher targets (5+)
+- Critical datasets (e.g. climate records) can have higher fragment counts
 
 ```
 /store/
