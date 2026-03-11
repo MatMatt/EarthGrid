@@ -106,6 +106,40 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/stats")
+def node_stats():
+    """Detailed node statistics — storage, access, uptime."""
+    summary = catalog.summary()
+    cs = chunk_store.stats
+    return {
+        "node_id": settings.node_id,
+        "node_name": settings.node_name,
+        "version": __version__,
+        "uptime_hours": cs["uptime_hours"],
+        "storage": {
+            "used_bytes": cs["storage_used_bytes"],
+            "used_gb": round(cs["storage_used_bytes"] / 1024**3, 2),
+            "limit_gb": settings.storage_limit_gb,
+            "used_pct": round(cs["storage_used_bytes"] / (settings.storage_limit_gb * 1024**3) * 100, 1) if settings.storage_limit_gb > 0 else 0,
+            "chunk_count": cs["chunk_count"],
+        },
+        "catalog": {
+            "collections": summary["collections"],
+            "item_count": summary["item_count"],
+        },
+        "activity": {
+            "chunks_served": cs["chunks_served"],
+            "bytes_served": cs["bytes_served"],
+            "bytes_served_gb": round(cs["bytes_served"] / 1024**3, 2),
+            "chunks_ingested": cs["chunks_stored"],
+            "bytes_ingested": cs["bytes_ingested"],
+            "requests_total": cs["requests_total"],
+            "requests_today": cs["requests_today"],
+        },
+        "peers": len(federation.peers),
+    }
+
+
 # --- Chunk Store ---
 
 @app.get("/chunks/{sha}")
