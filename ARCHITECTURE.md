@@ -45,12 +45,18 @@ Every node operates with two storage pools:
 - Fragments distributed across different nodes (geographic diversity preferred)
 - Node goes offline → remaining fragments still sufficient → network has time to re-fragment
 
+**Purpose: efficient REDUNDANCY, not personal storage.**
+EarthGrid stores ONLY official, authoritative Earth observation data (Copernicus, Sentinel,
+Landsat, etc.). Erasure coding protects these public datasets as a common good. Every node
+that contributes disk holds fragments of official data. No private uploads, no personal files.
+
 #### Storage Trading
-- Nodes contribute local disk → receive equivalent capacity in the network
-- 1:1 trade: give 100 GB of guardian storage → your active data is protected across 100 GB of others' guardian storage
-- No tokens, no money — pure resource exchange
-- Freeloaders get lower replication priority (contribute nothing → your data is less protected)
-- Creates natural incentive to participate without financial barriers
+- Nodes contribute local disk to hold erasure-coded fragments of official EO datasets
+- In return: the data they serve gets better replication across the network
+- No tokens, no money — contribute disk, protect public data
+- Nodes that contribute more → their hosted collections get replicated more widely
+- Freeloaders get lower replication priority
+- The network serves ONE purpose: resilient, distributed access to official EO data
 
 #### Replication Policy
 - Every chunk has a **replication target** (default: fragments on 10 nodes, 7 needed to reconstruct)
