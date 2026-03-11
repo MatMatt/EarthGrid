@@ -22,20 +22,32 @@ A distributed, federated system for storing and accessing satellite imagery and 
 
 #### Storage Modes (per node)
 
-Every node operates with two storage pools:
+Every node has ONE storage budget set by the user (e.g. 100 GB).
 
-**Active Storage** — "I keep what I need"
+**User Data** — what the operator explicitly ingests
 - Data the node operator explicitly wants (their region, their mission, their products)
 - Full control: ingest, delete, manage
 - Example: A university in Brazil keeps Sentinel-2 Amazon tiles
+- Uses as much of the budget as needed
 
-**Guardian Storage** — "I keep to protect the network"
-- Data assigned by the network to ensure minimum redundancy
-- Node pledges a portion of its disk (configurable, e.g. 20%)
-- Network distributes chunks that are under-replicated (fewer than N copies exist)
-- Node cannot cherry-pick guardian data — it accepts what the network needs
-- Guardian chunks are lower priority for eviction (only removed if truly full)
-- Incentive: you guard others' data, others guard yours
+**Network-Managed Space** — the rest is automatic
+- Whatever storage the user doesn't use → the network fills automatically
+- No manual %, no configuration — just `total - used = available for network`
+- The network decides what goes there, optimizing for:
+  1. **Resilience**: under-replicated fragments (data that has too few copies)
+  2. **Performance**: frequently accessed chunks nearby (CDN effect)
+- Node cannot cherry-pick network data — the network assigns based on need
+- Network chunks are evicted first if user needs more space for their own data
+- Incentive: you give unused disk → the network protects data → your data gets protected too
+
+```
+User pledges: 100 GB
+User uses:     30 GB (their own ingested data)
+Network fills: 70 GB (auto — resilience fragments + performance cache)
+
+User ingests more → network space shrinks automatically
+User deletes data → network space grows automatically
+```
 
 #### Erasure Coding (inspired by Wuala)
 - Instead of storing N full copies → split each chunk into M fragments using Reed-Solomon codes
@@ -50,12 +62,12 @@ EarthGrid stores ONLY official, authoritative Earth observation data (Copernicus
 Landsat, etc.). Erasure coding protects these public datasets as a common good. Every node
 that contributes disk holds fragments of official data. No private uploads, no personal files.
 
-#### Storage Trading
-- Nodes contribute local disk to hold erasure-coded fragments of official EO datasets
-- In return: the data they serve gets better replication across the network
-- No tokens, no money — contribute disk, protect public data
-- Nodes that contribute more → their hosted collections get replicated more widely
-- Freeloaders get lower replication priority
+#### Storage Economy
+- No tokens, no money, no percentages
+- User sets ONE number: total GB
+- The network uses what's left after user data for collective resilience
+- More free space = more contribution = better protection for your own data
+- Nodes with zero free space still participate in search/routing, just not storage
 - The network serves ONE purpose: resilient, distributed access to official EO data
 
 #### Replication Policy
@@ -68,9 +80,9 @@ that contributes disk holds fragments of official data. No private uploads, no p
 
 ```
 /store/
-  active/     → operator-chosen data
+  user/       → operator-ingested data
     ab/cd/abcd1234...sha256
-  guardian/   → network-assigned redundancy
+  network/    → auto-managed (resilience + performance cache)
     ef/01/ef012345...sha256
 ```
 
