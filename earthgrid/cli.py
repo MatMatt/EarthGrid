@@ -123,9 +123,12 @@ def _interactive_setup(args):
         except ValueError:
             print("  Please enter a number")
 
-    # Beacon
-    beacon_input = input("Also run as beacon? (helps others find data) [Y/n]: ").strip().lower()
-    also_beacon = beacon_input != "n"
+    # Participation mode
+    print("\nHow do you want to participate?")
+    print("  [1] Node + Beacon (recommended — store data AND help others find it)")
+    print("  [2] Node only (store data, but don't coordinate)")
+    mode_input = input("Choose [1]: ").strip()
+    also_beacon = mode_input != "2"
 
     # Ingest capability
     ingest_input = input("Will you ingest GeoTIFF/satellite data? [y/N]: ").strip().lower()
