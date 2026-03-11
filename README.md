@@ -34,61 +34,46 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 ## Install
 
 ```bash
-# Beacon only (runs everywhere — Windows, Mac, Linux, no GDAL needed)
 pip install earthgrid
+earthgrid setup
+```
 
-# Full install with geospatial ingest (needs GDAL/rasterio)
-pip install earthgrid[geo]
+The setup wizard asks everything: storage, beacon, ingest capability.
+Works on **Windows, Mac, Linux** — no prerequisites.
 
-# Or from source
+```
+🌍 EarthGrid Setup
+
+Storage:  [100] GB
+Beacon:   [Y/n]
+Ingest:   Will you ingest GeoTIFF data? [y/N]
+
+✅ Ready! Start: earthgrid start
+```
+
+### From source
+
+```bash
 git clone https://github.com/MatMatt/EarthGrid.git
 cd EarthGrid
-pip install -e ".[geo]"
-```
-
-## Quick Start
-
-### Run a data node
-
-```bash
-earthgrid node --port 8400
-# → http://localhost:8400/
-```
-
-### Run a beacon (coordinator)
-
-```bash
-earthgrid beacon --port 8400
-# → Nodes register here, queries get routed
-```
-
-### Connect node to beacon
-
-```bash
-earthgrid node --port 8401 --beacon http://beacon.example.org:8400
-# → Auto-registers + heartbeat every 60s
-```
-
-### Federate beacons
-
-```bash
-earthgrid beacon --port 8400 --beacon-peers http://other-beacon:8400
-# → Beacons sync node registries every 2 min
-```
-
-### Ingest data (needs `earthgrid[geo]`)
-
-```bash
-curl -X POST "http://localhost:8400/ingest?collection=sentinel-2&item_id=my_scene" \
-  -F "file=@scene.tif"
+pip install -e .
+earthgrid setup
 ```
 
 ### Docker
 
 ```bash
-cd docker
-docker compose up -d
-# → Node running on port 8400
+cd docker && docker compose up -d
+```
+
+## Usage
+
+```bash
+earthgrid start                # start with setup config
+earthgrid node                 # data node
+earthgrid beacon               # beacon (coordinator)
+earthgrid node --beacon http://beacon:8400   # join a network
+earthgrid info                 # show config
 ```
 
 ## API Endpoints
