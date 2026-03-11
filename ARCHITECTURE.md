@@ -40,11 +40,23 @@ Node B (Copenhagen) → Coastal Zones, Baltic Sea SST
 Node C (São Paulo)  → Sentinel-2 Amazon, deforestation products
 ```
 
-### 3. Compute Layer (future)
-- openEO-compatible processing
-- "Compute where the data lives"
-- Results = new derived products → published back to the network
-- Phase 2 — not in MVP
+### 3. Processing Layer
+- **Compute where the data lives** — no need to download terabytes first
+- openEO-compatible process graphs (band math, indices, aggregation)
+- Built-in common operations: NDVI, NDWI, NDSI, cloud masking, compositing
+- Custom UDFs (User Defined Functions) in Python
+- Results = new derived products → published back into the network
+- Chain processing: Node A computes → result stored → Node B refines
+- GPU-accelerated where available (PyTorch, ONNX for ML inference)
+
+### 4. Visualization Layer
+- **Every node can render** — no separate map server needed
+- Dynamic tile server: XYZ/TMS tiles generated on-the-fly from stored chunks
+- WMS/WMTS endpoints for GIS client compatibility (QGIS, ArcGIS)
+- Color ramps and band combinations configurable per collection
+- Time-series animation: temporal slider across available dates
+- Lightweight web viewer built into the node UI
+- OGC API Tiles + OGC API Maps for standards compliance
 
 ## MVP Scope (v0.1)
 
@@ -72,7 +84,6 @@ Node C (São Paulo)  → Sentinel-2 Amazon, deforestation products
 
 ### What we skip for now:
 - Incentive/token system
-- Compute layer
 - Authentication/authorization
 - Large-scale replication strategies
 
