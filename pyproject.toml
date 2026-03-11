@@ -7,7 +7,7 @@ name = "earthgrid"
 version = "0.1.0"
 description = "Distributed storage and access for satellite imagery and Earth observation products"
 requires-python = ">=3.11"
-license = "Apache-2.0"
+license = "EUPL-1.2"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
