@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
+from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.responses import JSONResponse
 
 from . import __version__
@@ -627,3 +627,18 @@ def seed_nodes():
             if n.url and n.item_count > 0
         ],
     }
+
+
+# --- APIRouter for mounting into a Node app (--also-beacon) ---
+
+beacon_router = APIRouter(tags=["beacon"])
+
+beacon_router.add_api_route("/nodes", list_nodes, methods=["GET"])
+beacon_router.add_api_route("/register", register_node, methods=["POST"])
+beacon_router.add_api_route("/heartbeat", node_heartbeat, methods=["POST"])
+beacon_router.add_api_route("/search", routed_search, methods=["GET"])
+beacon_router.add_api_route("/beacon/peer", add_peer_beacon, methods=["POST"])
+beacon_router.add_api_route("/beacon/peers", list_peer_beacons, methods=["GET"])
+beacon_router.add_api_route("/beacon/sync", sync_beacons, methods=["POST"])
+beacon_router.add_api_route("/beacon/exchange", exchange_nodes, methods=["POST"])
+beacon_router.add_api_route("/seed/nodes", seed_nodes, methods=["GET"])

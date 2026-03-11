@@ -17,22 +17,16 @@ def main():
 
     sub = parser.add_subparsers(dest="command")
 
-    # --- Node ---
-    node_p = sub.add_parser("node", help="Run as data node (stores and serves chunks)")
-    node_p.add_argument("--host", default=settings.host)
-    node_p.add_argument("--port", type=int, default=settings.port)
-    node_p.add_argument("--name", default=settings.node_name, help="Node name")
-    node_p.add_argument("--beacon", default=settings.beacon_url, help="Beacon URL to register with")
-    node_p.add_argument("--public-url", default=settings.public_url, help="This node's public URL")
-    node_p.add_argument("--store", default=str(settings.store_path), help="Chunk store path")
-    node_p.add_argument("--peers", nargs="*", default=[], help="Direct peer URLs (no beacon)")
-
-    # --- Beacon ---
-    beacon_p = sub.add_parser("beacon", help="Run as beacon (coordinates nodes, routes queries)")
-    beacon_p.add_argument("--host", default=settings.host)
-    beacon_p.add_argument("--port", type=int, default=settings.port)
-    beacon_p.add_argument("--name", default=settings.node_name, help="Beacon name")
-    beacon_p.add_argument("--beacon-peers", nargs="*", default=[], help="Other beacon URLs to federate with")
+    # --- Start ---
+    start_p = sub.add_parser("start", help="Start EarthGrid node (uses setup config)")
+    start_p.add_argument("--host", default=settings.host)
+    start_p.add_argument("--port", type=int, default=settings.port)
+    start_p.add_argument("--name", default=settings.node_name, help="Node name")
+    start_p.add_argument("--beacon", default=settings.beacon_url, help="Beacon URL to register with")
+    start_p.add_argument("--also-beacon", action="store_true", default=settings.also_beacon, help="Also act as beacon")
+    start_p.add_argument("--public-url", default=settings.public_url, help="Public URL for this node")
+    start_p.add_argument("--peers", nargs="*", default=[], help="Direct peer URLs")
+    start_p.add_argument("--beacon-peers", nargs="*", default=[], help="Other beacon URLs to federate with")
 
     # --- Setup ---
     setup_p = sub.add_parser("setup", help="Interactive first-time setup")
@@ -68,43 +62,42 @@ def main():
         if args.command is None:
             return
 
-    elif args.command == "node":
+    elif args.command == "start":
+        # Load config from setup if exists
+        config_file = Path.home() / ".earthgrid" / "config.json"
+        if config_file.exists():
+            import json as _json
+            cfg = _json.loads(config_file.read_text())
+            if not args.name or args.name == "earthgrid-node":
+                settings.node_name = cfg.get("node_name", settings.node_name)
+            settings.also_beacon = args.also_beacon or cfg.get("also_beacon", False)
+            if not args.beacon:
+                settings.beacon_url = cfg.get("beacon_url", "")
+            if not args.beacon_peers:
+                settings.beacon_peers = cfg.get("beacon_peers", [])
+
         settings.node_name = args.name
         settings.beacon_url = args.beacon
         settings.public_url = args.public_url
+        settings.also_beacon = args.also_beacon
         if args.peers:
             settings.peers = args.peers
-
-        print(f"🌍 EarthGrid Node v{__version__}")
-        print(f"   Name: {settings.node_name}")
-        print(f"   Store: {args.store}")
-        print(f"   Listen: {args.host}:{args.port}")
-        if args.beacon:
-            print(f"   Beacon: {args.beacon}")
-        if args.peers:
-            print(f"   Peers: {', '.join(args.peers)}")
-        print()
-        uvicorn.run(
-            "earthgrid.main:app",
-            host=args.host,
-            port=args.port,
-            log_level="info",
-        )
-
-    elif args.command == "beacon":
-        settings.node_name = args.name
-        settings.role = "beacon"
         if args.beacon_peers:
             settings.beacon_peers = args.beacon_peers
 
-        print(f"🌐 EarthGrid Beacon v{__version__}")
-        print(f"   Name: {settings.node_name}")
-        print(f"   Listen: {args.host}:{args.port}")
-        if args.beacon_peers:
-            print(f"   Peer beacons: {', '.join(args.beacon_peers)}")
+        print(f"🌍 EarthGrid v{__version__}")
+        print(f"   Name:    {settings.node_name}")
+        print(f"   Listen:  {args.host}:{args.port}")
+        print(f"   Beacon:  {'yes' if settings.also_beacon else 'no'}")
+        if settings.beacon_url:
+            print(f"   Joins:   {settings.beacon_url}")
+        if args.peers:
+            print(f"   Peers:   {', '.join(args.peers)}")
+        if settings.beacon_peers:
+            print(f"   Beacon peers: {', '.join(settings.beacon_peers)}")
         print()
         uvicorn.run(
-            "earthgrid.beacon:beacon_app",
+            "earthgrid.main:app",
             host=args.host,
             port=args.port,
             log_level="info",

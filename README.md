@@ -69,11 +69,10 @@ cd docker && docker compose up -d
 ## Usage
 
 ```bash
-earthgrid start                # start with setup config
-earthgrid node                 # data node
-earthgrid beacon               # beacon (coordinator)
-earthgrid node --beacon http://beacon:8400   # join a network
-earthgrid info                 # show config
+earthgrid start                          # start with setup config
+earthgrid start --also-beacon            # also coordinate other nodes
+earthgrid start --beacon http://b:8400   # join existing network
+earthgrid info                           # show config
 ```
 
 ## API Endpoints

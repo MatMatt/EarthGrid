@@ -79,6 +79,15 @@ async def startup():
     await _register_with_beacon()
     asyncio.create_task(_beacon_heartbeat_loop())
 
+    # Mount beacon if enabled
+    if settings.also_beacon:
+        from .beacon import beacon_router, registry, _beacon_sync_loop
+        app.include_router(beacon_router)
+        if settings.beacon_peers:
+            for url in settings.beacon_peers:
+                await registry.add_peer_beacon(url)
+            asyncio.create_task(_beacon_sync_loop())
+
 
 # --- Node Info ---
 
@@ -98,6 +107,7 @@ def node_info():
         "item_count": summary["item_count"],
         "collections": summary["collections"],
         "peers": len(federation.peers),
+        "beacon": settings.also_beacon,
     }
 
 
