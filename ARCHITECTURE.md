@@ -18,13 +18,39 @@ A distributed, federated system for storing and accessing satellite imagery and 
 - Content-Addressable Storage (CAS): SHA-256 hash → chunk
 - Supports: Zarr chunks, COG tiles, NetCDF slices
 - Local filesystem backend (extensible to S3, etc.)
-- Each node stores what it wants/can
 - Chunk manifest: maps logical dataset → list of chunk hashes
+
+#### Storage Modes (per node)
+
+Every node operates with two storage pools:
+
+**Active Storage** — "I keep what I need"
+- Data the node operator explicitly wants (their region, their mission, their products)
+- Full control: ingest, delete, manage
+- Example: A university in Brazil keeps Sentinel-2 Amazon tiles
+
+**Guardian Storage** — "I keep to protect the network"
+- Data assigned by the network to ensure minimum redundancy
+- Node pledges a portion of its disk (configurable, e.g. 20%)
+- Network distributes chunks that are under-replicated (fewer than N copies exist)
+- Node cannot cherry-pick guardian data — it accepts what the network needs
+- Guardian chunks are lower priority for eviction (only removed if truly full)
+- Incentive: you guard others' data, others guard yours
+
+#### Replication Policy
+- Every chunk has a **replication target** (default: 3 copies across the network)
+- Network continuously monitors replication count per chunk
+- When a node goes offline → its chunks become under-replicated → guardian assignments shift
+- Popular data naturally exceeds target (many nodes want it)
+- Rare/niche data relies on guardian storage to stay above minimum
+- Critical datasets (e.g. climate records) can have higher targets (5+)
 
 ```
 /store/
-  ab/cd/abcd1234...sha256  → raw bytes (zarr chunk)
-  ef/01/ef012345...sha256  → raw bytes (COG tile)
+  active/     → operator-chosen data
+    ab/cd/abcd1234...sha256
+  guardian/   → network-assigned redundancy
+    ef/01/ef012345...sha256
 ```
 
 ### 2. Catalog Layer (Federation)
