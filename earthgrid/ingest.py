@@ -5,8 +5,12 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-import rasterio
-from rasterio.windows import Window
+try:
+    import rasterio
+    from rasterio.windows import Window
+    HAS_RASTERIO = True
+except ImportError:
+    HAS_RASTERIO = False
 
 from .chunk_store import ChunkStore
 from .catalog import Catalog, STACItem, STACCollection
@@ -27,6 +31,12 @@ def ingest_cog(
 
     Returns the created STAC item.
     """
+    if not HAS_RASTERIO:
+        raise ImportError(
+            "Geospatial ingest requires rasterio. "
+            "Install with: pip install earthgrid[geo]"
+        )
+
     file_path = Path(file_path)
     if not item_id:
         item_id = file_path.stem
