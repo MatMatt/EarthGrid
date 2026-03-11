@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8400
     peers: list[str] = []
+    role: str = "node"  # "node" or "beacon"
+    beacon_url: str = ""  # beacon URL to register with (for data nodes)
+    public_url: str = ""  # this node's public URL (for beacon registration)
 
     model_config = {"env_prefix": "EARTHGRID_"}
 

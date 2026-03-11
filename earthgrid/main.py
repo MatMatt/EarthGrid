@@ -1,7 +1,9 @@
 """EarthGrid Node — FastAPI application."""
+import asyncio
 import shutil
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import Response
 
@@ -22,6 +24,60 @@ app = FastAPI(
 chunk_store = ChunkStore(settings.store_path)
 catalog = Catalog(settings.catalog_path)
 federation = Federation(settings.peers)
+
+
+# --- Beacon Registration ---
+
+async def _register_with_beacon():
+    """Register this node with the configured beacon."""
+    if not settings.beacon_url:
+        return
+    try:
+        summary = catalog.summary()
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"{settings.beacon_url.rstrip('/')}/register",
+                params={
+                    "node_id": settings.node_id,
+                    "node_name": settings.node_name,
+                    "url": settings.public_url or f"http://{settings.host}:{settings.port}",
+                    "collections": ",".join(summary["collections"]),
+                    "item_count": summary["item_count"],
+                    "chunk_count": chunk_store.chunk_count,
+                    "chunks_bytes": chunk_store.total_bytes,
+                },
+            )
+    except Exception:
+        pass  # beacon offline — retry on next heartbeat
+
+
+async def _beacon_heartbeat_loop():
+    """Send periodic heartbeats to the beacon."""
+    if not settings.beacon_url:
+        return
+    while True:
+        await asyncio.sleep(60)  # every 60s
+        try:
+            summary = catalog.summary()
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f"{settings.beacon_url.rstrip('/')}/heartbeat",
+                    params={
+                        "node_id": settings.node_id,
+                        "collections": ",".join(summary["collections"]),
+                        "item_count": summary["item_count"],
+                        "chunk_count": chunk_store.chunk_count,
+                        "chunks_bytes": chunk_store.total_bytes,
+                    },
+                )
+        except Exception:
+            pass
+
+
+@app.on_event("startup")
+async def startup():
+    await _register_with_beacon()
+    asyncio.create_task(_beacon_heartbeat_loop())
 
 
 # --- Node Info ---
