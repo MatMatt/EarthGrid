@@ -4,11 +4,13 @@
 A distributed, federated system for storing and accessing satellite imagery and derived Earth observation products. No single point of failure. No vendor lock-in. Community-driven.
 
 ## Principles
-1. **Content-addressed** — Every chunk has a hash. Same data = same hash, everywhere.
-2. **STAC-native** — Discovery via federated STAC catalogs. No proprietary metadata.
-3. **Chunk-level** — Atomic unit = Zarr chunk or COG tile, not whole scenes.
-4. **Organic replication** — Popular data lives on more nodes automatically.
-5. **Open participation** — Anyone can run a node, contribute storage, serve data.
+1. **Easy to deploy** — One command to spin up a node. `docker run earthgrid` and you're part of the network. No complex setup, no infrastructure expertise needed. A Raspberry Pi, a laptop, a VPS — anything works.
+2. **Distributed redundant access** — Every dataset lives on multiple nodes. If one goes down, others serve it. No single point of failure. The network self-heals.
+3. **Content-addressed** — Every chunk has a hash. Same data = same hash, everywhere.
+4. **STAC-native** — Discovery via federated STAC catalogs. No proprietary metadata.
+5. **Chunk-level** — Atomic unit = Zarr chunk or COG tile, not whole scenes.
+6. **Organic replication** — Popular data lives on more nodes automatically.
+7. **Open participation** — Anyone can run a node, contribute storage, serve data.
 
 ## Three Layers
 
