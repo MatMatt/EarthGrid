@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     beacon_url: str = ""  # beacon URL to register with (for data nodes)
     beacon_peers: list[str] = []  # peer beacon URLs (for beacon federation)
     public_url: str = ""  # this node's public URL (for beacon registration)
+    storage_limit_gb: float = 50.0  # max GB to use for chunk storage
+    also_beacon: bool = False  # run beacon alongside data node
 
     model_config = {"env_prefix": "EARTHGRID_"}
 
