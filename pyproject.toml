@@ -4,23 +4,49 @@ build-backend = "hatchling.build"
 
 [project]
 name = "earthgrid"
-version = "0.1.0"
+version = "0.2.0"
 description = "Distributed storage and access for satellite imagery and Earth observation products"
 requires-python = ">=3.11"
 license = "EUPL-1.2"
+readme = "README.md"
+keywords = ["earth-observation", "satellite", "distributed", "STAC", "geospatial"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+
+# Core: runs everywhere (Windows, Linux, Mac) — no GDAL needed
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "httpx>=0.27",
-    "rasterio>=1.3",
     "aiofiles>=23.0",
     "python-multipart>=0.0.6",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
+# Geospatial ingest (needs GDAL) — optional for beacon-only installs
+geo = [
+    "rasterio>=1.3",
+    "numpy>=1.24",
+]
+# Full install (node + ingest)
+full = [
+    "earthgrid[geo]",
+]
 dev = [
+    "earthgrid[geo]",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
@@ -28,6 +54,11 @@ dev = [
 
 [project.scripts]
 earthgrid = "earthgrid.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/MatMatt/EarthGrid"
+Repository = "https://github.com/MatMatt/EarthGrid"
+Issues = "https://github.com/MatMatt/EarthGrid/issues"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
