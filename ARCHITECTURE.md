@@ -198,3 +198,16 @@ EarthGrid/
    Node A has popular dataset → Node B requests chunks
    → Node B stores locally → now served from 2 locations
 ```
+
+## Open Design Questions
+
+### NAT Traversal
+How do nodes behind NAT/firewalls participate without port forwarding?
+Options under consideration:
+- Relay/Beacon nodes (WebSocket outbound → relay forwards)
+- Hole punching (UDP/TCP, ~80% NAT types)
+- Hybrid (try hole punch, fallback to relay)
+- libp2p (battle-tested, used by IPFS)
+- Piggyback on existing HTTPS (port 443 already open on many setups)
+
+Decision deferred — not needed for LAN testing phase.
