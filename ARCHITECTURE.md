@@ -47,7 +47,7 @@ Node C (São Paulo)  → Sentinel-2 Amazon, deforestation products
 ## MVP Scope (v0.1)
 
 ### What we build first:
-1. **earthgrid-node** — Single Python/FastAPI service
+1. **EarthGrid-node** — Single Python/FastAPI service
    - ChunkStore (local filesystem, SHA-256)
    - STAC API (stac-fastapi or custom lightweight)
    - Ingest endpoint: upload COG/Zarr → chunk + catalog
@@ -87,8 +87,8 @@ Node C (São Paulo)  → Sentinel-2 Amazon, deforestation products
 
 ## Directory Structure
 ```
-earthgrid/
-├── earthgrid/
+EarthGrid/
+├── EarthGrid/
 │   ├── __init__.py
 │   ├── main.py           # FastAPI app
 │   ├── chunk_store.py    # CAS storage

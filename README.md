@@ -32,8 +32,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 
 ```bash
 # Clone
-git clone https://github.com/MatMatt/earthgrid.git
-cd earthgrid
+git clone https://github.com/MatMatt/EarthGrid.git
+cd EarthGrid
 
 # Run
 docker compose up -d
