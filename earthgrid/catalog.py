@@ -49,7 +49,7 @@ class STACCollection:
             "description": self.description,
             "extent": self.extent,
             "links": [],
-            "license": "various",
+            "license": "EUPL-1.2",
         }
 
 

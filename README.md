@@ -44,4 +44,4 @@ curl http://localhost:8400/
 
 ## License
 
-Apache 2.0
+[EUPL-1.2](LICENSE) — European Union Public Licence
