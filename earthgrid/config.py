@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     peers: list[str] = []
     role: str = "node"  # "node" or "beacon"
     beacon_url: str = ""  # beacon URL to register with (for data nodes)
+    beacon_peers: list[str] = []  # peer beacon URLs (for beacon federation)
     public_url: str = ""  # this node's public URL (for beacon registration)
 
     model_config = {"env_prefix": "EARTHGRID_"}

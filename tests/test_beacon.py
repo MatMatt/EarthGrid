@@ -115,6 +115,59 @@ async def test_seed_nodes(transport):
 
 
 @pytest.mark.asyncio
+async def test_add_peer_beacon(transport):
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Add self as peer (for testing — in reality it would be another beacon)
+        # This will fail the sync (can't sync with self through ASGI transport)
+        # but the peer should be registered
+        resp = await client.post("/beacon/peer", params={"url": "http://other-beacon:8400"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "added"
+
+        # List peer beacons
+        resp = await client.get("/beacon/peers")
+        assert resp.json()["count"] == 1
+        assert resp.json()["beacons"][0]["url"] == "http://other-beacon:8400"
+
+
+@pytest.mark.asyncio
+async def test_exchange_nodes(transport):
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Simulate receiving nodes from a peer beacon
+        resp = await client.post("/beacon/exchange", json={
+            "nodes": [
+                {
+                    "node_id": "remote-1",
+                    "node_name": "remote-alpha",
+                    "url": "http://remote:8400",
+                    "collections": ["landsat-9"],
+                    "item_count": 100,
+                    "chunk_count": 5000,
+                    "chunks_bytes": 1000000,
+                },
+                {
+                    "node_id": "remote-2",
+                    "node_name": "remote-beta",
+                    "url": "http://remote2:8400",
+                    "collections": ["sentinel-2-l2a"],
+                    "item_count": 50,
+                },
+            ]
+        })
+        assert resp.json()["merged"] == 2
+
+        # Verify they appear in our registry
+        resp = await client.get("/nodes")
+        assert resp.json()["count"] == 2
+
+        # Exchange again — should not duplicate
+        resp = await client.post("/beacon/exchange", json={
+            "nodes": [{"node_id": "remote-1", "node_name": "remote-alpha", "url": "http://remote:8400"}]
+        })
+        assert resp.json()["merged"] == 0  # already exists
+
+
+@pytest.mark.asyncio
 async def test_network_stats(transport):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         await client.post("/register", params={
