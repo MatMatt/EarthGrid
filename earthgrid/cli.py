@@ -134,6 +134,27 @@ def _interactive_setup(args):
     beacon_input = input("Also run as beacon? (helps others find data) [Y/n]: ").strip().lower()
     also_beacon = beacon_input != "n"
 
+    # Ingest capability
+    ingest_input = input("Will you ingest GeoTIFF/satellite data? [y/N]: ").strip().lower()
+    want_ingest = ingest_input in ("y", "yes")
+
+    if want_ingest:
+        try:
+            import rasterio
+            print("  ✓ rasterio already installed")
+        except ImportError:
+            print("  Installing rasterio (this may take a minute)...")
+            import subprocess as _sp
+            result = _sp.run(
+                [sys.executable, "-m", "pip", "install", "rasterio>=1.3", "numpy>=1.24"],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                print("  ✓ rasterio installed")
+            else:
+                print("  ⚠ rasterio install failed — you can install it manually later:")
+                print("    pip install rasterio numpy")
+
     # Store path
     default_store = Path.home() / ".earthgrid" / "data"
     store_input = input(f"Data directory? [{default_store}]: ").strip()
