@@ -1,0 +1,17 @@
+services:
+  earthgrid:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: earthgrid
+    ports:
+      - "8400:8400"
+    volumes:
+      - earthgrid-data:/data
+    environment:
+      - EARTHGRID_NODE_NAME=node-alpha
+      - EARTHGRID_PORT=8400
+    restart: unless-stopped
+
+volumes:
+  earthgrid-data:
