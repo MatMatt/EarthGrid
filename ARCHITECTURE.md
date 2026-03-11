@@ -199,15 +199,35 @@ EarthGrid/
    → Node B stores locally → now served from 2 locations
 ```
 
-## Open Design Questions
+## Network Topology: Semi-Decentralized
 
-### NAT Traversal
-How do nodes behind NAT/firewalls participate without port forwarding?
-Options under consideration:
-- Relay/Beacon nodes (WebSocket outbound → relay forwards)
-- Hole punching (UDP/TCP, ~80% NAT types)
-- Hybrid (try hole punch, fallback to relay)
-- libp2p (battle-tested, used by IPFS)
-- Piggyback on existing HTTPS (port 443 already open on many setups)
+**Design decision: Performance over purity.**
 
-Decision deferred — not needed for LAN testing phase.
+Not fully decentralized — no DHT, no slow lookups. Instead: smart routing with direct data transfer.
+
+### Beacon Nodes (Coordination Layer)
+- Public nodes that act as directory + router
+- Know which nodes have which data (catalog index)
+- Route queries to the fastest/nearest node
+- Handle NAT traversal (private nodes connect outbound via WebSocket)
+- Anyone can run a beacon (universities, agencies, volunteers)
+- Multiple beacons = no single point of failure
+- Inspired by Matrix federation + CDN routing
+
+### Data Nodes (Storage Layer)
+- Store and serve actual chunks
+- Connect to one or more beacons
+- Transfer chunks directly to each other (peer-to-peer, not through beacon)
+- Beacon only coordinates — data flows direct
+
+### Data Flow
+```
+Query: Client → Beacon → "Node C in São Paulo has this" → Client fetches directly from Node C
+                         (no data through beacon, only routing)
+```
+
+### Why not fully decentralized?
+- DHT lookups add latency (100-500ms per hop)
+- EO data queries need fast spatial/temporal indexing — centralized index is faster
+- Beacon crash = temporary routing loss, not data loss
+- For scientific data, performance > censorship resistance
