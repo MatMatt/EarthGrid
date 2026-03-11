@@ -252,6 +252,9 @@ beacon_app = FastAPI(
 registry = BeaconRegistry()
 
 
+_beacon_started = time.time()
+
+
 @beacon_app.get("/")
 def beacon_info():
     stats = registry.network_stats()
@@ -261,8 +264,18 @@ def beacon_info():
         "node_id": settings.node_id,
         "node_name": settings.node_name,
         "role": "beacon",
+        "uptime_hours": round((time.time() - _beacon_started) / 3600, 1),
         **stats,
+        "total_bytes_human": _human_bytes(stats["total_bytes"]),
     }
+
+
+def _human_bytes(b: int) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB", "PB"]:
+        if b < 1024:
+            return f"{b:.1f} {unit}"
+        b /= 1024
+    return f"{b:.1f} EB"
 
 
 @beacon_app.get("/health")
