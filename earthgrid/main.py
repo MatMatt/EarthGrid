@@ -259,6 +259,30 @@ def stac_search(
     }
 
 
+# --- Download / File Access ---
+
+@app.get("/download/{collection_id}/{item_id}")
+def download_file(collection_id: str, item_id: str):
+    """Download a reconstructed GeoTIFF from stored chunks."""
+    try:
+        from .reconstruct import reconstruct_geotiff
+    except ImportError:
+        raise HTTPException(501, "Reconstruction requires rasterio (pip install earthgrid[geo])")
+
+    try:
+        data = reconstruct_geotiff(item_id, collection_id, catalog, chunk_store)
+    except FileNotFoundError:
+        raise HTTPException(404, f"Item {item_id} not found in {collection_id}")
+
+    return Response(
+        content=data,
+        media_type="image/tiff",
+        headers={
+            "Content-Disposition": f'attachment; filename="{item_id}.tif"',
+        },
+    )
+
+
 # --- Federation ---
 
 @app.get("/peers")
