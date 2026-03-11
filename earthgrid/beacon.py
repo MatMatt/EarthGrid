@@ -5,9 +5,11 @@ A beacon does NOT store data. It:
 2. Routes queries to the right nodes (spatial/collection index)
 3. Accepts WebSocket connections from nodes behind NAT
 4. Provides node discovery for new nodes joining the network
+5. Federates with other beacons — shares node registries
 """
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -18,6 +20,8 @@ from fastapi.responses import JSONResponse
 
 from . import __version__
 from .config import settings
+
+logger = logging.getLogger("earthgrid.beacon")
 
 
 @dataclass
@@ -57,11 +61,26 @@ class RegisteredNode:
         }
 
 
+@dataclass
+class PeerBeacon:
+    """Another beacon we federate with."""
+    url: str
+    node_id: str = ""
+    node_name: str = ""
+    last_seen: float = 0.0
+    nodes_count: int = 0
+
+    @property
+    def alive(self) -> bool:
+        return time.time() - self.last_seen < 600  # 10 min
+
+
 class BeaconRegistry:
-    """Central registry of all data nodes."""
+    """Central registry of all data nodes + peer beacons."""
 
     def __init__(self):
         self.nodes: dict[str, RegisteredNode] = {}
+        self.peer_beacons: dict[str, PeerBeacon] = {}
         self._lock = asyncio.Lock()
 
     async def register(
@@ -140,7 +159,86 @@ class BeaconRegistry:
             "total_items": total_items,
             "total_chunks": total_chunks,
             "total_bytes": total_bytes,
+            "peer_beacons": len(self.peer_beacons),
+            "peer_beacons_alive": len([b for b in self.peer_beacons.values() if b.alive]),
         }
+
+    # --- Beacon Federation ---
+
+    async def add_peer_beacon(self, url: str) -> PeerBeacon:
+        """Register a peer beacon."""
+        url = url.rstrip("/")
+        async with self._lock:
+            peer = self.peer_beacons.get(url)
+            if not peer:
+                peer = PeerBeacon(url=url)
+                self.peer_beacons[url] = peer
+            return peer
+
+    async def sync_with_peer_beacon(self, url: str) -> dict:
+        """Exchange node registries with a peer beacon.
+
+        1. GET /nodes from peer → merge their nodes into our registry (tagged as remote)
+        2. POST /beacon/exchange with our nodes → peer merges ours
+        """
+        url = url.rstrip("/")
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                # Get peer beacon info
+                info_resp = await client.get(f"{url}/")
+                if info_resp.status_code == 200:
+                    info = info_resp.json()
+                    peer = self.peer_beacons.get(url)
+                    if peer:
+                        peer.node_id = info.get("node_id", "")
+                        peer.node_name = info.get("node_name", "")
+                        peer.last_seen = time.time()
+                        peer.nodes_count = info.get("nodes_alive", 0)
+
+                # Get their nodes
+                resp = await client.get(f"{url}/nodes", params={"alive_only": True})
+                if resp.status_code == 200:
+                    remote_nodes = resp.json().get("nodes", [])
+                    merged = 0
+                    for rn in remote_nodes:
+                        nid = rn.get("node_id", "")
+                        if nid and nid not in self.nodes:
+                            # Add remote node (reachable via their URL, not ours)
+                            await self.register(
+                                node_id=nid,
+                                node_name=rn.get("node_name", ""),
+                                url=rn.get("url"),
+                                collections=rn.get("collections", []),
+                                item_count=rn.get("item_count", 0),
+                                chunk_count=rn.get("chunk_count", 0),
+                                chunks_bytes=rn.get("chunks_bytes", 0),
+                            )
+                            merged += 1
+                        elif nid in self.nodes:
+                            # Update existing with fresher data
+                            await self.heartbeat(
+                                nid,
+                                collections=rn.get("collections"),
+                                item_count=rn.get("item_count"),
+                                chunk_count=rn.get("chunk_count"),
+                                chunks_bytes=rn.get("chunks_bytes"),
+                            )
+
+                    # Send our nodes to peer
+                    our_nodes = [n.to_dict() for n in self.get_alive_nodes()]
+                    await client.post(f"{url}/beacon/exchange", json={"nodes": our_nodes})
+
+                    return {"url": url, "status": "synced", "merged": merged, "sent": len(our_nodes)}
+
+        except Exception as e:
+            logger.warning(f"Beacon sync failed with {url}: {e}")
+
+        return {"url": url, "status": "failed", "merged": 0, "sent": 0}
+
+    async def sync_all_beacons(self) -> list[dict]:
+        """Sync with all known peer beacons."""
+        tasks = [self.sync_with_peer_beacon(url) for url in list(self.peer_beacons.keys())]
+        return await asyncio.gather(*tasks)
 
 
 # --- Beacon FastAPI App ---
@@ -170,6 +268,26 @@ def beacon_info():
 @beacon_app.get("/health")
 def health():
     return {"status": "ok", "role": "beacon"}
+
+
+@beacon_app.on_event("startup")
+async def beacon_startup():
+    """Register peer beacons from config and start sync loop."""
+    for url in settings.beacon_peers:
+        await registry.add_peer_beacon(url)
+    if registry.peer_beacons:
+        await registry.sync_all_beacons()
+        asyncio.create_task(_beacon_sync_loop())
+
+
+async def _beacon_sync_loop():
+    """Periodically sync with peer beacons."""
+    while True:
+        await asyncio.sleep(120)  # every 2 min
+        try:
+            await registry.sync_all_beacons()
+        except Exception as e:
+            logger.warning(f"Beacon sync loop error: {e}")
 
 
 # --- Node Registration ---
@@ -237,6 +355,63 @@ def get_node(node_id: str):
     if not node:
         raise HTTPException(404, "Node not found")
     return node.to_dict()
+
+
+# --- Beacon Federation ---
+
+@beacon_app.post("/beacon/peer")
+async def add_peer_beacon(url: str = Query(..., description="URL of peer beacon")):
+    """Register a peer beacon for federation."""
+    peer = await registry.add_peer_beacon(url)
+    # Immediately sync
+    result = await registry.sync_with_peer_beacon(url)
+    return {"status": "added", "peer": url, "sync": result}
+
+
+@beacon_app.get("/beacon/peers")
+def list_peer_beacons():
+    """List all known peer beacons."""
+    return {
+        "count": len(registry.peer_beacons),
+        "beacons": [
+            {
+                "url": b.url,
+                "node_id": b.node_id,
+                "node_name": b.node_name,
+                "alive": b.alive,
+                "nodes_count": b.nodes_count,
+            }
+            for b in registry.peer_beacons.values()
+        ],
+    }
+
+
+@beacon_app.post("/beacon/sync")
+async def sync_beacons():
+    """Sync node registries with all peer beacons."""
+    results = await registry.sync_all_beacons()
+    return {"synced": len(results), "results": results}
+
+
+@beacon_app.post("/beacon/exchange")
+async def exchange_nodes(data: dict):
+    """Receive node list from a peer beacon (called during sync)."""
+    remote_nodes = data.get("nodes", [])
+    merged = 0
+    for rn in remote_nodes:
+        nid = rn.get("node_id", "")
+        if nid and nid not in registry.nodes:
+            await registry.register(
+                node_id=nid,
+                node_name=rn.get("node_name", ""),
+                url=rn.get("url"),
+                collections=rn.get("collections", []),
+                item_count=rn.get("item_count", 0),
+                chunk_count=rn.get("chunk_count", 0),
+                chunks_bytes=rn.get("chunks_bytes", 0),
+            )
+            merged += 1
+    return {"status": "ok", "merged": merged}
 
 
 # --- Routed Search (the key feature) ---
@@ -310,6 +485,33 @@ async def routed_search(
     for r in results:
         all_results.extend(r)
 
+    # Also query peer beacons (federated search across beacons)
+    peer_results = []
+
+    async def query_peer_beacon(beacon_url: str):
+        try:
+            params = {"limit": limit}
+            if collections:
+                params["collections"] = collections
+            if bbox:
+                params["bbox"] = bbox
+            if datetime:
+                params["datetime"] = datetime
+
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.get(f"{beacon_url}/search", params=params)
+                if resp.status_code == 200:
+                    return resp.json().get("features", [])
+        except Exception:
+            pass
+        return []
+
+    if registry.peer_beacons:
+        peer_tasks = [query_peer_beacon(url) for url, b in registry.peer_beacons.items() if b.alive]
+        peer_task_results = await asyncio.gather(*peer_tasks)
+        for r in peer_task_results:
+            all_results.extend(r)
+
     # Deduplicate
     seen = set()
     deduped = []
@@ -319,6 +521,9 @@ async def routed_search(
             seen.add(iid)
             deduped.append(item)
 
+    local_nodes_queried = len(target_nodes)
+    peer_beacons_queried = len([b for b in registry.peer_beacons.values() if b.alive])
+
     return {
         "type": "FeatureCollection",
         "numberMatched": len(deduped),
@@ -326,7 +531,8 @@ async def routed_search(
         "features": deduped[:limit],
         "context": {
             "source": "beacon",
-            "nodes_queried": len(target_nodes),
+            "nodes_queried": local_nodes_queried,
+            "peer_beacons_queried": peer_beacons_queried,
             "nodes_with_results": sum(1 for r in results if r),
         },
     }
