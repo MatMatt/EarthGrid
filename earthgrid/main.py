@@ -14,6 +14,7 @@ from .catalog import Catalog
 from .federation import Federation
 from .ingest import ingest_cog
 from .processing import Processor
+from .replication import Replicator
 
 app = FastAPI(
     title="EarthGrid Node",
@@ -26,6 +27,7 @@ chunk_store = ChunkStore(settings.store_path, limit_gb=settings.storage_limit_gb
 catalog = Catalog(settings.catalog_path)
 federation = Federation(settings.peers)
 processor = Processor(chunk_store, catalog)
+replicator = Replicator(chunk_store, catalog)
 
 
 # --- Beacon Registration ---
@@ -394,3 +396,43 @@ def process_item(
         }
     except (ValueError, KeyError) as e:
         raise HTTPException(400, str(e))
+
+
+# --- Replication ---
+
+@app.get("/replicate/items")
+def replicate_items(
+    collection: str = Query(None, description="Filter by collection"),
+    limit: int = Query(10000, le=100000),
+):
+    """Export items with chunk hashes for replication.
+
+    This is what remote nodes call to sync catalog + chunk lists.
+    """
+    items = catalog.search(
+        collections=[collection] if collection else None,
+        limit=limit,
+    )
+    return {
+        "node_id": settings.node_id,
+        "node_name": settings.node_name,
+        "items": [i.to_stac(include_chunks=True) for i in items],
+    }
+
+
+@app.post("/sync")
+async def trigger_sync(
+    peer_url: str = Query(..., description="Peer URL to sync from"),
+    collections: str = Query(None, description="Comma-separated collection filter"),
+    max_items: int = Query(0, description="Max items to sync (0=all)"),
+    dry_run: bool = Query(False, description="Only report, don't download"),
+):
+    """Pull catalog and chunks from a remote peer."""
+    col_list = [c.strip() for c in collections.split(",")] if collections else None
+    result = await replicator.sync_from_peer(
+        peer_url=peer_url,
+        collections=col_list,
+        max_items=max_items,
+        dry_run=dry_run,
+    )
+    return result
