@@ -11,7 +11,12 @@ services:
     environment:
       - EARTHGRID_NODE_NAME=node-alpha
       - EARTHGRID_PORT=8400
+      - EARTHGRID_ALSO_BEACON=true
     restart: unless-stopped
+    cpu_shares: 128
+    cpuset: ""
+    mem_limit: 2g
+    oom_score_adj: 500
 
 volumes:
   earthgrid-data:

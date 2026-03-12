@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
+from fastapi import Request,  APIRouter, FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.responses import JSONResponse
 
 from . import __version__
@@ -327,6 +327,7 @@ async def _beacon_sync_loop():
 
 @beacon_app.post("/register")
 async def register_node(
+    request: Request,
     node_id: str = Query(...),
     node_name: str = Query(""),
     url: str = Query(None, description="Public URL of the node (if reachable)"),
@@ -336,6 +337,14 @@ async def register_node(
     chunks_bytes: int = Query(0),
 ):
     """Register a data node with this beacon."""
+    # Auto-detect peer IP if url is 0.0.0.0 or missing
+    if url and "0.0.0.0" in url:
+        client_ip = request.headers.get("x-real-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
+        if client_ip:
+            import re
+            url = re.sub(r"0\.0\.0\.0", client_ip, url)
+            import logging
+            logging.getLogger("earthgrid").info(f"Auto-detected peer URL: {url} (from {client_ip})")
     col_list = [c.strip() for c in collections.split(",") if c.strip()] if collections else []
     node = await registry.register(
         node_id=node_id,
