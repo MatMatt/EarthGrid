@@ -207,6 +207,9 @@ async def ingest_file(
             item_id=item_id,
         )
 
+        # Notify beacon to push new item to registered nodes
+        asyncio.create_task(_notify_peers_new_item(item))
+
         return {
             "status": "ingested",
             "item_id": item.id,
@@ -216,6 +219,40 @@ async def ingest_file(
         }
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+
+
+async def _notify_peers_new_item(item):
+    """Notify all registered beacon nodes about a new item so they can auto-sync."""
+    if not settings.also_beacon:
+        return
+    try:
+        from .beacon import registry
+        nodes = list(registry.nodes.values())
+        if not nodes:
+            return
+        import logging
+        log = logging.getLogger("earthgrid")
+        log.info(f"Notifying {len(nodes)} peers about new item: {item.id}")
+        async with httpx.AsyncClient(timeout=10) as client:
+            for node in nodes:
+                if node.url and "0.0.0.0" not in node.url:
+                    try:
+                        await client.post(
+                            f"{node.url.rstrip('/')}/sync-item",
+                            params={
+                                "source_url": f"http://{settings.host}:{settings.port}",
+                                "item_id": item.id,
+                                "collection": item.collection,
+                            },
+                        )
+                        log.info(f"Notified {node.node_name} ({node.url})")
+                    except Exception as e:
+                        log.warning(f"Could not notify {node.node_name}: {e}")
+    except Exception as e:
+        import logging
+        logging.getLogger("earthgrid").warning(f"Peer notification failed: {e}")
 
 
 # --- STAC Catalog ---
@@ -363,6 +400,90 @@ async def federation_search(
 
 
 # --- Processing ---
+
+
+
+@app.post("/sync-item")
+async def sync_item_from_peer(
+    source_url: str = Query(..., description="URL of the source node"),
+    item_id: str = Query(...),
+    collection: str = Query(""),
+):
+    """Receive notification about a new item and auto-sync it."""
+    import logging
+    log = logging.getLogger("earthgrid")
+    log.info(f"Auto-sync triggered: {item_id} from {source_url}")
+
+    try:
+        # Fetch item manifest from source
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(f"{source_url.rstrip('/')}/stac/collections/{collection}/items/{item_id}")
+            if r.status_code != 200:
+                return {"status": "skipped", "reason": "item not found on source"}
+            item_data = r.json()
+
+        # Check if we already have this item
+        existing = catalog.get_item(item_id)
+        if existing:
+            return {"status": "skipped", "reason": "already have this item"}
+
+        # Sync chunks from source
+        chunk_hashes = item_data.get("properties", {}).get("earthgrid:chunk_hashes", [])
+        synced = 0
+        for h in chunk_hashes:
+            if not chunk_store.has_chunk(h):
+                try:
+                    r = await client.get(f"{source_url.rstrip('/')}/chunks/{h}")
+                    if r.status_code == 200:
+                        # Verify chunk integrity: SHA-256 hash must match
+                        import hashlib
+                        actual_hash = hashlib.sha256(r.content).hexdigest()
+                        if actual_hash == h:
+                            chunk_store.store_chunk(h, r.content)
+                            synced += 1
+                        else:
+                            log.warning(f"INTEGRITY VIOLATION: chunk {h[:16]}... hash mismatch! Expected {h[:16]}, got {actual_hash[:16]}. Rejecting.")
+                except Exception:
+                    pass
+
+        # Register item in local catalog
+        catalog.register_from_stac(item_data)
+        log.info(f"Auto-synced {item_id}: {synced}/{len(chunk_hashes)} chunks")
+        return {"status": "synced", "item_id": item_id, "chunks_synced": synced, "chunks_total": len(chunk_hashes)}
+
+    except Exception as e:
+        log.error(f"Auto-sync failed for {item_id}: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+
+
+@app.get("/verify/{item_id}")
+def verify_item_integrity(item_id: str):
+    """Verify all chunks of an item against their SHA-256 hashes."""
+    import hashlib
+    item = catalog.get_item(item_id)
+    if not item:
+        raise HTTPException(404, f"Item {item_id} not found")
+
+    results = {"item_id": item_id, "total": 0, "valid": 0, "corrupted": 0, "missing": 0, "details": []}
+    for h in item.chunk_hashes:
+        results["total"] += 1
+        data = chunk_store.get_chunk(h)
+        if data is None:
+            results["missing"] += 1
+            results["details"].append({"hash": h[:16], "status": "missing"})
+        else:
+            actual = hashlib.sha256(data).hexdigest()
+            if actual == h:
+                results["valid"] += 1
+            else:
+                results["corrupted"] += 1
+                results["details"].append({"hash": h[:16], "status": "corrupted", "expected": h[:16], "actual": actual[:16]})
+
+    results["integrity"] = "OK" if results["corrupted"] == 0 and results["missing"] == 0 else "FAILED"
+    return results
+
 
 @app.get("/process/operations")
 def list_operations():
