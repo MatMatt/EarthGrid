@@ -9,7 +9,7 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY earthgrid/ earthgrid/
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[full]"
 
 EXPOSE 8400
 
