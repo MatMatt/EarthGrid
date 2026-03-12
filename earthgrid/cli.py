@@ -56,6 +56,13 @@ def main():
     # --- Ops ---
     sub.add_parser("ops", help="List available processing operations")
 
+    # --- Sync ---
+    p_sync = sub.add_parser("sync", help="Pull data from a remote peer")
+    p_sync.add_argument("peer_url", help="Remote node URL (e.g. http://host:8400)")
+    p_sync.add_argument("--collections", default=None, help="Only sync these collections (comma-separated)")
+    p_sync.add_argument("--max-items", type=int, default=0, help="Limit items to sync (0=all)")
+    p_sync.add_argument("--dry-run", action="store_true", help="Only report what would be synced")
+
     args = parser.parse_args()
 
     if args.command == "setup":
@@ -76,6 +83,10 @@ def main():
 
     if args.command == "process":
         _cmd_process(args)
+        return
+
+    if args.command == "sync":
+        _cmd_sync(args)
         return
 
     if args.command == "info" or args.command is None:
@@ -276,6 +287,48 @@ def _cmd_process(args):
     except (ValueError, KeyError) as e:
         print(f"Error: {e}")
         sys.exit(1)
+
+
+def _cmd_sync(args):
+    """Pull data from a remote peer."""
+    import asyncio
+    from .chunk_store import ChunkStore
+    from .catalog import Catalog
+    from .replication import Replicator
+
+    cfg = _load_config()
+    store_path = Path(cfg.get("store_path", "./data/store"))
+    catalog_path = Path(cfg.get("catalog_path", "./data/catalog.db"))
+
+    cs = ChunkStore(store_path, limit_gb=cfg.get("storage_limit_gb", 50.0))
+    cat = Catalog(catalog_path)
+    repl = Replicator(cs, cat)
+
+    peer = args.peer_url.rstrip("/")
+    col_list = [c.strip() for c in args.collections.split(",")] if args.collections else None
+
+    print(f"{'[DRY RUN] ' if args.dry_run else ''}Syncing from {peer}...")
+
+    result = asyncio.run(repl.sync_from_peer(
+        peer_url=peer,
+        collections=col_list,
+        max_items=args.max_items,
+        dry_run=args.dry_run,
+    ))
+
+    if result["errors"]:
+        for e in result["errors"][:5]:
+            print(f"  ⚠ {e}")
+
+    print(f"\n{'Would sync' if args.dry_run else 'Synced'}:")
+    print(f"  Collections:  {result['collections_synced']}")
+    print(f"  Items:        {result['items_synced']}")
+    print(f"  Chunks:       {result['chunks_downloaded']} downloaded, {result['chunks_skipped']} skipped")
+    if result['bytes_downloaded']:
+        print(f"  Data:         {_human_bytes(result['bytes_downloaded'])}")
+
+    if not args.dry_run and result['items_synced']:
+        print(f"\n✅ Data replicated from {peer}")
 
 
 def _interactive_setup(args):

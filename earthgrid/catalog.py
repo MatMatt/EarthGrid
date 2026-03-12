@@ -16,8 +16,8 @@ class STACItem:
     assets: dict  # name → {href, type, ...}
     chunk_hashes: list[str] = field(default_factory=list)
 
-    def to_stac(self, base_url: str = "") -> dict:
-        return {
+    def to_stac(self, base_url: str = "", include_chunks: bool = False) -> dict:
+        d = {
             "type": "Feature",
             "stac_version": "1.0.0",
             "id": self.id,
@@ -28,6 +28,9 @@ class STACItem:
             "assets": self.assets,
             "links": [],
         }
+        if include_chunks:
+            d["earthgrid:chunk_hashes"] = self.chunk_hashes
+        return d
 
 
 @dataclass
