@@ -7,7 +7,7 @@ import httpx
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import Response
 
-from . import __version__
+from . import __version__, DEFAULT_BEACON
 from .config import settings
 from .chunk_store import ChunkStore
 from .catalog import Catalog
@@ -41,14 +41,16 @@ cdse_client = CDSEClient(
 # --- Beacon Registration ---
 
 async def _register_with_beacon():
-    """Register this node with the configured beacon."""
-    if not settings.beacon_url:
+    """Register this node with the configured beacon (or default)."""
+    beacon = settings.beacon_url or DEFAULT_BEACON
+    if not beacon:
         return
+    settings.beacon_url = beacon  # ensure it's set for heartbeat loop
     try:
         summary = catalog.summary()
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(
-                f"{settings.beacon_url.rstrip('/')}/register",
+                f"{beacon.rstrip('/')}/register",
                 params={
                     "node_id": settings.node_id,
                     "node_name": settings.node_name,
@@ -65,7 +67,8 @@ async def _register_with_beacon():
 
 async def _beacon_heartbeat_loop():
     """Send periodic heartbeats to the beacon."""
-    if not settings.beacon_url:
+    beacon = settings.beacon_url or DEFAULT_BEACON
+    if not beacon:
         return
     while True:
         await asyncio.sleep(60)  # every 60s
@@ -73,7 +76,7 @@ async def _beacon_heartbeat_loop():
             summary = catalog.summary()
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
-                    f"{settings.beacon_url.rstrip('/')}/heartbeat",
+                    f"{beacon.rstrip('/')}/heartbeat",
                     params={
                         "node_id": settings.node_id,
                         "collections": ",".join(summary["collections"]),

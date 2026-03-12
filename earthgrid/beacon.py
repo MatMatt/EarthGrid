@@ -224,9 +224,29 @@ class BeaconRegistry:
                                 chunks_bytes=rn.get("chunks_bytes"),
                             )
 
-                    # Send our nodes to peer
+                    # Send our nodes + our beacon peers to peer (gossip)
                     our_nodes = [n.to_dict() for n in self.get_alive_nodes()]
-                    await client.post(f"{url}/beacon/exchange", json={"nodes": our_nodes})
+                    our_beacons = [b.url for b in self.peer_beacons.values()]
+                    await client.post(f"{url}/beacon/exchange", json={
+                        "nodes": our_nodes,
+                        "beacons": our_beacons,
+                    })
+
+                    # Learn their beacon peers (gossip propagation)
+                    try:
+                        peers_resp = await client.get(f"{url}/beacon/peers")
+                        if peers_resp.status_code == 200:
+                            their_beacons = peers_resp.json().get("beacons", [])
+                            for tb in their_beacons:
+                                tb_url = tb.get("url", "")
+                                if tb_url and tb_url not in self.peer_beacons:
+                                    # Don't add ourselves
+                                    if settings.public_url and tb_url == settings.public_url:
+                                        continue
+                                    await self.add_peer_beacon(tb_url)
+                                    logger.info(f"Discovered beacon via gossip: {tb_url}")
+                    except Exception:
+                        pass  # Gossip is best-effort
 
                     return {"url": url, "status": "synced", "merged": merged, "sent": len(our_nodes)}
 
@@ -408,8 +428,9 @@ async def sync_beacons():
 
 @beacon_app.post("/beacon/exchange")
 async def exchange_nodes(data: dict):
-    """Receive node list from a peer beacon (called during sync)."""
+    """Receive node list + beacon list from a peer beacon (called during sync)."""
     remote_nodes = data.get("nodes", [])
+    remote_beacons = data.get("beacons", [])
     merged = 0
     for rn in remote_nodes:
         nid = rn.get("node_id", "")
@@ -424,7 +445,16 @@ async def exchange_nodes(data: dict):
                 chunks_bytes=rn.get("chunks_bytes", 0),
             )
             merged += 1
-    return {"status": "ok", "merged": merged}
+
+    # Gossip: learn new beacons from the peer
+    beacons_learned = 0
+    for b_url in remote_beacons:
+        if b_url and b_url not in registry.peer_beacons:
+            if not (settings.public_url and b_url == settings.public_url):
+                await registry.add_peer_beacon(b_url)
+                beacons_learned += 1
+
+    return {"status": "ok", "merged": merged, "beacons_learned": beacons_learned}
 
 
 # --- Routed Search (the key feature) ---
