@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EarthGrid — Distributed Earth Observation Data</title>
+<style>
+:root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --green:#3fb950; --orange:#d29922; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; line-height:1.6; }
+.container { max-width:960px; margin:0 auto; padding:2rem 1.5rem; }
+h1 { font-size:2.5rem; font-weight:800; margin-bottom:0.5rem; }
+h1 span { color:var(--accent); }
+.subtitle { color:var(--dim); font-size:1.1rem; margin-bottom:2rem; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:1rem; margin:2rem 0; }
+.stat { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1.2rem; text-align:center; }
+.stat .value { font-size:2rem; font-weight:700; color:var(--green); }
+.stat .label { font-size:0.85rem; color:var(--dim); margin-top:4px; }
+.stat.loading .value { color:var(--dim); }
+.section { margin:2.5rem 0; }
+.section h2 { font-size:1.3rem; margin-bottom:1rem; border-bottom:1px solid var(--border); padding-bottom:0.5rem; }
+.node { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:1rem; margin:0.5rem 0; display:flex; justify-content:space-between; align-items:center; }
+.node .name { font-weight:600; }
+.node .info { color:var(--dim); font-size:0.85rem; }
+.badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
+.badge.green { background:#238636; color:#fff; }
+.badge.orange { background:#9e6a03; color:#fff; }
+.badge.blue { background:#1f6feb; color:#fff; }
+.features { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:1rem; }
+.feature { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1.5rem; }
+.feature .icon { font-size:1.5rem; margin-bottom:0.5rem; }
+.feature h3 { font-size:1rem; margin-bottom:0.5rem; }
+.feature p { font-size:0.85rem; color:var(--dim); }
+code { background:var(--card); padding:2px 6px; border-radius:4px; font-size:0.9em; }
+pre { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:1rem; overflow-x:auto; margin:1rem 0; }
+a { color:var(--accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+.footer { text-align:center; color:var(--dim); font-size:0.8rem; margin-top:3rem; padding-top:1rem; border-top:1px solid var(--border); }
+#nodeList { min-height:40px; }
+.ops { display:flex; flex-wrap:wrap; gap:0.5rem; margin:1rem 0; }
+.op { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:0.5rem 1rem; font-size:0.85rem; }
+.op .opname { font-weight:600; color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🌍 Earth<span>Grid</span></h1>
+<p class="subtitle">Distributed storage and processing for Earth observation data. No vendor lock-in. Community-driven.</p>
+
+<div class="stats">
+  <div class="stat loading" id="sNodes"><div class="value" id="vNodes">—</div><div class="label">Network Nodes</div></div>
+  <div class="stat loading" id="sItems"><div class="value" id="vItems">—</div><div class="label">STAC Items</div></div>
+  <div class="stat loading" id="sChunks"><div class="value" id="vChunks">—</div><div class="label">Data Chunks</div></div>
+  <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Total Storage</div></div>
+</div>
+
+<div class="section">
+<h2>🖧 Network Nodes</h2>
+<div id="nodeList"><em style="color:var(--dim)">Loading...</em></div>
+</div>
+
+<div class="section">
+<h2>⚡ Processing Operations</h2>
+<div id="opsList" class="ops"><em style="color:var(--dim)">Loading...</em></div>
+</div>
+
+<div class="section">
+<h2>🔑 Key Features</h2>
+<div class="features">
+  <div class="feature"><div class="icon">🧩</div><h3>Content-Addressed</h3><p>Every chunk identified by SHA-256 hash. Tamper-proof by design — corrupted or fake data is automatically rejected.</p></div>
+  <div class="feature"><div class="icon">🔄</div><h3>Auto-Sync</h3><p>New data automatically propagates to all registered nodes. No manual intervention needed.</p></div>
+  <div class="feature"><div class="icon">🐢</div><h3>Idle Resources</h3><p>Runs at lowest CPU and I/O priority (nice 19, ionice idle). Never competes with your other workloads.</p></div>
+  <div class="feature"><div class="icon">🛰️</div><h3>STAC Native</h3><p>Built-in STAC catalog. Every item is discoverable, searchable, and interoperable with the EO ecosystem.</p></div>
+  <div class="feature"><div class="icon">🧮</div><h3>Built-in Processing</h3><p>NDVI, NDWI, EVI, cloud masking, band math — process data where it lives, no data movement needed.</p></div>
+  <div class="feature"><div class="icon">🌐</div><h3>Federation</h3><p>Beacons coordinate, data flows peer-to-peer. No single point of failure. Works across firewalls via HTTPS.</p></div>
+</div>
+</div>
+
+<div class="section">
+<h2>🚀 Quick Start</h2>
+<pre><code>pip install earthgrid
+earthgrid setup
+earthgrid start --beacon https://mattiuzzi.zapto.org/earthgrid</code></pre>
+<p style="color:var(--dim);font-size:0.85rem;margin-top:0.5rem;">Join the network in 3 commands. Storage, beacon URL, and sync are configured interactively.</p>
+</div>
+
+<div class="footer">
+  EarthGrid v<span id="ver">0.2.0</span> · <a href="https://github.com/MatMatt/EarthGrid">GitHub</a> · Built with 🌍 by the EO community
+</div>
+</div>
+
+<script>
+const BEACON = 'https://mattiuzzi.zapto.org/earthgrid';
+
+async function load() {
+  try {
+    // Root status
+    const r = await fetch(BEACON + '/');
+    const d = await r.json();
+    document.getElementById('vItems').textContent = (d.item_count || 0).toLocaleString();
+    document.getElementById('vChunks').textContent = (d.chunks || 0).toLocaleString();
+    document.getElementById('vStorage').textContent = ((d.chunks_bytes || 0) / 1e9).toFixed(1) + ' GB';
+    if (d.version) document.getElementById('ver').textContent = d.version;
+    document.querySelectorAll('.stat.loading').forEach(s => s.classList.remove('loading'));
+
+    // Nodes
+    const nr = await fetch(BEACON + '/nodes');
+    const nd = await nr.json();
+    const nodes = nd.nodes || [];
+    // Add beacon itself
+    const allNodes = [{node_name: d.node_name || 'beacon', url: BEACON, chunk_count: d.chunks, item_count: d.item_count, alive: true, collections: d.collections || []}].concat(nodes);
+    document.getElementById('vNodes').textContent = allNodes.length;
+    document.getElementById('sNodes').classList.remove('loading');
+
+    let nh = '';
+    allNodes.forEach(n => {
+      const alive = n.alive !== false;
+      nh += '<div class="node"><div><span class="name">' + (n.node_name||'unknown') + '</span> <span class="badge ' + (alive?'green':'orange') + '">' + (alive?'online':'offline') + '</span>';
+      if (n.collections && n.collections.length) nh += ' <span class="badge blue">' + n.collections.join(', ') + '</span>';
+      nh += '<br><span class="info">' + (n.chunk_count||0).toLocaleString() + ' chunks · ' + (n.item_count||0) + ' items</span>';
+      nh += '</div></div>';
+    });
+    document.getElementById('nodeList').innerHTML = nh || '<em>No nodes</em>';
+
+    // Operations
+    const or2 = await fetch(BEACON + '/process/operations');
+    const od = await or2.json();
+    let oh = '';
+    (od.operations || []).forEach(o => {
+      oh += '<div class="op"><span class="opname">' + o.name + '</span><br><span style="color:var(--dim)">' + o.description + '</span></div>';
+    });
+    document.getElementById('opsList').innerHTML = oh || '<em>None</em>';
+
+  } catch(e) {
+    document.getElementById('nodeList').innerHTML = '<em style="color:var(--orange)">Could not connect to beacon</em>';
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
