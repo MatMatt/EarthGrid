@@ -1,6 +1,8 @@
 """EarthGrid CLI — start a node or beacon."""
 import argparse
+import json
 import sys
+from pathlib import Path
 
 import uvicorn
 
@@ -35,10 +37,45 @@ def main():
     # --- Info ---
     sub.add_parser("info", help="Show version and config")
 
+    # --- Status ---
+    sub.add_parser("status", help="Show node status and storage usage")
+
+    # --- Resize ---
+    p_resize = sub.add_parser("resize", help="Resize storage allocation")
+    p_resize.add_argument("size_gb", type=float, help="New storage limit in GB")
+    p_resize.add_argument("--force", action="store_true", help="Evict chunks if over limit")
+
+    # --- Process ---
+    p_process = sub.add_parser("process", help="Run a processing operation on STAC item(s)")
+    p_process.add_argument("item_id", nargs="+", help="Source STAC item ID(s)")
+    p_process.add_argument("--op", required=True, help="Operation: ndvi, ndwi, ndsi, evi, cloud_mask, true_color, band_math")
+    p_process.add_argument("--expression", default="", help="Band math expression")
+    p_process.add_argument("--output-collection", default=None)
+    p_process.add_argument("--output-id", default=None)
+
+    # --- Ops ---
+    sub.add_parser("ops", help="List available processing operations")
+
     args = parser.parse_args()
 
     if args.command == "setup":
         _interactive_setup(args)
+        return
+
+    if args.command == "status":
+        _cmd_status()
+        return
+
+    if args.command == "resize":
+        _cmd_resize(args.size_gb, args.force)
+        return
+
+    if args.command == "ops":
+        _cmd_ops()
+        return
+
+    if args.command == "process":
+        _cmd_process(args)
         return
 
     if args.command == "info" or args.command is None:
@@ -102,6 +139,143 @@ def main():
             port=args.port,
             log_level="info",
         )
+
+
+def _human_bytes(b: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1024:
+            return f"{b:.1f} {unit}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+
+def _load_config() -> dict:
+    config_file = Path.home() / ".earthgrid" / "config.json"
+    if config_file.exists():
+        return json.loads(config_file.read_text())
+    return {}
+
+
+def _save_config(cfg: dict):
+    config_file = Path.home() / ".earthgrid" / "config.json"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(json.dumps(cfg, indent=2) + "\n")
+
+
+def _store_usage(store_path: Path) -> tuple[int, int]:
+    """Returns (total_bytes, chunk_count)."""
+    total, count = 0, 0
+    if store_path.exists():
+        for p in store_path.rglob("*"):
+            if p.is_file() and len(p.name) == 64:
+                total += p.stat().st_size
+                count += 1
+    return total, count
+
+
+def _cmd_status():
+    cfg = _load_config()
+    if not cfg:
+        print("No config found. Run 'earthgrid setup' first.")
+        sys.exit(1)
+    store_path = Path(cfg.get("store_path", "./data/store"))
+    limit_gb = cfg.get("storage_limit_gb", 50.0)
+    limit_bytes = int(limit_gb * 1024**3)
+    used, chunks = _store_usage(store_path)
+    pct = (used / limit_bytes * 100) if limit_bytes > 0 else 0
+
+    config_file = Path.home() / ".earthgrid" / "config.json"
+    print(f"EarthGrid Node v{__version__}")
+    print(f"  Config:    {config_file}")
+    print(f"  Name:      {cfg.get('node_name', 'earthgrid-node')}")
+    print(f"  Port:      {cfg.get('port', 8400)}")
+    print(f"  Beacon:    {'yes' if cfg.get('also_beacon') else 'no'}")
+    print(f"  Storage:   {_human_bytes(used)} / {limit_gb:.1f} GB ({pct:.1f}%)")
+    print(f"  Chunks:    {chunks}")
+    print(f"  Store:     {store_path}")
+    peers = cfg.get("peers", [])
+    print(f"  Peers:     {len(peers)}")
+
+
+def _cmd_resize(new_gb: float, force: bool):
+    if new_gb <= 0:
+        print("Error: size must be > 0 GB")
+        sys.exit(1)
+    cfg = _load_config()
+    if not cfg:
+        print("No config found. Run 'earthgrid setup' first.")
+        sys.exit(1)
+    old_gb = cfg.get("storage_limit_gb", 50.0)
+    store_path = Path(cfg.get("store_path", "./data/store"))
+    used, _ = _store_usage(store_path)
+    used_gb = used / 1024**3
+
+    if new_gb < used_gb and not force:
+        print(f"Error: current usage ({used_gb:.2f} GB) exceeds new limit ({new_gb:.1f} GB).")
+        print(f"Use --force to evict chunks.")
+        sys.exit(1)
+
+    if new_gb < used_gb and force:
+        target_bytes = int(new_gb * 1024**3)
+        chunks = []
+        for p in store_path.rglob("*"):
+            if p.is_file() and len(p.name) == 64:
+                chunks.append((p.stat().st_mtime, p.stat().st_size, p))
+        chunks.sort(key=lambda x: x[0])  # oldest first
+        current = sum(s for _, s, _ in chunks)
+        evicted = 0
+        for _, size, path in chunks:
+            if current <= target_bytes:
+                break
+            path.unlink()
+            current -= size
+            evicted += 1
+        print(f"Evicted {evicted} chunks to fit new limit.")
+
+    cfg["storage_limit_gb"] = new_gb
+    _save_config(cfg)
+    direction = "↑" if new_gb > old_gb else "↓"
+    print(f"Storage resized: {old_gb:.1f} GB → {new_gb:.1f} GB {direction}")
+
+
+def _cmd_ops():
+    from .processing import OPERATIONS
+    print("Available operations:")
+    for name, fn in OPERATIONS.items():
+        doc = (fn.__doc__ or "").strip().split("\n")[0]
+        print(f"  {name:15s} {doc}")
+
+
+def _cmd_process(args):
+    from .chunk_store import ChunkStore
+    from .catalog import Catalog
+    from .processing import Processor
+
+    cfg = _load_config()
+    store_path = Path(cfg.get("store_path", "./data/store"))
+    catalog_path = Path(cfg.get("catalog_path", "./data/catalog.db"))
+
+    cs = ChunkStore(store_path, limit_gb=cfg.get("storage_limit_gb", 50.0))
+    cat = Catalog(catalog_path)
+    proc = Processor(cs, cat)
+
+    item_ids = args.item_id if len(args.item_id) > 1 else args.item_id[0]
+    try:
+        result = proc.process(
+            item_id=item_ids,
+            operation=args.op,
+            output_collection=args.output_collection,
+            output_item_id=args.output_id,
+            expression=args.expression,
+        )
+        print(f"✅ {result.properties.get('earthgrid:description', args.op)}")
+        print(f"   Source:  {item_ids}")
+        print(f"   Result:  {result.id} ({result.collection})")
+        print(f"   Chunks:  {len(result.chunk_hashes)}")
+        print(f"   Bands:   {result.properties.get('earthgrid:band_names', [])}")
+    except (ValueError, KeyError) as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
 
 def _interactive_setup(args):

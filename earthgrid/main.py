@@ -13,6 +13,7 @@ from .chunk_store import ChunkStore
 from .catalog import Catalog
 from .federation import Federation
 from .ingest import ingest_cog
+from .processing import Processor
 
 app = FastAPI(
     title="EarthGrid Node",
@@ -24,6 +25,7 @@ app = FastAPI(
 chunk_store = ChunkStore(settings.store_path, limit_gb=settings.storage_limit_gb)
 catalog = Catalog(settings.catalog_path)
 federation = Federation(settings.peers)
+processor = Processor(chunk_store, catalog)
 
 
 # --- Beacon Registration ---
@@ -345,3 +347,50 @@ async def federation_search(
         "features": results,
         "context": {"source": "federation"},
     }
+
+
+# --- Processing ---
+
+@app.get("/process/operations")
+def list_operations():
+    """List available processing operations."""
+    return {"operations": processor.list_operations()}
+
+
+@app.post("/process")
+def process_item(
+    item_id: str = Query(None, description="Source STAC item ID (single item)"),
+    items: str = Query(None, description="Comma-separated item IDs (multi-item, e.g. B04,B08)"),
+    operation: str = Query(..., description="Operation: ndvi, ndwi, ndsi, evi, cloud_mask, true_color, band_math"),
+    output_collection: str = Query(None),
+    output_item_id: str = Query(None),
+    expression: str = Query("", description="Band math expression"),
+):
+    """Process STAC item(s) with a built-in operation."""
+    if items:
+        ids = [i.strip() for i in items.split(",")]
+    elif item_id:
+        ids = item_id
+    else:
+        raise HTTPException(400, "Provide item_id or items parameter")
+
+    try:
+        result_item = processor.process(
+            item_id=ids,
+            operation=operation,
+            output_collection=output_collection,
+            output_item_id=output_item_id,
+            expression=expression,
+        )
+        return {
+            "status": "processed",
+            "operation": operation,
+            "source": ids,
+            "result_item": result_item.id,
+            "result_collection": result_item.collection,
+            "chunks": len(result_item.chunk_hashes),
+            "bands": result_item.properties.get("earthgrid:band_names", []),
+            "description": result_item.properties.get("earthgrid:description", ""),
+        }
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
