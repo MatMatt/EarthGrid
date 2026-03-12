@@ -56,6 +56,18 @@ def main():
     # --- Ops ---
     sub.add_parser("ops", help="List available processing operations")
 
+    # --- Fetch (CDSE) ---
+    p_fetch = sub.add_parser("fetch", help="Fetch Sentinel data from CDSE and ingest")
+    p_fetch.add_argument("--bbox", required=True, help="west,south,east,north")
+    p_fetch.add_argument("--start", help="Start date YYYY-MM-DD")
+    p_fetch.add_argument("--end", help="End date YYYY-MM-DD")
+    p_fetch.add_argument("--cloud", type=float, default=30.0, help="Max cloud cover %% (default: 30)")
+    p_fetch.add_argument("--bands", help="Comma-separated bands (e.g. B02,B03,B04,B08,SCL)")
+    p_fetch.add_argument("--product-type", default="S2MSI2A", help="Product type (default: S2MSI2A)")
+    p_fetch.add_argument("--limit", type=int, default=1, help="Max products to fetch")
+    p_fetch.add_argument("--collection", default="sentinel-2-l2a", help="EarthGrid collection name")
+    p_fetch.add_argument("--search-only", action="store_true", help="Only search, don't download")
+
     # --- Sync ---
     p_sync = sub.add_parser("sync", help="Pull data from a remote peer")
     p_sync.add_argument("peer_url", help="Remote node URL (e.g. http://host:8400)")
@@ -83,6 +95,10 @@ def main():
 
     if args.command == "process":
         _cmd_process(args)
+        return
+
+    if args.command == "fetch":
+        _cmd_fetch(args)
         return
 
     if args.command == "sync":
@@ -287,6 +303,87 @@ def _cmd_process(args):
     except (ValueError, KeyError) as e:
         print(f"Error: {e}")
         sys.exit(1)
+
+
+def _cmd_fetch(args):
+    """Fetch Sentinel data from CDSE."""
+    import asyncio
+    import os
+    from .cdse import CDSEClient, fetch_and_ingest
+    from .chunk_store import ChunkStore
+    from .catalog import Catalog
+
+    cfg = _load_config()
+
+    # CDSE credentials from config or env
+    username = cfg.get("cdse_username", os.environ.get("EARTHGRID_CDSE_USERNAME", ""))
+    password = cfg.get("cdse_password", os.environ.get("EARTHGRID_CDSE_PASSWORD", ""))
+
+    if not username or not password:
+        print("CDSE credentials required. Set via:")
+        print("  earthgrid config cdse_username <your-email>")
+        print("  earthgrid config cdse_password <your-password>")
+        print("Or env: EARTHGRID_CDSE_USERNAME / EARTHGRID_CDSE_PASSWORD")
+        sys.exit(1)
+
+    client = CDSEClient(username=username, password=password)
+    bbox = [float(x) for x in args.bbox.split(",")]
+
+    if args.search_only:
+        # Just search and display
+        products = asyncio.run(client.search(
+            bbox=bbox,
+            start_date=args.start,
+            end_date=args.end,
+            cloud_cover=args.cloud,
+            product_type=args.product_type,
+            limit=args.limit,
+        ))
+        if not products:
+            print("No products found.")
+            return
+        print(f"Found {len(products)} products:\n")
+        for p in products:
+            date = p["date"][:10] if p["date"] else "?"
+            print(f"  {p['name']}")
+            print(f"    Date: {date}  Cloud: {p['cloud_cover']}%  Size: {p['size_mb']} MB  Online: {p['online']}")
+            print()
+        return
+
+    # Fetch and ingest
+    store_path = Path(cfg.get("store_path", "./data/store"))
+    catalog_path = Path(cfg.get("catalog_path", "./data/catalog.db"))
+    cs = ChunkStore(store_path, limit_gb=cfg.get("storage_limit_gb", 50.0))
+    cat = Catalog(catalog_path)
+
+    band_list = [b.strip() for b in args.bands.split(",")] if args.bands else None
+
+    print(f"Fetching from CDSE (bbox={args.bbox}, cloud≤{args.cloud}%)...")
+    results = asyncio.run(fetch_and_ingest(
+        cdse_client=client,
+        chunk_store=cs,
+        catalog=cat,
+        bbox=bbox,
+        start_date=args.start,
+        end_date=args.end,
+        cloud_cover=args.cloud,
+        bands=band_list,
+        product_type=args.product_type,
+        limit=args.limit,
+        earthgrid_collection=args.collection,
+    ))
+
+    ok = [r for r in results if r.get("item_id")]
+    err = [r for r in results if r.get("error")]
+
+    if ok:
+        print(f"\n✅ Ingested {len(ok)} bands:")
+        for r in ok:
+            print(f"  {r['item_id']} ({r['chunks']} chunks)")
+    if err:
+        print(f"\n⚠ {len(err)} errors:")
+        for r in err:
+            print(f"  {r['band_file']}: {r['error']}")
 
 
 def _cmd_sync(args):
