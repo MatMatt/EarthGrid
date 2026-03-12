@@ -481,7 +481,10 @@ def _interactive_setup(args):
     store_path = Path(store_input) if store_input else default_store
 
     # Beacon URL (to connect to the network)
-    beacon_url = input("Beacon URL to join? (leave empty for standalone): ").strip()
+    from . import DEFAULT_BEACON
+    beacon_url = input(f"Beacon URL to join? [{DEFAULT_BEACON}]: ").strip()
+    if not beacon_url:
+        beacon_url = DEFAULT_BEACON
 
     # Port
     port = args.port
