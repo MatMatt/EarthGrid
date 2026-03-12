@@ -15,6 +15,7 @@ from .federation import Federation
 from .ingest import ingest_cog
 from .processing import Processor
 from .replication import Replicator
+from .cdse import CDSEClient, fetch_and_ingest
 
 app = FastAPI(
     title="EarthGrid Node",
@@ -28,6 +29,13 @@ catalog = Catalog(settings.catalog_path)
 federation = Federation(settings.peers)
 processor = Processor(chunk_store, catalog)
 replicator = Replicator(chunk_store, catalog)
+
+# CDSE client (credentials from env or config)
+import os
+cdse_client = CDSEClient(
+    username=os.environ.get("EARTHGRID_CDSE_USERNAME", ""),
+    password=os.environ.get("EARTHGRID_CDSE_PASSWORD", ""),
+)
 
 
 # --- Beacon Registration ---
@@ -436,3 +444,62 @@ async def trigger_sync(
         dry_run=dry_run,
     )
     return result
+
+
+# --- CDSE Fetch ---
+
+@app.get("/cdse/search")
+async def cdse_search(
+    bbox: str = Query(None, description="west,south,east,north"),
+    start_date: str = Query(None, description="YYYY-MM-DD"),
+    end_date: str = Query(None, description="YYYY-MM-DD"),
+    cloud_cover: float = Query(30.0, description="Max cloud cover %"),
+    product_type: str = Query("S2MSI2A", description="S2MSI2A, S2MSI1C, etc."),
+    limit: int = Query(10, le=50),
+):
+    """Search CDSE catalog for Sentinel products."""
+    bbox_list = [float(x) for x in bbox.split(",")] if bbox else None
+    products = await cdse_client.search(
+        bbox=bbox_list,
+        start_date=start_date,
+        end_date=end_date,
+        cloud_cover=cloud_cover,
+        product_type=product_type,
+        limit=limit,
+    )
+    return {"products": products, "count": len(products)}
+
+
+@app.post("/cdse/fetch")
+async def cdse_fetch(
+    bbox: str = Query(None, description="west,south,east,north"),
+    start_date: str = Query(None, description="YYYY-MM-DD"),
+    end_date: str = Query(None, description="YYYY-MM-DD"),
+    cloud_cover: float = Query(30.0),
+    bands: str = Query(None, description="Comma-separated bands: B02,B03,B04,B08,SCL"),
+    product_type: str = Query("S2MSI2A"),
+    limit: int = Query(1, le=5),
+    collection: str = Query("sentinel-2-l2a", description="EarthGrid collection name"),
+):
+    """Fetch from CDSE, download bands, and ingest into this node."""
+    bbox_list = [float(x) for x in bbox.split(",")] if bbox else None
+    band_list = [b.strip() for b in bands.split(",")] if bands else None
+
+    results = await fetch_and_ingest(
+        cdse_client=cdse_client,
+        chunk_store=chunk_store,
+        catalog=catalog,
+        bbox=bbox_list,
+        start_date=start_date,
+        end_date=end_date,
+        cloud_cover=cloud_cover,
+        bands=band_list,
+        product_type=product_type,
+        limit=limit,
+        earthgrid_collection=collection,
+    )
+    return {
+        "status": "fetched",
+        "ingested": [r for r in results if r.get("item_id")],
+        "errors": [r for r in results if r.get("error")],
+    }
