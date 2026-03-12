@@ -320,10 +320,14 @@ def _cmd_fetch(args):
     password = cfg.get("cdse_password", os.environ.get("EARTHGRID_CDSE_PASSWORD", ""))
 
     if not username or not password:
-        print("CDSE credentials required. Set via:")
+        print("⚠ CDSE credentials required for direct fetch from Copernicus.")
+        print("  Each node needs its own free account — register at:")
+        print("  https://dataspace.copernicus.eu")
+        print("\n  Then configure via:")
+        print("  earthgrid setup          (interactive)")
         print("  earthgrid config cdse_username <your-email>")
         print("  earthgrid config cdse_password <your-password>")
-        print("Or env: EARTHGRID_CDSE_USERNAME / EARTHGRID_CDSE_PASSWORD")
+        print("\n  Without CDSE: use 'earthgrid replicate' to get data from other nodes.")
         sys.exit(1)
 
     client = CDSEClient(username=username, password=password)
@@ -486,6 +490,17 @@ def _interactive_setup(args):
     if not beacon_url:
         beacon_url = DEFAULT_BEACON
 
+    # CDSE credentials (optional — needed for direct fetch from Copernicus)
+    print("\n📡 CDSE (Copernicus Data Space) — optional")
+    print("  Without credentials: you can only redistribute data from other nodes")
+    print("  With credentials:    you can fetch directly from Copernicus (free account)")
+    print("  Register at: https://dataspace.copernicus.eu")
+    cdse_username = input("  CDSE email (or Enter to skip): ").strip()
+    cdse_password = ""
+    if cdse_username:
+        import getpass
+        cdse_password = getpass.getpass("  CDSE password: ")
+
     # Port
     port = args.port
 
@@ -503,6 +518,9 @@ def _interactive_setup(args):
     }
     if beacon_url:
         config["beacon_url"] = beacon_url
+    if cdse_username:
+        config["cdse_username"] = cdse_username
+        config["cdse_password"] = cdse_password
 
     config_file.write_text(json.dumps(config, indent=2))
 
@@ -520,11 +538,15 @@ def _interactive_setup(args):
     ]
     if beacon_url:
         env_lines.append(f"EARTHGRID_BEACON_URL={beacon_url}")
+    if cdse_username:
+        env_lines.append(f"EARTHGRID_CDSE_USERNAME={cdse_username}")
+        env_lines.append(f"EARTHGRID_CDSE_PASSWORD={cdse_password}")
     env_file.write_text("\n".join(env_lines) + "\n")
 
     print(f"\n✅ EarthGrid configured!")
     print(f"   Storage:  {gb} GB at {store_path}")
     print(f"   Beacon:   {'yes' if also_beacon else 'no'}")
+    print(f"   CDSE:     {'✓ ' + cdse_username if cdse_username else '✗ redistribute only'}")
     print(f"   Port:     {port}")
     print(f"   Config:   {config_file}")
     if beacon_url:
