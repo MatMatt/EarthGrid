@@ -467,6 +467,116 @@ class OpenEOGateway:
             logger.info(f"Ingested {item_id} from Element84: {len(item.chunk_hashes)} chunks")
             return {"item_id": item.id, "chunks": len(item.chunk_hashes)}
 
+
+    async def search_and_acquire(self, requirement: DataRequirement,
+                                  nice_level: int = 0) -> dict:
+        """Search external catalogs (CDSE/Element84) and download matching data.
+        
+        Called when resolve_chunks finds 0 local items — the 'self-filling' path.
+        Searches CDSE OData for matching products, downloads via source user pool,
+        ingests into the grid, returns ingest summary.
+        """
+        if not self.source_users:
+            return {"downloaded": 0, "error": "No source users configured"}
+
+        from .cdse import CDSEClient, fetch_and_ingest
+
+        # Get a source user for search
+        all_users = self.source_users.list_users_with_creds(provider="cdse")
+        if not all_users:
+            creds = self.source_users.select_user(provider="cdse")
+            if creds:
+                all_users = [creds]
+            else:
+                return {"downloaded": 0, "error": "No CDSE source users"}
+
+        # Determine CDSE collection + product type from EarthGrid collection ID
+        collection_map = {
+            "sentinel-2-l2a": ("SENTINEL-2", "S2MSI2A"),
+            "sentinel-2-l1c": ("SENTINEL-2", "S2MSI1C"),
+            "sentinel-1-grd": ("SENTINEL-1", "GRD"),
+            "sentinel-3-lst": ("SENTINEL-3", "SL_2_LST___"),
+            "sentinel-3-olci": ("SENTINEL-3", "OL_2_LFR___"),
+            "sentinel-5p": ("SENTINEL-5P", "L2__NO2___"),
+        }
+
+        cdse_coll, product_type = collection_map.get(
+            requirement.collection_id.lower(),
+            ("SENTINEL-2", "S2MSI2A")  # default
+        )
+
+        # Build bbox from spatial extent
+        bbox = None
+        if requirement.spatial_extent:
+            e = requirement.spatial_extent
+            bbox = [e.get("west", -180), e.get("south", -90),
+                    e.get("east", 180), e.get("north", 90)]
+
+        # Build date range
+        start_date = requirement.temporal_extent[0] if requirement.temporal_extent else None
+        end_date = requirement.temporal_extent[1] if len(requirement.temporal_extent) > 1 else None
+
+        bands = requirement.bands or None
+
+        # Distribute across source users for parallel download
+        total_results = []
+
+        async def _worker(user_creds, limit=5):
+            client = CDSEClient(
+                username=user_creds.get("username", ""),
+                password=user_creds.get("password", ""),
+            )
+            try:
+                results = await fetch_and_ingest(
+                    cdse_client=client,
+                    chunk_store=self.chunk_store,
+                    catalog=self.catalog,
+                    collection=cdse_coll,
+                    product_type=product_type,
+                    bbox=bbox,
+                    start_date=start_date,
+                    end_date=end_date,
+                    bands=bands,
+                    limit=limit,
+                    earthgrid_collection=requirement.collection_id,
+                )
+                for r in results:
+                    if r.get("item_id"):
+                        self.source_users.record_success(
+                            user_creds["user_id"],
+                            collection=requirement.collection_id,
+                            item_id=r["item_id"],
+                        )
+                return results
+            except Exception as e:
+                self.source_users.record_failure(
+                    user_creds["user_id"], error_msg=str(e),
+                    collection=requirement.collection_id,
+                )
+                logger.error(f"[{user_creds.get('name','?')}] Search+acquire failed: {e}")
+                return [{"error": str(e)}]
+
+        # For now use first user to search, then distribute downloads
+        # Future: each user searches a different time slice
+        results = await _worker(all_users[0], limit=5)
+
+        ingested = sum(1 for r in results if r.get("item_id"))
+        total_chunks = sum(r.get("chunks", 0) for r in results if r.get("item_id"))
+
+        logger.info(f"Self-filling: {ingested} items ingested, {total_chunks} chunks")
+
+        if self.stats:
+            self.stats.record_collection_access(
+                requirement.collection_id, access_type="self-fill"
+            )
+
+        return {
+            "downloaded": ingested,
+            "chunks": total_chunks,
+            "items": results,
+            "errors": [r["error"] for r in results if "error" in r],
+        }
+
     async def execute(self, graph: ProcessGraph,
                       nice_level: int = 0) -> JobResult:
         """Execute an openEO process graph.
@@ -500,6 +610,19 @@ class OpenEOGateway:
                 total_local += len(resolved["local"])
                 total_missing.extend(resolved["missing"])
 
+                # Self-filling: if 0 local items, search CDSE and download
+                if resolved["items_found"] == 0:
+                    logger.info(f"Job {job_id}: No local data for {req.collection_id}, "
+                                f"triggering self-fill from CDSE")
+                    fill_result = await self.search_and_acquire(req, nice_level=nice_level)
+                    if fill_result.get("downloaded", 0) > 0:
+                        # Re-resolve after download
+                        resolved2 = await self.resolve_chunks(req)
+                        total_local += len(resolved2["local"])
+                        result.chunks_downloaded = fill_result.get("chunks", 0)
+                    if fill_result.get("errors"):
+                        result.errors.extend(fill_result["errors"])
+
                 if self.stats:
                     self.stats.record_collection_access(
                         req.collection_id, access_type="openeo",
@@ -510,12 +633,12 @@ class OpenEOGateway:
             result.chunks_local = total_local
             result.progress = 30.0
 
-            # Step 3: Download missing
+            # Step 3: Download missing chunks (for partially available items)
             if total_missing:
                 logger.info(f"Job {job_id}: {len(total_missing)} chunks missing, "
                             f"triggering download")
                 dl_result = await self.acquire_missing(total_missing, nice_level=nice_level)
-                result.chunks_downloaded = dl_result["downloaded"]
+                result.chunks_downloaded += dl_result["downloaded"]
                 result.chunks_fetched = dl_result["downloaded"]
                 if dl_result["errors"]:
                     result.errors.extend(dl_result["errors"])
