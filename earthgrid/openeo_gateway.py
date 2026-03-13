@@ -349,15 +349,16 @@ class OpenEOGateway:
                         ingested = 0
                         for fpath in files:
                             if fpath.suffix.lower() == ".jp2":
-                                import subprocess
+                                import rasterio
                                 tif_path = fpath.with_suffix(".tif")
-                                subprocess.run(
-                                    ["gdal_translate", "-of", "GTiff",
-                                     "-co", "COMPRESS=LZW", "-co", "TILED=YES",
-                                     str(fpath), str(tif_path)],
-                                    check=True, capture_output=True,
-                                )
+                                with rasterio.open(fpath) as src:
+                                    profile = src.profile.copy()
+                                    profile.update(driver="GTiff", compress="lzw", tiled=True)
+                                    with rasterio.open(tif_path, "w", **profile) as dst:
+                                        for bi in range(1, src.count + 1):
+                                            dst.write(src.read(bi), bi)
                                 fpath = tif_path
+                                logger.info(f"Converted JP2: {tif_path.name}")
 
                             band_item_id = f"{item_id}_{fpath.stem}"
                             item = ingest_cog(
