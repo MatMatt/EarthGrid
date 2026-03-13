@@ -1,251 +1,205 @@
-# EarthGrid — Architecture
+# EarthGrid Architecture
 
-## Vision
-A distributed, federated system for storing and accessing satellite imagery and derived Earth observation products. No single point of failure. No vendor lock-in. Community-driven.
+## Overview
 
-## Principles
-1. **Easy to deploy** — One command to spin up a node. `docker run earthgrid` and you're part of the network. No complex setup, no infrastructure expertise needed. A Raspberry Pi, a laptop, a VPS — anything works.
-2. **Distributed redundant access** — Every dataset lives on multiple nodes. If one goes down, others serve it. No single point of failure. The network self-heals.
-3. **Content-addressed** — Every chunk has a hash. Same data = same hash, everywhere.
-4. **STAC-native** — Discovery via federated STAC catalogs. No proprietary metadata.
-5. **Chunk-level** — Atomic unit = Zarr chunk or COG tile, not whole scenes.
-6. **Organic replication** — Popular data lives on more nodes automatically.
-7. **Open participation** — Anyone can run a node, contribute storage, serve data.
+EarthGrid is a distributed, self-filling geospatial data grid. It stores Earth observation data as content-addressed chunks across a federation of nodes, providing intelligent redundancy and on-demand data acquisition.
 
-## Three Layers
+**License:** EUPL-1.2
 
-### 1. Storage Layer (ChunkStore)
-- Content-Addressable Storage (CAS): SHA-256 hash → chunk
-- Supports: Zarr chunks, COG tiles, NetCDF slices
-- Local filesystem backend (extensible to S3, etc.)
-- Chunk manifest: maps logical dataset → list of chunk hashes
+## Core Concepts
 
-#### Storage Modes (per node)
+### Content-Addressed Storage
+- All data is split into chunks, each identified by its SHA-256 hash
+- Two-level directory structure: `ab/cd/abcd1234...`
+- Chunks are immutable — same data always produces the same hash
+- Deduplication is automatic: identical data is stored only once
 
-Every node has ONE storage budget set by the user (e.g. 100 GB).
+### Intelligent Redundancy (not Full Replication)
+- Each chunk exists on **N nodes** (replication factor, default N=3)
+- NOT every node has everything — but everything is reachable
+- When a node needs a chunk, it fetches from the nearest peer that has it
+- If no peer has it → download from source (CDSE, Element84, etc.)
 
-**User Data** — what the operator explicitly ingests
-- Data the node operator explicitly wants (their region, their mission, their products)
-- Full control: ingest, delete, manage
-- Example: A university in Brazil keeps Sentinel-2 Amazon tiles
-- Uses as much of the budget as needed
+### Replication Strategy
+| Category | Replication Factor | Trigger |
+|---|---|---|
+| Hot data (frequently requested) | 4–6 | Auto-promote based on access stats |
+| Default | 3 | Standard for all new ingests |
+| Cold data (rarely accessed) | 2 | Auto-demote after inactivity period |
+| Minimum | 2 | Never below 2 (single-node-failure safe) |
 
-**Network-Managed Space** — the rest is automatic
-- Whatever storage the user doesn't use → the network fills automatically
-- No manual %, no configuration — just `total - used = available for network`
-- The network decides what goes there, optimizing for:
-  1. **Resilience**: under-replicated fragments (data that has too few copies)
-  2. **Performance**: frequently accessed chunks nearby (CDN effect)
-- Node cannot cherry-pick network data — the network assigns based on need
-- Network chunks are evicted first if user needs more space for their own data
-- Incentive: you give unused disk → the network protects data → your data gets protected too
+## Architecture Components
+
+### 1. openEO Gateway
+
+The primary user interface. Users submit openEO process graphs to EarthGrid.
 
 ```
-User pledges: 100 GB
-User uses:     30 GB (their own ingested data)
-Network fills: 70 GB (auto — resilience fragments + performance cache)
-
-User ingests more → network space shrinks automatically
-User deletes data → network space grows automatically
+User → openEO Process Graph → EarthGrid Gateway
 ```
 
-#### Erasure Coding (inspired by Wuala)
-- Instead of storing N full copies → split each chunk into M fragments using Reed-Solomon codes
-- Only K of M fragments needed to reconstruct (e.g. K=7, M=10)
-- **Storage overhead ~1.4x** instead of 3x for full replication
-- At petabyte scale this is the difference between feasible and impossible
-- Fragments distributed across different nodes (geographic diversity preferred)
-- Node goes offline → remaining fragments still sufficient → network has time to re-fragment
+**Flow:**
+1. Parse process graph → identify required collections, spatial extent, temporal range
+2. Resolve to chunks: which chunks are needed?
+3. Check availability:
+   - **Local?** → Use directly
+   - **On peer node?** → Fetch from nearest peer
+   - **Nowhere in grid?** → Download via Source Users
+4. Execute openEO process graph on assembled data
+5. Return result to user
 
-**Purpose: efficient REDUNDANCY, not personal storage.**
-EarthGrid stores ONLY official, authoritative Earth observation data (Copernicus, Sentinel,
-Landsat, etc.). Erasure coding protects these public datasets as a common good. Every node
-that contributes disk holds fragments of official data. No private uploads, no personal files.
+The gateway translates openEO's standardized API into EarthGrid's chunk-based operations.
 
-#### Storage Economy
-- No tokens, no money, no percentages
-- User sets ONE number: total GB
-- The network uses what's left after user data for collective resilience
-- More free space = more contribution = better protection for your own data
-- Nodes with zero free space still participate in search/routing, just not storage
-- The network serves ONE purpose: resilient, distributed access to official EO data
+### 2. Source Users (Data Providers)
 
-#### Replication Policy
-- Every chunk has a **replication target** (default: fragments on 10 nodes, 7 needed to reconstruct)
-- Network continuously monitors fragment availability per chunk
-- When a node goes offline → its fragments become under-replicated → re-fragmentation triggers
-- Popular data naturally exceeds target (many nodes want it)
-- Rare/niche data relies on guardian storage to stay above minimum
-- Critical datasets (e.g. climate records) can have higher fragment counts
+A pool of Copernicus/CDSE accounts contributed by users for downloading data that isn't yet in the grid.
 
-```
-/store/
-  user/       → operator-ingested data
-    ab/cd/abcd1234...sha256
-  network/    → auto-managed (resilience + performance cache)
-    ef/01/ef012345...sha256
-```
+**Account Management:**
+- Encrypted credential storage (never plaintext)
+- Round-robin or least-recently-used selection
+- Per-account rate limiting (respect CDSE quotas)
+- Health monitoring: detect expired/blocked accounts
+- Automatic failover to next available account
 
-### 2. Catalog Layer (Federation)
-- Each node runs a STAC-compatible API
-- Node registry: nodes announce themselves + their catalog summary
-- Federation query: "find Sentinel-2 L2A, bbox, time" → asks all known nodes
-- Results ranked by proximity / availability / freshness
-- Derived products carry provenance chain (source datasets + processing)
+**Supported Sources:**
+- CDSE (Copernicus Data Space Ecosystem) — Sentinel-1, -2, -3, -5P
+- Element84 Earth Search (public COGs on AWS) — no auth needed
+- CMEMS (marine data)
+- C3S/CDS (climate data)
+
+### 3. Auto-Ingest Pipeline
+
+When data is downloaded from a source, it enters the standard ingest pipeline:
 
 ```
-Node A (Vienna)     → HR-S&I Alps, Sentinel-2 Central Europe
-Node B (Copenhagen) → Coastal Zones, Baltic Sea SST
-Node C (São Paulo)  → Sentinel-2 Amazon, deforestation products
+Download → Validate → Chunk (SHA-256) → Store locally → Propagate to N-1 peers
 ```
 
-### 3. Processing Layer
-- **Compute where the data lives** — no need to download terabytes first
-- openEO-compatible process graphs (band math, indices, aggregation)
-- Built-in common operations: NDVI, NDWI, NDSI, cloud masking, compositing
-- Custom UDFs (User Defined Functions) in Python
-- Results = new derived products → published back into the network
-- Chain processing: Node A computes → result stored → Node B refines
-- GPU-accelerated where available (PyTorch, ONNX for ML inference)
+- Downloaded data is treated identically to manually ingested data
+- STAC metadata is preserved and indexed
+- Chunks propagate asynchronously to peer nodes
+- Propagation targets selected by: geographic proximity, available storage, current load
 
-### 4. Visualization Layer
-- **Every node can render** — no separate map server needed
-- Dynamic tile server: XYZ/TMS tiles generated on-the-fly from stored chunks
-- WMS/WMTS endpoints for GIS client compatibility (QGIS, ArcGIS)
-- Color ramps and band combinations configurable per collection
-- Time-series animation: temporal slider across available dates
-- Lightweight web viewer built into the node UI
-- OGC API Tiles + OGC API Maps for standards compliance
+### 4. Statistics & Monitoring
 
-## MVP Scope (v0.1)
+Tracks all data access patterns to drive replication and caching decisions.
 
-### What we build first:
-1. **EarthGrid-node** — Single Python/FastAPI service
-   - ChunkStore (local filesystem, SHA-256)
-   - STAC API (stac-fastapi or custom lightweight)
-   - Ingest endpoint: upload COG/Zarr → chunk + catalog
-   - Download endpoint: get chunks by hash or STAC query
-   - Node info endpoint: what do I have, how much space
+**Metrics collected:**
+- Per-collection request count (daily/weekly/monthly)
+- Per-chunk access frequency
+- Per-node storage utilization
+- Per-source-user download volume
+- Bandwidth consumption per node
 
-2. **Federation** — Simple HTTP-based
-   - Node registry (hardcoded peers for MVP, DHT later)
-   - Peer sync: exchange catalog summaries
-   - Federated search: fan-out query to known peers
+**Dashboard provides:**
+- Most requested datasets (drives replication promotion)
+- Least accessed data (candidates for replication demotion)
+- Source user utilization and health
+- Network-wide storage distribution
+- Chunk availability map (which nodes have what)
 
-3. **Seed data**
-   - HR-S&I (Snow & Ice) for Alps region
-   - Small enough to fit on Nucleus + Peaq
-   - Downloaded from CDSE, chunked, ingested
+### 5. Bandwidth Control (Nice Level)
 
-4. **Two nodes**
-   - Nucleus (Vienna/Hvidovre) — primary
-   - Peaq or VPS — secondary, tests federation
+Priority-based bandwidth allocation, inspired by Unix `nice`.
 
-### What we skip for now:
-- Incentive/token system
-- Authentication/authorization
-- Large-scale replication strategies
+| Nice Level | Priority | Use Case |
+|---|---|---|
+| -10 | Highest | User-facing openEO requests (real-time) |
+| 0 | Normal | Standard data propagation |
+| 10 | Low | Background replication balancing |
+| 19 | Lowest | Pre-fetching, speculative caching |
 
-## Tech Stack
-- **Language**: Python 3.11+
-- **Framework**: FastAPI
-- **Storage**: Local filesystem (CAS layout)
-- **Catalog**: SQLite (per-node), STAC-compatible
-- **Formats**: COG (rasterio), Zarr (zarr-python)
-- **Hashing**: SHA-256 (hashlib)
-- **Federation**: HTTP/REST (httpx async)
-- **Container**: Docker
-- **CI**: GitHub Actions
-
-## Directory Structure
-```
-EarthGrid/
-├── EarthGrid/
-│   ├── __init__.py
-│   ├── main.py           # FastAPI app
-│   ├── chunk_store.py    # CAS storage
-│   ├── catalog.py        # STAC catalog + SQLite
-│   ├── ingest.py         # COG/Zarr → chunks
-│   ├── federation.py     # peer discovery + sync
-│   └── config.py         # node configuration
-├── tests/
-├── docker/
-│   ├── Dockerfile
-│   └── docker-compose.yml
-├── scripts/
-│   └── seed_hrsi.py      # download + ingest seed data
-├── ARCHITECTURE.md
-├── README.md
-├── pyproject.toml
-└── .env.example
-```
-
-## API Endpoints (MVP)
-
-### Local Node
-- `GET /` — Node info (id, name, capacity, chunk count)
-- `GET /health` — Health check
-- `POST /ingest` — Upload file → chunk + catalog
-- `GET /chunks/{hash}` — Download chunk by hash
-- `GET /stac/collections` — STAC collections
-- `GET /stac/search` — STAC item search (bbox, datetime, collection)
-
-### Federation
-- `GET /peers` — List known peers
-- `POST /peers` — Register a peer
-- `GET /federation/search` — Federated STAC search across peers
-- `GET /federation/sync` — Exchange catalog summaries with peers
+**Controls:**
+- Max bandwidth per download stream
+- Max concurrent downloads per source user
+- Time-based scheduling: full bandwidth off-peak, throttled during peak hours
+- Per-node bandwidth caps (respect upstream limits)
 
 ## Data Flow
 
 ```
-1. INGEST
-   COG/Zarr file → split into chunks → SHA-256 each
-   → store in CAS → create STAC item → update catalog
-
-2. QUERY (local)
-   STAC search → match items in SQLite → return chunk hashes
-   → client downloads chunks → reassembles
-
-3. QUERY (federated)
-   STAC search → fan out to all peers → collect results
-   → rank by proximity → return merged results
-   → client downloads from best source
-
-4. REPLICATE (future)
-   Node A has popular dataset → Node B requests chunks
-   → Node B stores locally → now served from 2 locations
+                    ┌─────────────┐
+                    │   User      │
+                    │ (openEO)    │
+                    └──────┬──────┘
+                           │ Process Graph
+                           ▼
+                    ┌─────────────┐
+                    │   Gateway   │
+                    │  (openEO)   │
+                    └──────┬──────┘
+                           │ Which chunks needed?
+                           ▼
+                    ┌─────────────┐
+                    │  Chunk      │  Local? ──────→ Use
+                    │  Resolver   │  Peer?  ──────→ Fetch from peer
+                    └──────┬──────┘  Missing? ────→ Download
+                           │
+                           ▼
+              ┌────────────────────────┐
+              │   Source User Pool     │
+              │  (CDSE accounts)       │
+              │  Round-robin + quotas  │
+              └────────────┬───────────┘
+                           │ Download
+                           ▼
+              ┌────────────────────────┐
+              │   Auto-Ingest          │
+              │  Chunk → Store → Push  │
+              │  to N-1 peer nodes     │
+              └────────────────────────┘
+                           │
+                           ▼
+              ┌────────────────────────┐
+              │   Stats Engine         │
+              │  Track access patterns │
+              │  Drive replication     │
+              └────────────────────────┘
 ```
 
-## Network Topology: Semi-Decentralized
+## Node Types
 
-**Design decision: Performance over purity.**
+| Type | Role | Storage | Compute |
+|---|---|---|---|
+| **Full Node** | Store + process + serve | Yes | Yes |
+| **Beacon** | Discovery + routing only | Minimal (metadata) | No |
+| **Source Node** | Provides download credentials | No (or cache) | No |
 
-Not fully decentralized — no DHT, no slow lookups. Instead: smart routing with direct data transfer.
+## Security
 
-### Beacon Nodes (Coordination Layer)
-- Public nodes that act as directory + router
-- Know which nodes have which data (catalog index)
-- Route queries to the fastest/nearest node
-- Handle NAT traversal (private nodes connect outbound via WebSocket)
-- Anyone can run a beacon (universities, agencies, volunteers)
-- Multiple beacons = no single point of failure
-- Inspired by Matrix federation + CDN routing
+### API Authentication
+- **Two-tier keys:** `EARTHGRID_API_KEY` (read/write), `EARTHGRID_ADMIN_KEY` (destructive ops)
+- Source user credentials: encrypted at rest, never exposed via API
+- Inter-node communication: mutual TLS (planned)
 
-### Data Nodes (Storage Layer)
-- Store and serve actual chunks
-- Connect to one or more beacons
-- Transfer chunks directly to each other (peer-to-peer, not through beacon)
-- Beacon only coordinates — data flows direct
+### Data Integrity
+- SHA-256 verification on every chunk transfer
+- Corrupt chunks automatically re-fetched from peers or source
 
-### Data Flow
-```
-Query: Client → Beacon → "Node C in São Paulo has this" → Client fetches directly from Node C
-                         (no data through beacon, only routing)
-```
+## Current State (v0.2.0)
 
-### Why not fully decentralized?
-- DHT lookups add latency (100-500ms per hop)
-- EO data queries need fast spatial/temporal indexing — centralized index is faster
-- Beacon crash = temporary routing loss, not data loss
-- For scientific data, performance > censorship resistance
+**Implemented:**
+- Content-addressed chunk storage (SHA-256, two-level dirs)
+- STAC catalog with spatial/temporal search
+- Basic peer federation (register, sync)
+- Beacon mode for node discovery
+- Two-tier API key authentication
+- Rust core library (21/21 tests passing)
+
+**Planned:**
+- [ ] openEO Gateway (process graph parsing + execution)
+- [ ] Source User management (encrypted credential pool)
+- [ ] Auto-ingest pipeline (download → chunk → propagate)
+- [ ] Statistics engine (access tracking, replication decisions)
+- [ ] Bandwidth nice levels
+- [ ] Replication factor management (auto-promote/demote)
+- [ ] Rust HTTP server (replacing Python prototype)
+
+## Tech Stack
+
+- **Current:** Python (FastAPI), Rust (core library)
+- **Storage:** Content-addressed filesystem (SHA-256)
+- **Metadata:** STAC catalog (JSON)
+- **Target:** Full Rust implementation
+- **Container:** Docker
+- **License:** EUPL-1.2
