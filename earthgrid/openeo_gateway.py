@@ -534,6 +534,7 @@ class OpenEOGateway:
                     start_date=start_date,
                     end_date=end_date,
                     bands=bands,
+                    cloud_cover=None,
                     limit=limit,
                     earthgrid_collection=requirement.collection_id,
                 )
