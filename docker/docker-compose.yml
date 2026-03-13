@@ -7,17 +7,15 @@ services:
     ports:
       - "8400:8400"
     volumes:
-      - earthgrid-data:/data
+      - /mnt/sda/earthgrid:/data
     environment:
       - EARTHGRID_NODE_NAME=node-alpha
       - EARTHGRID_PORT=8400
       - EARTHGRID_ALSO_BEACON=true
+      - EARTHGRID_STORAGE_LIMIT_GB=1000
       - EARTHGRID_API_KEY=3151851790f16b519fad5e49fab24227648fb2210d71825d
       - EARTHGRID_ADMIN_KEY=217c1e218eff720484326a42291a670a511d349f698396afd4a19b51b7ec1a8e
     restart: unless-stopped
     cpu_shares: 128
     mem_limit: 2g
     oom_score_adj: 500
-
-volumes:
-  earthgrid-data:
