@@ -179,11 +179,24 @@ class OpenEOGateway:
         time_start = requirement.temporal_extent[0] if requirement.temporal_extent else None
         time_end = requirement.temporal_extent[1] if len(requirement.temporal_extent) > 1 else None
 
+        # Build datetime_range string for catalog
+        datetime_range = None
+        if time_start and time_end:
+            datetime_range = f"{time_start}/{time_end}"
+        elif time_start:
+            datetime_range = f"{time_start}/.."
+        elif time_end:
+            datetime_range = f"../{time_end}"
+
+        # bbox must be list of floats for catalog search
+        bbox_list = None
+        if bbox:
+            bbox_list = [float(x) for x in bbox.split(",")]
+
         items = self.catalog.search(
             collections=[requirement.collection_id] if requirement.collection_id else None,
-            bbox=bbox,
-            time_start=time_start,
-            time_end=time_end,
+            bbox=bbox_list,
+            datetime_range=datetime_range,
         )
 
         local_chunks = []
@@ -191,14 +204,18 @@ class OpenEOGateway:
 
         for item in items:
             # Check which chunks exist locally
-            for chunk_sha in (item.get("chunks") or []):
+            chunk_list = item.chunk_hashes if hasattr(item, 'chunk_hashes') else (item.get("chunks") or [])
+            item_id = item.id if hasattr(item, 'id') else item.get("id", "")
+            item_bbox = item.bbox if hasattr(item, 'bbox') else item.get("bbox")
+            for chunk_sha in chunk_list:
                 if self.chunk_store and self.chunk_store.exists(chunk_sha):
                     local_chunks.append(chunk_sha)
                 else:
                     missing_chunks.append({
                         "sha": chunk_sha,
                         "collection": requirement.collection_id,
-                        "item_id": item.get("id", ""),
+                        "item_id": item_id,
+                        "bbox": item_bbox,
                     })
 
         return {
