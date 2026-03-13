@@ -150,7 +150,7 @@ class SourceUserManager:
             rows = conn.execute(q, params).fetchall()
         result = []
         for r in rows:
-            pw = r["password_enc"]
+            pw = r["encrypted_password"]
             if pw and self.fernet:
                 try:
                     pw = self.fernet.decrypt(pw.encode()).decode()
