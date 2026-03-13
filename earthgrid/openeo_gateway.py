@@ -235,143 +235,206 @@ class OpenEOGateway:
 
     async def acquire_missing(self, missing_chunks: list[dict],
                               nice_level: int = 0) -> dict:
-        """Download missing chunks via source users.
-        
-        Triggers the auto-ingest pipeline for each missing chunk:
-        download → chunk → store → propagate.
+        """Download missing data via source users — parallel across user pool.
+
+        Groups missing chunks by item_id, distributes items round-robin
+        across available source users, downloads in parallel with
+        asyncio.gather() (max concurrency = number of source users).
         """
         if not self.source_users:
             return {"error": "No source user manager configured",
                     "downloaded": 0, "failed": 0}
 
-        downloaded = 0
-        failed = 0
-        errors = []
-
+        # Group missing chunks by item_id (download whole items, not individual chunks)
+        items_needed: dict[str, dict] = {}
         for chunk_info in missing_chunks:
-            collection = chunk_info.get("collection", "")
             item_id = chunk_info.get("item_id", "")
+            if item_id not in items_needed:
+                items_needed[item_id] = {
+                    "item_id": item_id,
+                    "collection": chunk_info.get("collection", ""),
+                    "bbox": chunk_info.get("bbox"),
+                    "bands": chunk_info.get("bands"),
+                    "product_id": chunk_info.get("product_id", ""),
+                    "chunk_count": 0,
+                }
+            items_needed[item_id]["chunk_count"] += 1
 
-            # Select a source user
-            # Determine provider from collection
-            provider = "cdse"  # default
-            if "element84" in collection.lower() or "sentinel-cogs" in collection.lower():
-                provider = "element84"
-            elif "cmems" in collection.lower():
-                provider = "cmems"
+        if not items_needed:
+            return {"downloaded": 0, "failed": 0, "errors": []}
 
+        # Determine provider
+        sample_collection = next(iter(items_needed.values()))["collection"]
+        provider = "cdse"
+        if "element84" in sample_collection.lower():
+            provider = "element84"
+        elif "cmems" in sample_collection.lower():
+            provider = "cmems"
+
+        # Get ALL available source users for this provider
+        all_users = self.source_users.list_users_with_creds(provider=provider)
+        if not all_users:
+            # Fallback: try select_user for single user
             creds = self.source_users.select_user(provider=provider)
-            if not creds:
-                errors.append(f"No source user available for {provider}")
-                failed += 1
-                continue
+            if creds:
+                all_users = [creds]
+            else:
+                return {"error": f"No source users available for {provider}",
+                        "downloaded": 0, "failed": 0}
 
-            try:
-                # Bandwidth control
-                if self.bandwidth:
-                    stream_id = f"openeo-{item_id}"
-                    self.bandwidth.register_stream(stream_id, nice_level=nice_level)
+        logger.info(f"Parallel download: {len(items_needed)} items across "
+                     f"{len(all_users)} source users ({provider})")
 
-                # Actual download via CDSE API → ingest into grid
-                from .cdse import CDSEClient
-                from .ingest import ingest_cog
-                import tempfile
+        # Distribute items round-robin across source users
+        user_tasks: dict[int, list[dict]] = {i: [] for i in range(len(all_users))}
+        for idx, item_info in enumerate(items_needed.values()):
+            user_idx = idx % len(all_users)
+            user_tasks[user_idx].append(item_info)
 
-                cdse_client = CDSEClient(
-                    username=creds.get("username", ""),
-                    password=creds.get("password", ""),
-                )
+        # Worker coroutine: one per source user
+        async def _download_worker(user_creds: dict, items: list[dict]) -> dict:
+            worker_downloaded = 0
+            worker_failed = 0
+            worker_errors = []
 
-                # item_id contains the product name; extract CDSE product UUID if available
-                product_id = chunk_info.get("product_id", "")
-                
-                if not product_id:
-                    # Search CDSE for this item to get the product UUID
-                    # Parse collection/item to determine CDSE search params
-                    search_collection = "SENTINEL-2"
-                    product_type = "S2MSI2A"
-                    if "sentinel-1" in collection.lower():
-                        search_collection = "SENTINEL-1"
-                        product_type = "GRD"
-                    elif "sentinel-3" in collection.lower():
-                        search_collection = "SENTINEL-3"
-                        product_type = "SL_2_LST___"
-                    
-                    bbox = None
-                    if chunk_info.get("bbox"):
-                        bbox = chunk_info["bbox"]
-                    
-                    products = await cdse_client.search(
-                        collection=search_collection,
-                        product_type=product_type,
-                        bbox=bbox,
-                        limit=1,
-                    )
-                    if products:
-                        product_id = products[0]["id"]
-                    else:
-                        raise ValueError(f"Product not found on CDSE: {item_id}")
+            from .cdse import CDSEClient
+            from .ingest import ingest_cog
+            import tempfile
+            from pathlib import Path
 
-                # Download + ingest
-                with tempfile.TemporaryDirectory(prefix="earthgrid_dl_") as tmpdir:
-                    from pathlib import Path
-                    tmpdir = Path(tmpdir)
-                    
-                    bands = chunk_info.get("bands")
-                    files = await cdse_client.download_product(
-                        product_id=product_id,
-                        output_dir=tmpdir,
-                        bands=bands,
-                    )
+            cdse_client = CDSEClient(
+                username=user_creds.get("username", ""),
+                password=user_creds.get("password", ""),
+            )
 
-                    ingested = 0
-                    for fpath in files:
-                        # Convert JP2 to GeoTIFF if needed
-                        if fpath.suffix.lower() == ".jp2":
-                            import subprocess
-                            tif_path = fpath.with_suffix(".tif")
-                            subprocess.run(
-                                ["gdal_translate", "-of", "GTiff", 
-                                 "-co", "COMPRESS=LZW", "-co", "TILED=YES",
-                                 str(fpath), str(tif_path)],
-                                check=True, capture_output=True,
-                            )
-                            fpath = tif_path
+            for item_info in items:
+                item_id = item_info["item_id"]
+                collection = item_info["collection"]
+                stream_id = None
 
-                        band_item_id = f"{item_id}_{fpath.stem}"
-                        item = ingest_cog(
-                            file_path=fpath,
-                            chunk_store=self.chunk_store,
-                            catalog=self.catalog,
-                            collection_id=collection,
-                            item_id=band_item_id,
+                try:
+                    if self.bandwidth:
+                        stream_id = f"dl-{user_creds.get('name','?')}-{item_id[:20]}"
+                        self.bandwidth.register_stream(stream_id, nice_level=nice_level)
+
+                    product_id = item_info.get("product_id", "")
+
+                    if not product_id:
+                        # Search CDSE for this item
+                        search_collection = "SENTINEL-2"
+                        product_type = "S2MSI2A"
+                        if "sentinel-1" in collection.lower():
+                            search_collection = "SENTINEL-1"
+                            product_type = "GRD"
+                        elif "sentinel-3" in collection.lower():
+                            search_collection = "SENTINEL-3"
+                            product_type = "SL_2_LST___"
+
+                        bbox = item_info.get("bbox")
+                        products = await cdse_client.search(
+                            collection=search_collection,
+                            product_type=product_type,
+                            bbox=bbox,
+                            limit=1,
                         )
-                        ingested += 1
-                        logger.info(f"Ingested {band_item_id}: {len(item.chunk_hashes)} chunks")
+                        if products:
+                            product_id = products[0]["id"]
+                        else:
+                            raise ValueError(f"Product not found on CDSE: {item_id}")
 
-                self.source_users.record_success(
-                    creds["user_id"], collection=collection, item_id=item_id
-                )
-                if self.stats:
-                    self.stats.record_collection_access(
-                        collection, access_type="download"
+                    # Download + ingest
+                    with tempfile.TemporaryDirectory(prefix="earthgrid_dl_") as tmpdir:
+                        tmpdir = Path(tmpdir)
+                        bands = item_info.get("bands")
+                        files = await cdse_client.download_product(
+                            product_id=product_id,
+                            output_dir=tmpdir,
+                            bands=bands,
+                        )
+
+                        ingested = 0
+                        for fpath in files:
+                            if fpath.suffix.lower() == ".jp2":
+                                import subprocess
+                                tif_path = fpath.with_suffix(".tif")
+                                subprocess.run(
+                                    ["gdal_translate", "-of", "GTiff",
+                                     "-co", "COMPRESS=LZW", "-co", "TILED=YES",
+                                     str(fpath), str(tif_path)],
+                                    check=True, capture_output=True,
+                                )
+                                fpath = tif_path
+
+                            band_item_id = f"{item_id}_{fpath.stem}"
+                            item = ingest_cog(
+                                file_path=fpath,
+                                chunk_store=self.chunk_store,
+                                catalog=self.catalog,
+                                collection_id=collection,
+                                item_id=band_item_id,
+                            )
+                            ingested += 1
+                            logger.info(f"[{user_creds.get('name','?')}] "
+                                        f"Ingested {band_item_id}: "
+                                        f"{len(item.chunk_hashes)} chunks")
+
+                    self.source_users.record_success(
+                        user_creds["user_id"], collection=collection, item_id=item_id
                     )
-                downloaded += ingested
-                logger.info(f"Downloaded+ingested {item_id} via {creds['name']}: {ingested} bands")
+                    if self.stats:
+                        self.stats.record_collection_access(
+                            collection, access_type="download"
+                        )
+                    worker_downloaded += ingested
+                    logger.info(f"[{user_creds.get('name','?')}] "
+                                f"{item_id}: {ingested} bands ingested")
 
-            except Exception as e:
-                self.source_users.record_failure(
-                    creds["user_id"], error_msg=str(e),
-                    collection=collection, item_id=item_id
-                )
-                errors.append(f"{collection}/{item_id}: {e}")
-                failed += 1
+                except Exception as e:
+                    self.source_users.record_failure(
+                        user_creds["user_id"], error_msg=str(e),
+                        collection=collection, item_id=item_id
+                    )
+                    worker_errors.append(f"{item_id}: {e}")
+                    worker_failed += 1
+                    logger.error(f"[{user_creds.get('name','?')}] "
+                                 f"Failed {item_id}: {e}")
 
-            finally:
-                if self.bandwidth and stream_id:
-                    self.bandwidth.unregister_stream(stream_id)
+                finally:
+                    if self.bandwidth and stream_id:
+                        self.bandwidth.unregister_stream(stream_id)
 
-        return {"downloaded": downloaded, "failed": failed, "errors": errors}
+            return {"downloaded": worker_downloaded,
+                    "failed": worker_failed,
+                    "errors": worker_errors}
+
+        # Launch all workers in parallel
+        tasks = []
+        for user_idx, items in user_tasks.items():
+            if items:  # skip empty assignments
+                tasks.append(_download_worker(all_users[user_idx], items))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Aggregate results
+        total_downloaded = 0
+        total_failed = 0
+        all_errors = []
+
+        for r in results:
+            if isinstance(r, Exception):
+                all_errors.append(str(r))
+                total_failed += 1
+            else:
+                total_downloaded += r["downloaded"]
+                total_failed += r["failed"]
+                all_errors.extend(r["errors"])
+
+        logger.info(f"Parallel download complete: {total_downloaded} ingested, "
+                     f"{total_failed} failed, {len(all_users)} workers")
+
+        return {"downloaded": total_downloaded, "failed": total_failed,
+                "errors": all_errors, "workers": len(tasks)}
+
 
     async def _download_element84_cog(self, cog_url: str, item_id: str,
                                       collection: str) -> dict:
