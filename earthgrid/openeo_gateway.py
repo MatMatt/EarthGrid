@@ -499,6 +499,8 @@ class OpenEOGateway:
             requirement.collection_id.lower(),
             ("SENTINEL-2", "S2MSI2A")  # default
         )
+        # Skip product_type filter - CDSE collection filter is sufficient
+        product_type = None
 
         # Build bbox from spatial extent
         bbox = None
