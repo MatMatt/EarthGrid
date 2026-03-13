@@ -198,14 +198,8 @@ class OpenEOGateway:
             bbox=bbox_list,
             datetime_range=datetime_range,
         )
-        # Fallback: if bbox search returns 0 items, try without bbox
-        # (catalog may store native CRS bbox, not WGS84)
-        if not items and bbox_list:
-            logger.warning(f"No items with bbox {bbox_list}, retrying without spatial filter")
-            items = self.catalog.search(
-                collections=[requirement.collection_id] if requirement.collection_id else None,
-                datetime_range=datetime_range,
-            )
+        # Note: catalog stores native CRS bbox - WGS84 bbox may not match.
+        # If 0 items found, execute() triggers search_and_acquire (self-fill).
 
         local_chunks = []
         missing_chunks = []
