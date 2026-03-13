@@ -23,6 +23,19 @@ class Settings(BaseSettings):
     admin_key: str = ""  # required for destructive operations (delete)
     require_auth_read: bool = False  # if True, reads also need api_key
 
+    # --- Source Users ---
+    source_key: str = ""  # Fernet encryption key for source user credentials
+    source_users_db: str = "data/source_users.db"
+
+    # --- Bandwidth Control ---
+    bw_limit_mbps: float = 0  # Global bandwidth limit in Mbps (0 = unlimited)
+    bw_schedule: str = ""  # JSON string: {"8": 50, "18": 75, "22": 100}
+    max_download_volume_gb: float = 0  # Max total download volume in GB (0 = unlimited)
+
+    # --- Stats ---
+    stats_db: str = "data/stats.db"
+    stats_retain_days: int = 90  # Auto-cleanup logs older than this
+
     model_config = {"env_prefix": "EARTHGRID_"}
 
     def __init__(self, **kwargs):
@@ -39,6 +52,17 @@ class Settings(BaseSettings):
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def bw_schedule_dict(self) -> dict[int, float]:
+        """Parse bandwidth schedule JSON string."""
+        if not self.bw_schedule:
+            return {}
+        try:
+            raw = json.loads(self.bw_schedule)
+            return {int(k): float(v) for k, v in raw.items()}
+        except (json.JSONDecodeError, ValueError):
+            return {}
 
 
 settings = Settings()

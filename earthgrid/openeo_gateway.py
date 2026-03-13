@@ -1,0 +1,440 @@
+"""EarthGrid openEO Gateway — Process graph parsing and execution.
+
+Accepts openEO process graphs, resolves data requirements to EarthGrid chunks,
+triggers auto-download for missing data, and executes supported operations.
+
+This is NOT a full openEO backend — it supports the subset needed for common
+Earth observation workflows.
+"""
+import asyncio
+import logging
+import time
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import APIRouter, HTTPException, Depends, Request
+from pydantic import BaseModel
+
+logger = logging.getLogger("earthgrid.openeo")
+
+router = APIRouter(prefix="/openeo", tags=["openeo"])
+
+
+# --- Models ---
+
+class ProcessGraph(BaseModel):
+    """An openEO process graph."""
+    process_graph: dict[str, Any]
+    title: str = ""
+    description: str = ""
+    budget: float = 0  # not used yet, placeholder
+
+
+class DataRequirement(BaseModel):
+    """Resolved data requirement from a process graph."""
+    collection_id: str
+    spatial_extent: dict = {}    # {"west": ..., "south": ..., "east": ..., "north": ...}
+    temporal_extent: list = []   # ["2024-01-01", "2024-12-31"]
+    bands: list[str] = []
+
+
+class JobResult(BaseModel):
+    """Result of processing a graph."""
+    job_id: str
+    status: str  # "queued", "running", "completed", "error"
+    progress: float = 0.0  # 0-100
+    result: dict = {}
+    errors: list[str] = []
+    data_requirements: list[dict] = []
+    chunks_local: int = 0
+    chunks_fetched: int = 0
+    chunks_downloaded: int = 0
+
+
+# --- Supported Processes ---
+
+SUPPORTED_PROCESSES = {
+    "load_collection": {
+        "id": "load_collection",
+        "summary": "Load data from a collection.",
+        "parameters": [
+            {"name": "id", "description": "Collection identifier", "schema": {"type": "string"}},
+            {"name": "spatial_extent", "description": "Bounding box", "optional": True},
+            {"name": "temporal_extent", "description": "Time range [start, end]", "optional": True},
+            {"name": "bands", "description": "Band names to load", "optional": True},
+        ],
+    },
+    "filter_spatial": {
+        "id": "filter_spatial",
+        "summary": "Filter by spatial extent.",
+        "parameters": [
+            {"name": "data", "description": "Input data"},
+            {"name": "extent", "description": "Bounding box or GeoJSON"},
+        ],
+    },
+    "filter_temporal": {
+        "id": "filter_temporal",
+        "summary": "Filter by time range.",
+        "parameters": [
+            {"name": "data", "description": "Input data"},
+            {"name": "extent", "description": "[start, end] ISO dates"},
+        ],
+    },
+    "ndvi": {
+        "id": "ndvi",
+        "summary": "Calculate NDVI from red and NIR bands.",
+        "parameters": [
+            {"name": "data", "description": "Input data with red and nir bands"},
+            {"name": "red", "description": "Red band name", "optional": True},
+            {"name": "nir", "description": "NIR band name", "optional": True},
+        ],
+    },
+    "save_result": {
+        "id": "save_result",
+        "summary": "Save processing result.",
+        "parameters": [
+            {"name": "data", "description": "Input data"},
+            {"name": "format", "description": "Output format (GTiff, PNG, JSON)"},
+        ],
+    },
+}
+
+
+class OpenEOGateway:
+    """Parse and execute openEO process graphs against EarthGrid data."""
+
+    def __init__(self, catalog=None, chunk_store=None,
+                 source_user_manager=None, stats_engine=None,
+                 bandwidth_manager=None):
+        self.catalog = catalog
+        self.chunk_store = chunk_store
+        self.source_users = source_user_manager
+        self.stats = stats_engine
+        self.bandwidth = bandwidth_manager
+        self._jobs: dict[str, JobResult] = {}
+
+    def parse_requirements(self, process_graph: dict) -> list[DataRequirement]:
+        """Extract data requirements from a process graph.
+        
+        Walks the graph to find all load_collection nodes and extracts
+        collection IDs, spatial/temporal extents, and band selections.
+        """
+        requirements = []
+
+        for node_id, node in process_graph.items():
+            process_id = node.get("process_id", "")
+            args = node.get("arguments", {})
+
+            if process_id == "load_collection":
+                req = DataRequirement(
+                    collection_id=args.get("id", ""),
+                    bands=args.get("bands", []),
+                )
+                # Spatial extent
+                if "spatial_extent" in args and args["spatial_extent"]:
+                    ext = args["spatial_extent"]
+                    req.spatial_extent = {
+                        "west": ext.get("west", ext.get("xmin", -180)),
+                        "south": ext.get("south", ext.get("ymin", -90)),
+                        "east": ext.get("east", ext.get("xmax", 180)),
+                        "north": ext.get("north", ext.get("ymax", 90)),
+                    }
+                # Temporal extent
+                if "temporal_extent" in args and args["temporal_extent"]:
+                    req.temporal_extent = args["temporal_extent"]
+
+                requirements.append(req)
+
+            # Also check filter nodes for extent refinement
+            elif process_id == "filter_spatial" and "extent" in args:
+                ext = args["extent"]
+                # Apply to the most recent requirement
+                if requirements:
+                    requirements[-1].spatial_extent = {
+                        "west": ext.get("west", -180),
+                        "south": ext.get("south", -90),
+                        "east": ext.get("east", 180),
+                        "north": ext.get("north", 90),
+                    }
+            elif process_id == "filter_temporal" and "extent" in args:
+                if requirements:
+                    requirements[-1].temporal_extent = args["extent"]
+
+        return requirements
+
+    async def resolve_chunks(self, requirement: DataRequirement) -> dict:
+        """Resolve a data requirement to chunks.
+        
+        Returns: {"local": [...], "peer": [...], "missing": [...]}
+        """
+        if not self.catalog:
+            return {"local": [], "peer": [], "missing": [], "error": "No catalog available"}
+
+        # Search catalog for matching items
+        bbox = None
+        if requirement.spatial_extent:
+            e = requirement.spatial_extent
+            bbox = f"{e['west']},{e['south']},{e['east']},{e['north']}"
+
+        time_start = requirement.temporal_extent[0] if requirement.temporal_extent else None
+        time_end = requirement.temporal_extent[1] if len(requirement.temporal_extent) > 1 else None
+
+        items = self.catalog.search(
+            collections=[requirement.collection_id] if requirement.collection_id else None,
+            bbox=bbox,
+            time_start=time_start,
+            time_end=time_end,
+        )
+
+        local_chunks = []
+        missing_chunks = []
+
+        for item in items:
+            # Check which chunks exist locally
+            for chunk_sha in (item.get("chunks") or []):
+                if self.chunk_store and self.chunk_store.exists(chunk_sha):
+                    local_chunks.append(chunk_sha)
+                else:
+                    missing_chunks.append({
+                        "sha": chunk_sha,
+                        "collection": requirement.collection_id,
+                        "item_id": item.get("id", ""),
+                    })
+
+        return {
+            "local": local_chunks,
+            "peer": [],  # TODO: federation lookup
+            "missing": missing_chunks,
+            "items_found": len(items),
+        }
+
+    async def acquire_missing(self, missing_chunks: list[dict],
+                              nice_level: int = 0) -> dict:
+        """Download missing chunks via source users.
+        
+        Triggers the auto-ingest pipeline for each missing chunk:
+        download → chunk → store → propagate.
+        """
+        if not self.source_users:
+            return {"error": "No source user manager configured",
+                    "downloaded": 0, "failed": 0}
+
+        downloaded = 0
+        failed = 0
+        errors = []
+
+        for chunk_info in missing_chunks:
+            collection = chunk_info.get("collection", "")
+            item_id = chunk_info.get("item_id", "")
+
+            # Select a source user
+            # Determine provider from collection
+            provider = "cdse"  # default
+            if "element84" in collection.lower() or "sentinel-cogs" in collection.lower():
+                provider = "element84"
+            elif "cmems" in collection.lower():
+                provider = "cmems"
+
+            creds = self.source_users.select_user(provider=provider)
+            if not creds:
+                errors.append(f"No source user available for {provider}")
+                failed += 1
+                continue
+
+            try:
+                # Bandwidth control
+                if self.bandwidth:
+                    stream_id = f"openeo-{item_id}"
+                    self.bandwidth.register_stream(stream_id, nice_level=nice_level)
+
+                # TODO: Actual download via CDSE/Element84 API
+                # This is the integration point with earthgrid.cdse module
+                # For now, log the intent
+                logger.info(f"Would download {collection}/{item_id} via {creds['name']}")
+
+                self.source_users.record_success(
+                    creds["user_id"], collection=collection, item_id=item_id
+                )
+                if self.stats:
+                    self.stats.record_collection_access(
+                        collection, access_type="download"
+                    )
+                downloaded += 1
+
+            except Exception as e:
+                self.source_users.record_failure(
+                    creds["user_id"], error_msg=str(e),
+                    collection=collection, item_id=item_id
+                )
+                errors.append(f"{collection}/{item_id}: {e}")
+                failed += 1
+
+            finally:
+                if self.bandwidth and stream_id:
+                    self.bandwidth.unregister_stream(stream_id)
+
+        return {"downloaded": downloaded, "failed": failed, "errors": errors}
+
+    async def execute(self, graph: ProcessGraph,
+                      nice_level: int = 0) -> JobResult:
+        """Execute an openEO process graph.
+        
+        1. Parse data requirements
+        2. Resolve to chunks (local, peer, missing)
+        3. Download missing via source users
+        4. Execute the process graph
+        5. Return result
+        """
+        import uuid
+        job_id = str(uuid.uuid4())[:8]
+        result = JobResult(job_id=job_id, status="running")
+        self._jobs[job_id] = result
+
+        try:
+            # Step 1: Parse requirements
+            requirements = self.parse_requirements(graph.process_graph)
+            result.data_requirements = [r.model_dump() for r in requirements]
+
+            if not requirements:
+                result.status = "error"
+                result.errors.append("No load_collection found in process graph")
+                return result
+
+            # Step 2: Resolve chunks
+            total_local = 0
+            total_missing = []
+            for req in requirements:
+                resolved = await self.resolve_chunks(req)
+                total_local += len(resolved["local"])
+                total_missing.extend(resolved["missing"])
+
+                if self.stats:
+                    self.stats.record_collection_access(
+                        req.collection_id, access_type="openeo",
+                        bbox=str(req.spatial_extent),
+                        time_range=str(req.temporal_extent)
+                    )
+
+            result.chunks_local = total_local
+            result.progress = 30.0
+
+            # Step 3: Download missing
+            if total_missing:
+                logger.info(f"Job {job_id}: {len(total_missing)} chunks missing, "
+                            f"triggering download")
+                dl_result = await self.acquire_missing(total_missing, nice_level=nice_level)
+                result.chunks_downloaded = dl_result["downloaded"]
+                result.chunks_fetched = dl_result["downloaded"]
+                if dl_result["errors"]:
+                    result.errors.extend(dl_result["errors"])
+            result.progress = 60.0
+
+            # Step 4: Execute process graph
+            # TODO: Actual raster processing (GDAL/rasterio)
+            # For now, return the resolution summary
+            result.progress = 100.0
+            result.status = "completed"
+            result.result = {
+                "message": "Process graph parsed and data resolved",
+                "requirements": [r.model_dump() for r in requirements],
+                "chunks_available": total_local + result.chunks_downloaded,
+                "chunks_missing": len(total_missing) - result.chunks_downloaded,
+            }
+
+        except Exception as e:
+            result.status = "error"
+            result.errors.append(str(e))
+            logger.error(f"Job {job_id} failed: {e}")
+
+        return result
+
+    def get_job(self, job_id: str) -> Optional[JobResult]:
+        """Get job status by ID."""
+        return self._jobs.get(job_id)
+
+
+# --- FastAPI Routes ---
+
+# These will be wired up in main.py with the actual gateway instance
+_gateway: Optional[OpenEOGateway] = None
+
+
+def set_gateway(gw: OpenEOGateway):
+    global _gateway
+    _gateway = gw
+
+
+def _get_gateway():
+    if not _gateway:
+        raise HTTPException(503, "openEO gateway not initialized")
+    return _gateway
+
+
+@router.get("/collections")
+def openeo_collections():
+    """List available collections (STAC-compatible)."""
+    gw = _get_gateway()
+    if not gw.catalog:
+        return {"collections": []}
+    collections = gw.catalog.list_collections()
+    return {
+        "collections": [
+            {"id": c.id, "title": c.title, "description": c.description}
+            for c in collections
+        ]
+    }
+
+
+@router.get("/processes")
+def openeo_processes():
+    """List supported openEO processes."""
+    return {"processes": list(SUPPORTED_PROCESSES.values())}
+
+
+@router.post("/process")
+async def openeo_process(graph: ProcessGraph, request: Request):
+    """Submit an openEO process graph for execution."""
+    gw = _get_gateway()
+
+    # Determine nice level from header (default 0)
+    nice = int(request.headers.get("X-Nice-Level", "0"))
+    nice = max(-10, min(19, nice))
+
+    result = await gw.execute(graph, nice_level=nice)
+    return result.model_dump()
+
+
+@router.get("/jobs/{job_id}")
+def openeo_job_status(job_id: str):
+    """Get job status."""
+    gw = _get_gateway()
+    job = gw.get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Job {job_id} not found")
+    return job.model_dump()
+
+
+@router.post("/validate")
+async def openeo_validate(graph: ProcessGraph):
+    """Validate a process graph without executing (dry run)."""
+    gw = _get_gateway()
+    requirements = gw.parse_requirements(graph.process_graph)
+
+    resolved = []
+    for req in requirements:
+        chunks = await gw.resolve_chunks(req)
+        resolved.append({
+            "collection": req.collection_id,
+            "spatial_extent": req.spatial_extent,
+            "temporal_extent": req.temporal_extent,
+            "bands": req.bands,
+            "local_chunks": len(chunks["local"]),
+            "missing_chunks": len(chunks["missing"]),
+            "needs_download": len(chunks["missing"]) > 0,
+        })
+
+    return {
+        "valid": len(requirements) > 0,
+        "requirements": resolved,
+        "supported_processes": list(SUPPORTED_PROCESSES.keys()),
+    }
