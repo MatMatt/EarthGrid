@@ -605,8 +605,8 @@ class OpenEOGateway:
                 total_local += len(resolved["local"])
                 total_missing.extend(resolved["missing"])
 
-                # Self-filling: if 0 local items, search CDSE and download
-                if resolved["items_found"] == 0:
+                # Self-filling: if no usable local chunks, search CDSE and download
+                if len(resolved["local"]) == 0:
                     logger.info(f"Job {job_id}: No local data for {req.collection_id}, "
                                 f"triggering self-fill from CDSE")
                     fill_result = await self.search_and_acquire(req, nice_level=nice_level)
