@@ -19,6 +19,10 @@ from .federation import Federation
 from .ingest import ingest_cog
 from .processing import Processor
 from .replication import Replicator
+from .stats import StatsEngine
+from .source_users import SourceUserManager
+from .bandwidth import BandwidthManager
+from .openeo_gateway import router as openeo_router, OpenEOGateway, set_gateway
 
 app = FastAPI(
     title="EarthGrid Node",
@@ -73,6 +77,28 @@ catalog = Catalog(settings.catalog_path)
 federation = Federation(settings.peers)
 processor = Processor(chunk_store, catalog)
 replicator = Replicator(chunk_store, catalog)
+
+# New architecture components
+stats_engine = StatsEngine(Path(settings.stats_db))
+source_user_mgr = SourceUserManager(
+    Path(settings.source_users_db),
+    encryption_key=settings.source_key,
+)
+bandwidth_mgr = BandwidthManager(
+    max_mbps=settings.bw_limit_mbps,
+    schedule=settings.bw_schedule_dict,
+)
+openeo_gw = OpenEOGateway(
+    catalog=catalog,
+    chunk_store=chunk_store,
+    source_user_manager=source_user_mgr,
+    stats_engine=stats_engine,
+    bandwidth_manager=bandwidth_mgr,
+)
+set_gateway(openeo_gw)
+
+# Include openEO router
+app.include_router(openeo_router)
 
 
 # --- Beacon Registration ---
@@ -138,6 +164,34 @@ async def startup():
             asyncio.create_task(_beacon_sync_loop())
 
 
+# --- Stats Middleware ---
+
+@app.middleware("http")
+async def stats_middleware(request: Request, call_next):
+    """Track chunk access and bandwidth in stats engine."""
+    response = await call_next(request)
+    try:
+        path = request.url.path
+        # Track chunk downloads
+        if path.startswith("/chunks/") and request.method == "GET" and response.status_code == 200:
+            sha = path.split("/chunks/")[1]
+            stats_engine.record_chunk_access(sha, access_type="read", node_id=settings.node_id)
+        # Track STAC searches
+        elif path.startswith("/stac/search") and response.status_code == 200:
+            collections = request.query_params.get("collections", "")
+            for c in collections.split(","):
+                if c.strip():
+                    stats_engine.record_collection_access(c.strip(), access_type="query")
+        # Track downloads
+        elif path.startswith("/download/") and response.status_code == 200:
+            parts = path.split("/download/")[1].split("/")
+            if len(parts) >= 2:
+                stats_engine.record_collection_access(parts[0], access_type="download")
+    except Exception:
+        pass
+    return response
+
+
 # --- Node Info ---
 
 @app.get("/")
@@ -157,6 +211,9 @@ def node_info():
         "collections": summary["collections"],
         "peers": len(federation.peers),
         "beacon": settings.also_beacon,
+        "openeo": True,
+        "bandwidth": bandwidth_mgr.status(),
+        "max_download_volume_gb": settings.max_download_volume_gb,
     }
 
 
@@ -196,7 +253,83 @@ def node_stats():
             "requests_today": cs["requests_today"],
         },
         "peers": len(federation.peers),
+        "bandwidth": bandwidth_mgr.status(),
+        "access_stats": stats_engine.overview(),
     }
+
+
+# --- Stats API ---
+
+@app.get("/stats/access")
+def stats_access_overview():
+    """Full access stats overview (top collections, chunk heatmap, replication advice)."""
+    return stats_engine.overview()
+
+@app.get("/stats/bandwidth")
+def stats_bandwidth(hours: int = Query(24)):
+    """Bandwidth usage summary."""
+    return stats_engine.bandwidth_summary(period_hours=hours)
+
+@app.get("/stats/replication")
+def stats_replication_advice():
+    """Replication factor advice based on access patterns."""
+    return stats_engine.replication_advice()
+
+
+# --- Source Users API ---
+
+@app.get("/source-users", dependencies=[Depends(_require_admin_auth)])
+def list_source_users(include_disabled: bool = Query(False)):
+    """List source user accounts (credentials excluded)."""
+    return {"users": source_user_mgr.list_users(include_disabled=include_disabled)}
+
+@app.post("/source-users", dependencies=[Depends(_require_admin_auth)])
+def add_source_user(
+    name: str = Query(...),
+    provider: str = Query("cdse"),
+    username: str = Query(...),
+    password: str = Query(""),
+    token: str = Query(""),
+    max_requests_hour: int = Query(100),
+    max_download_gb: float = Query(50.0),
+):
+    """Add a source user account (credentials encrypted at rest)."""
+    uid = source_user_mgr.add_user(
+        name=name, provider=provider, username=username,
+        password=password, token=token,
+        max_requests_hour=max_requests_hour,
+        max_download_gb=max_download_gb,
+    )
+    _audit("source_user_add", f"{name} ({provider}/{username})")
+    return {"status": "added", "user_id": uid}
+
+@app.delete("/source-users/{user_id}", dependencies=[Depends(_require_admin_auth)])
+def remove_source_user(user_id: int):
+    """Remove a source user account."""
+    ok = source_user_mgr.remove_user(user_id)
+    if not ok:
+        raise HTTPException(404, "Source user not found")
+    _audit("source_user_remove", f"id={user_id}")
+    return {"status": "removed"}
+
+@app.post("/source-users/{user_id}/reset", dependencies=[Depends(_require_admin_auth)])
+def reset_source_user_health(user_id: int):
+    """Reset health status for a source user."""
+    source_user_mgr.reset_health(user_id)
+    return {"status": "reset"}
+
+@app.get("/source-users/downloads", dependencies=[Depends(_require_admin_auth)])
+def source_user_downloads(user_id: int = Query(None), hours: int = Query(24)):
+    """Get download logs for source users."""
+    return {"logs": source_user_mgr.get_download_stats(user_id=user_id, hours=hours)}
+
+
+# --- Bandwidth API ---
+
+@app.get("/bandwidth")
+def bandwidth_status():
+    """Current bandwidth allocation status."""
+    return bandwidth_mgr.status()
 
 
 # --- Chunk Store ---
@@ -226,6 +359,12 @@ async def ingest_file(
     item_id: str = Query(None),
 ):
     """Upload and ingest a COG/GeoTIFF file."""
+    # Check download volume limit
+    if settings.max_download_volume_gb > 0:
+        total_gb = chunk_store.total_bytes / (1024**3)
+        if total_gb >= settings.max_download_volume_gb:
+            raise HTTPException(507, f"Download volume limit reached ({settings.max_download_volume_gb} GB)")
+
     # Save uploaded file temporarily
     tmp_path = Path(f"/tmp/earthgrid_ingest_{file.filename}")
     try:
@@ -361,6 +500,9 @@ def download_file(collection_id: str, item_id: str):
         data = reconstruct_geotiff(item_id, collection_id, catalog, chunk_store)
     except FileNotFoundError:
         raise HTTPException(404, f"Item {item_id} not found in {collection_id}")
+
+    # Track in stats
+    stats_engine.record_collection_access(collection_id, access_type="download")
 
     return Response(
         content=data,
