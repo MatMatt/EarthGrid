@@ -261,11 +261,13 @@ async def fetch_and_ingest(
                     # Convert JP2 to GeoTIFF if needed
                     if fpath.suffix.lower() == ".jp2":
                         tif_path = fpath.with_suffix(".tif")
-                        import subprocess
-                        subprocess.run(
-                            ["gdal_translate", "-of", "GTiff", str(fpath), str(tif_path)],
-                            check=True, capture_output=True,
-                        )
+                        import rasterio
+                        with rasterio.open(fpath) as src:
+                            profile = src.profile.copy()
+                            profile.update(driver="GTiff", compress="lzw", tiled=True)
+                            with rasterio.open(tif_path, "w", **profile) as dst:
+                                for band_i in range(1, src.count + 1):
+                                    dst.write(src.read(band_i), band_i)
                         fpath = tif_path
 
                     # Build item ID from filename
