@@ -151,9 +151,9 @@ class SourceUserManager:
         result = []
         for r in rows:
             pw = r["encrypted_password"]
-            if pw and self.fernet:
+            if pw:
                 try:
-                    pw = self.fernet.decrypt(pw.encode()).decode()
+                    pw = self._decrypt(pw)
                 except Exception:
                     pw = ""
             result.append({
