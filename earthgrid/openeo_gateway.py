@@ -216,7 +216,7 @@ class OpenEOGateway:
             item_id = item.id if hasattr(item, 'id') else item.get("id", "")
             item_bbox = item.bbox if hasattr(item, 'bbox') else item.get("bbox")
             for chunk_sha in chunk_list:
-                if self.chunk_store and self.chunk_store.exists(chunk_sha):
+                if self.chunk_store and self.chunk_store.has(chunk_sha):
                     local_chunks.append(chunk_sha)
                 else:
                     missing_chunks.append({
