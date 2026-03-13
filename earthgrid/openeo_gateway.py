@@ -247,10 +247,82 @@ class OpenEOGateway:
                     stream_id = f"openeo-{item_id}"
                     self.bandwidth.register_stream(stream_id, nice_level=nice_level)
 
-                # TODO: Actual download via CDSE/Element84 API
-                # This is the integration point with earthgrid.cdse module
-                # For now, log the intent
-                logger.info(f"Would download {collection}/{item_id} via {creds['name']}")
+                # Actual download via CDSE API → ingest into grid
+                from .cdse import CDSEClient
+                from .ingest import ingest_cog
+                import tempfile
+
+                cdse_client = CDSEClient(
+                    username=creds.get("username", ""),
+                    password=creds.get("password", ""),
+                )
+
+                # item_id contains the product name; extract CDSE product UUID if available
+                product_id = chunk_info.get("product_id", "")
+                
+                if not product_id:
+                    # Search CDSE for this item to get the product UUID
+                    # Parse collection/item to determine CDSE search params
+                    search_collection = "SENTINEL-2"
+                    product_type = "S2MSI2A"
+                    if "sentinel-1" in collection.lower():
+                        search_collection = "SENTINEL-1"
+                        product_type = "GRD"
+                    elif "sentinel-3" in collection.lower():
+                        search_collection = "SENTINEL-3"
+                        product_type = "SL_2_LST___"
+                    
+                    bbox = None
+                    if chunk_info.get("bbox"):
+                        bbox = chunk_info["bbox"]
+                    
+                    products = await cdse_client.search(
+                        collection=search_collection,
+                        product_type=product_type,
+                        bbox=bbox,
+                        limit=1,
+                    )
+                    if products:
+                        product_id = products[0]["id"]
+                    else:
+                        raise ValueError(f"Product not found on CDSE: {item_id}")
+
+                # Download + ingest
+                with tempfile.TemporaryDirectory(prefix="earthgrid_dl_") as tmpdir:
+                    from pathlib import Path
+                    tmpdir = Path(tmpdir)
+                    
+                    bands = chunk_info.get("bands")
+                    files = await cdse_client.download_product(
+                        product_id=product_id,
+                        output_dir=tmpdir,
+                        bands=bands,
+                    )
+
+                    ingested = 0
+                    for fpath in files:
+                        # Convert JP2 to GeoTIFF if needed
+                        if fpath.suffix.lower() == ".jp2":
+                            import subprocess
+                            tif_path = fpath.with_suffix(".tif")
+                            subprocess.run(
+                                ["gdal_translate", "-of", "GTiff", 
+                                 "-co", "COMPRESS=LZW", "-co", "TILED=YES",
+                                 str(fpath), str(tif_path)],
+                                check=True, capture_output=True,
+                            )
+                            fpath = tif_path
+
+                        band_item_id = f"{item_id}_{fpath.stem}"
+                        item = ingest_cog(
+                            file_path=fpath,
+                            chunk_store=self.chunk_store,
+                            catalog=self.catalog,
+                            collection_id=collection,
+                            item_id=band_item_id,
+                        )
+                        ingested += 1
+                        logger.info(f"Ingested {band_item_id}: {len(item.chunk_hashes)} chunks")
 
                 self.source_users.record_success(
                     creds["user_id"], collection=collection, item_id=item_id
@@ -259,7 +331,8 @@ class OpenEOGateway:
                     self.stats.record_collection_access(
                         collection, access_type="download"
                     )
-                downloaded += 1
+                downloaded += ingested
+                logger.info(f"Downloaded+ingested {item_id} via {creds['name']}: {ingested} bands")
 
             except Exception as e:
                 self.source_users.record_failure(
@@ -274,6 +347,37 @@ class OpenEOGateway:
                     self.bandwidth.unregister_stream(stream_id)
 
         return {"downloaded": downloaded, "failed": failed, "errors": errors}
+
+    async def _download_element84_cog(self, cog_url: str, item_id: str,
+                                      collection: str) -> dict:
+        """Download a public COG from Element84/AWS and ingest into grid."""
+        import httpx
+        import tempfile
+        from pathlib import Path
+        from .ingest import ingest_cog
+
+        with tempfile.TemporaryDirectory(prefix="earthgrid_e84_") as tmpdir:
+            tmpdir = Path(tmpdir)
+            fname = cog_url.split("/")[-1]
+            out_path = tmpdir / fname
+
+            async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+                logger.info(f"Downloading COG: {cog_url}")
+                async with client.stream("GET", cog_url) as resp:
+                    resp.raise_for_status()
+                    with open(out_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=65536):
+                            f.write(chunk)
+
+            item = ingest_cog(
+                file_path=out_path,
+                chunk_store=self.chunk_store,
+                catalog=self.catalog,
+                collection_id=collection,
+                item_id=item_id,
+            )
+            logger.info(f"Ingested {item_id} from Element84: {len(item.chunk_hashes)} chunks")
+            return {"item_id": item.id, "chunks": len(item.chunk_hashes)}
 
     async def execute(self, graph: ProcessGraph,
                       nice_level: int = 0) -> JobResult:
