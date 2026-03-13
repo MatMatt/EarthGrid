@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     public_url: str = ""  # this node's public URL (for beacon registration)
     storage_limit_gb: float = 50.0  # max GB to use for chunk storage
     also_beacon: bool = False  # run beacon alongside data node
+    api_key: str = ""  # required for write operations (ingest/process/delete)
+    admin_key: str = ""  # required for destructive operations (delete)
+    require_auth_read: bool = False  # if True, reads also need api_key
 
     model_config = {"env_prefix": "EARTHGRID_"}
 

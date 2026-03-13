@@ -4,10 +4,14 @@ import shutil
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends, Request, Header
+from fastapi.security import APIKeyHeader
+import logging
+import time
+import json as json_module
 from fastapi.responses import Response
 
-from . import __version__, DEFAULT_BEACON
+from . import __version__
 from .config import settings
 from .chunk_store import ChunkStore
 from .catalog import Catalog
@@ -15,13 +19,53 @@ from .federation import Federation
 from .ingest import ingest_cog
 from .processing import Processor
 from .replication import Replicator
-from .cdse import CDSEClient, fetch_and_ingest
 
 app = FastAPI(
     title="EarthGrid Node",
     version=__version__,
     description="Distributed satellite data storage and access",
 )
+
+
+
+# --- Security ---
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+_audit_log_path = settings.store_path.parent / "audit.jsonl"
+
+def _audit(action: str, detail: str = "", ip: str = "", success: bool = True):
+    """Append to audit log."""
+    try:
+        entry = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "action": action,
+            "detail": detail,
+            "ip": ip,
+            "ok": success,
+        }
+        with open(_audit_log_path, "a") as f:
+            f.write(json_module.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+def _require_write_auth(request: Request, x_api_key: str = Depends(_api_key_header)):
+    """Require API key for write operations."""
+    if not settings.api_key:
+        return  # no key configured = open (backward compatible)
+    if x_api_key != settings.api_key:
+        _audit("auth_fail", "write", ip=request.client.host if request.client else "", success=False)
+        raise HTTPException(401, "Invalid or missing API key")
+
+def _require_admin_auth(request: Request, x_api_key: str = Depends(_api_key_header)):
+    """Require admin key for destructive operations."""
+    if not settings.admin_key:
+        if not settings.api_key:
+            return  # no keys configured = open
+        # If api_key set but no admin_key, block destructive ops entirely
+        raise HTTPException(403, "Destructive operations disabled (no admin key configured)")
+    if x_api_key != settings.admin_key:
+        _audit("auth_fail", "admin", ip=request.client.host if request.client else "", success=False)
+        raise HTTPException(401, "Invalid or missing admin API key")
+
 
 # Initialize components
 chunk_store = ChunkStore(settings.store_path, limit_gb=settings.storage_limit_gb)
@@ -30,27 +74,18 @@ federation = Federation(settings.peers)
 processor = Processor(chunk_store, catalog)
 replicator = Replicator(chunk_store, catalog)
 
-# CDSE client (credentials from env or config)
-import os
-cdse_client = CDSEClient(
-    username=os.environ.get("EARTHGRID_CDSE_USERNAME", ""),
-    password=os.environ.get("EARTHGRID_CDSE_PASSWORD", ""),
-)
-
 
 # --- Beacon Registration ---
 
 async def _register_with_beacon():
-    """Register this node with the configured beacon (or default)."""
-    beacon = settings.beacon_url or DEFAULT_BEACON
-    if not beacon:
+    """Register this node with the configured beacon."""
+    if not settings.beacon_url:
         return
-    settings.beacon_url = beacon  # ensure it's set for heartbeat loop
     try:
         summary = catalog.summary()
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(
-                f"{beacon.rstrip('/')}/register",
+                f"{settings.beacon_url.rstrip('/')}/register",
                 params={
                     "node_id": settings.node_id,
                     "node_name": settings.node_name,
@@ -67,8 +102,7 @@ async def _register_with_beacon():
 
 async def _beacon_heartbeat_loop():
     """Send periodic heartbeats to the beacon."""
-    beacon = settings.beacon_url or DEFAULT_BEACON
-    if not beacon:
+    if not settings.beacon_url:
         return
     while True:
         await asyncio.sleep(60)  # every 60s
@@ -76,7 +110,7 @@ async def _beacon_heartbeat_loop():
             summary = catalog.summary()
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
-                    f"{beacon.rstrip('/')}/heartbeat",
+                    f"{settings.beacon_url.rstrip('/')}/heartbeat",
                     params={
                         "node_id": settings.node_id,
                         "collections": ",".join(summary["collections"]),
@@ -185,7 +219,7 @@ def list_chunks(limit: int = Query(100, le=10000)):
 
 # --- Ingest ---
 
-@app.post("/ingest")
+@app.post("/ingest", dependencies=[Depends(_require_write_auth)])
 async def ingest_file(
     file: UploadFile = File(...),
     collection: str = Query("default"),
@@ -209,6 +243,8 @@ async def ingest_file(
 
         # Notify beacon to push new item to registered nodes
         asyncio.create_task(_notify_peers_new_item(item))
+
+        _audit("ingest", f"{item.id} ({len(item.chunk_hashes)} chunks)")
 
         return {
             "status": "ingested",
@@ -403,7 +439,7 @@ async def federation_search(
 
 
 
-@app.post("/sync-item")
+@app.post("/sync-item", dependencies=[Depends(_require_write_auth)])
 async def sync_item_from_peer(
     source_url: str = Query(..., description="URL of the source node"),
     item_id: str = Query(...),
@@ -485,13 +521,30 @@ def verify_item_integrity(item_id: str):
     return results
 
 
+
+
+@app.get("/audit", dependencies=[Depends(_require_admin_auth)])
+def get_audit_log(limit: int = Query(50, description="Number of recent entries")):
+    """View audit log (admin only)."""
+    if not _audit_log_path.exists():
+        return {"entries": []}
+    lines = _audit_log_path.read_text().strip().split("\n")
+    entries = []
+    for line in lines[-limit:]:
+        try:
+            entries.append(json_module.loads(line))
+        except Exception:
+            pass
+    return {"entries": entries}
+
+
 @app.get("/process/operations")
 def list_operations():
     """List available processing operations."""
     return {"operations": processor.list_operations()}
 
 
-@app.post("/process")
+@app.post("/process", dependencies=[Depends(_require_write_auth)])
 def process_item(
     item_id: str = Query(None, description="Source STAC item ID (single item)"),
     items: str = Query(None, description="Comma-separated item IDs (multi-item, e.g. B04,B08)"),
@@ -568,62 +621,3 @@ async def trigger_sync(
         dry_run=dry_run,
     )
     return result
-
-
-# --- CDSE Fetch ---
-
-@app.get("/cdse/search")
-async def cdse_search(
-    bbox: str = Query(None, description="west,south,east,north"),
-    start_date: str = Query(None, description="YYYY-MM-DD"),
-    end_date: str = Query(None, description="YYYY-MM-DD"),
-    cloud_cover: float = Query(30.0, description="Max cloud cover %"),
-    product_type: str = Query("S2MSI2A", description="S2MSI2A, S2MSI1C, etc."),
-    limit: int = Query(10, le=50),
-):
-    """Search CDSE catalog for Sentinel products."""
-    bbox_list = [float(x) for x in bbox.split(",")] if bbox else None
-    products = await cdse_client.search(
-        bbox=bbox_list,
-        start_date=start_date,
-        end_date=end_date,
-        cloud_cover=cloud_cover,
-        product_type=product_type,
-        limit=limit,
-    )
-    return {"products": products, "count": len(products)}
-
-
-@app.post("/cdse/fetch")
-async def cdse_fetch(
-    bbox: str = Query(None, description="west,south,east,north"),
-    start_date: str = Query(None, description="YYYY-MM-DD"),
-    end_date: str = Query(None, description="YYYY-MM-DD"),
-    cloud_cover: float = Query(30.0),
-    bands: str = Query(None, description="Comma-separated bands: B02,B03,B04,B08,SCL"),
-    product_type: str = Query("S2MSI2A"),
-    limit: int = Query(1, le=5),
-    collection: str = Query("sentinel-2-l2a", description="EarthGrid collection name"),
-):
-    """Fetch from CDSE, download bands, and ingest into this node."""
-    bbox_list = [float(x) for x in bbox.split(",")] if bbox else None
-    band_list = [b.strip() for b in bands.split(",")] if bands else None
-
-    results = await fetch_and_ingest(
-        cdse_client=cdse_client,
-        chunk_store=chunk_store,
-        catalog=catalog,
-        bbox=bbox_list,
-        start_date=start_date,
-        end_date=end_date,
-        cloud_cover=cloud_cover,
-        bands=band_list,
-        product_type=product_type,
-        limit=limit,
-        earthgrid_collection=collection,
-    )
-    return {
-        "status": "fetched",
-        "ingested": [r for r in results if r.get("item_id")],
-        "errors": [r for r in results if r.get("error")],
-    }
