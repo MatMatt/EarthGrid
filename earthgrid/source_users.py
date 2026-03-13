@@ -135,6 +135,34 @@ class SourceUserManager:
             rows = conn.execute("DELETE FROM source_users WHERE id = ?", (user_id,)).rowcount
         return rows > 0
 
+    def list_users_with_creds(self, provider: str = None) -> list[dict]:
+        """List enabled source users WITH decrypted credentials (internal use only).
+        
+        Used by openEO gateway for parallel downloads across user pool.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            q = "SELECT * FROM source_users WHERE is_enabled = 1"
+            params = []
+            if provider:
+                q += " AND provider = ?"
+                params.append(provider)
+            rows = conn.execute(q, params).fetchall()
+        result = []
+        for r in rows:
+            pw = r["password_enc"]
+            if pw and self.fernet:
+                try:
+                    pw = self.fernet.decrypt(pw.encode()).decode()
+                except Exception:
+                    pw = ""
+            result.append({
+                "user_id": r["id"], "name": r["name"],
+                "provider": r["provider"], "username": r["username"],
+                "password": pw or "",
+            })
+        return result
+
     def list_users(self, include_disabled: bool = False) -> list[dict]:
         """List source users (credentials excluded)."""
         with sqlite3.connect(self.db_path) as conn:
