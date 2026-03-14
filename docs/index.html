@@ -121,7 +121,18 @@ async function load() {
     // Fallback: if no nodes registered, use beacon's own stats
     if (totalBytes === 0) totalBytes = d.chunks_bytes || d.earthgrid?.chunks_bytes || 0;
 
-    document.getElementById('vArea').textContent = (d.total_area_km2 || 0).toLocaleString();
+    // Get km² from coverage stats
+    try {
+      const covR = await fetch(BEACON + '/stats/coverage');
+      const covD = await covR.json();
+      let totalKm2 = 0;
+      for (const [, s] of Object.entries(covD.sensors || {})) {
+        totalKm2 += s.area_km2 || 0;
+      }
+      document.getElementById('vArea').textContent = totalKm2.toLocaleString();
+    } catch(e) {
+      document.getElementById('vArea').textContent = (d.total_area_km2 || 0).toLocaleString();
+    }
     document.getElementById('vRedundancy').textContent = (d.redundancy_index || 1.0) + 'x';
     document.getElementById('vStorage').textContent = (totalBytes / 1e9).toFixed(1) + ' GB';
     if (d.version) document.getElementById('ver').textContent = d.version;
