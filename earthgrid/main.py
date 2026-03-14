@@ -23,6 +23,7 @@ from .replication import Replicator
 from .stats import StatsEngine
 from .source_users import SourceUserManager
 from .bandwidth import BandwidthManager
+from .ratelimit import RateLimitMiddleware
 from .openeo_gateway import router as openeo_router, OpenEOGateway, set_gateway
 
 app = FastAPI(
@@ -39,6 +40,9 @@ app.add_middleware(
     allow_methods=['GET', 'POST', 'OPTIONS'],
     allow_headers=['*'],
 )
+
+# Built-in rate limiting — protects node without external config
+app.add_middleware(RateLimitMiddleware, requests_per_minute=120, burst=20)
 
 # --- Security ---
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
