@@ -253,6 +253,7 @@ EarthGrid includes an openEO-compatible gateway. Missing data is automatically f
 
 ### Direct API *(works now)*
 
+**Python:**
 ```python
 import requests
 
@@ -280,6 +281,16 @@ r = requests.post("http://localhost:8400/openeo/process", json={
     }
 })
 ```
+
+**curl:**
+```bash
+curl -X POST http://localhost:8400/openeo/process \
+  -H "Content-Type: application/json" \
+  -d '{"process_graph": {"load": {"process_id": "load_collection", "arguments": {"id": "sentinel-2-l2a", "spatial_extent": {"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7}, "temporal_extent": ["2026-03-01", "2026-03-12"], "bands": ["B04", "B08"]}, "result": false}, "ndvi": {"process_id": "ndvi", "arguments": {"data": {"from_node": "load"}, "red": "B04", "nir": "B08"}, "result": false}, "save": {"process_id": "save_result", "arguments": {"data": {"from_node": "ndvi"}, "format": "GTiff"}, "result": true}}}'
+```
+
+> These examples assume EarthGrid is running locally on port 8400.
+> Replace `localhost` with your node's address if accessing remotely.
 
 ### openEO Client *(coming soon)*
 
