@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -66,6 +67,8 @@ def main():
 
     # --- Setup ---
     sub.add_parser("stop", help="Stop background daemon")
+    sub.add_parser("install-service", help="Install systemd service (auto-start at boot)")
+    sub.add_parser("uninstall-service", help="Remove systemd service")
     setup_p = sub.add_parser("setup", help="Interactive first-time setup")
     setup_p.add_argument("--port", type=int, default=8400)
 
@@ -181,6 +184,14 @@ def main():
         _stop_daemon()
         return
 
+    elif args.command == "install-service":
+        _install_systemd_service()
+        return
+
+    elif args.command == "uninstall-service":
+        _uninstall_systemd_service()
+        return
+
     elif args.command == "start":
         # Load config from setup if exists
         config_file = Path.home() / ".earthgrid" / "config.json"
@@ -282,6 +293,78 @@ def _stop_daemon():
     except OSError:
         print(f"  ⚠ Process {pid} not found (already stopped?)")
     pid_file.unlink(missing_ok=True)
+
+
+SYSTEMD_UNIT = "earthgrid.service"
+
+def _install_systemd_service():
+    """Install EarthGrid as a systemd user service."""
+    import os, subprocess
+
+    user_unit_dir = Path.home() / ".config" / "systemd" / "user"
+    user_unit_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find earthgrid binary
+    earthgrid_bin = shutil.which("earthgrid")
+    if not earthgrid_bin:
+        earthgrid_bin = str(Path(sys.executable).parent / "earthgrid")
+
+    # Build env file path
+    env_file = Path.home() / ".earthgrid" / ".env"
+    config_file = Path.home() / ".earthgrid" / "config.json"
+
+    # Determine working directory
+    work_dir = Path.home() / ".earthgrid"
+
+    unit_content = f"""[Unit]
+Description=EarthGrid Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={work_dir}
+ExecStart={earthgrid_bin} start
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+"""
+
+    unit_path = user_unit_dir / SYSTEMD_UNIT
+    unit_path.write_text(unit_content)
+
+    # Enable lingering so service runs without login
+    subprocess.run(["loginctl", "enable-linger", os.environ.get("USER", "")],
+                   capture_output=True)
+
+    # Reload and enable
+    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+    subprocess.run(["systemctl", "--user", "enable", SYSTEMD_UNIT], capture_output=True)
+    subprocess.run(["systemctl", "--user", "start", SYSTEMD_UNIT], capture_output=True)
+
+    print(f"✅ EarthGrid service installed and started")
+    print(f"   Unit:    {unit_path}")
+    print(f"   Status:  systemctl --user status {SYSTEMD_UNIT}")
+    print(f"   Logs:    journalctl --user -u {SYSTEMD_UNIT} -f")
+    print(f"   Remove:  earthgrid uninstall-service")
+
+
+def _uninstall_systemd_service():
+    """Remove EarthGrid systemd user service."""
+    import subprocess
+
+    subprocess.run(["systemctl", "--user", "stop", SYSTEMD_UNIT], capture_output=True)
+    subprocess.run(["systemctl", "--user", "disable", SYSTEMD_UNIT], capture_output=True)
+
+    unit_path = Path.home() / ".config" / "systemd" / "user" / SYSTEMD_UNIT
+    if unit_path.exists():
+        unit_path.unlink()
+    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+    print(f"✓ EarthGrid service removed")
 
 
 def _human_bytes(b: int) -> str:
