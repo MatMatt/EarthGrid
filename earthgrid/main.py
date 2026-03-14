@@ -271,7 +271,7 @@ def stats_coverage():
 
 @app.get("/stats/requests")
 def stats_requests():
-    """Total km² requested (based on search/access bbox queries)."""
+    """Total km² queried (based on search/access bbox queries)."""
     try:
         import sqlite3
         with sqlite3.connect(stats_engine.db_path) as conn:
@@ -299,10 +299,10 @@ def stats_requests():
                 continue
         return {
             "total_requests": len(rows),
-            "total_km2_requested": round(total_km2),
+            "total_km2_queried": round(total_km2),
         }
     except Exception:
-        return {"total_requests": 0, "total_km2_requested": 0}
+        return {"total_requests": 0, "total_km2_queried": 0}
 
 
 @app.get("/stats")

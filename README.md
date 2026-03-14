@@ -221,7 +221,7 @@ Processing results are **ephemeral** — computed on-the-fly and returned direct
 | `GET /verify/{item_id}` | Verify chunk integrity |
 | `GET /nodes` | List network nodes (beacon) |
 | `GET /stats/coverage` | km² per sensor |
-| `GET /stats/requests` | km² requested |
+| `GET /stats/requests` | km² queried |
 | `GET /process/operations` | List available operations |
 | `GET /openeo/collections` | openEO collections |
 | `GET /openeo/processes` | openEO supported processes |
@@ -250,7 +250,7 @@ Processing results are **ephemeral** — computed on-the-fly and returned direct
 
 Live network stats: **[matmatt.github.io/EarthGrid](https://matmatt.github.io/EarthGrid/)**
 
-Shows: Network nodes, km² coverage per sensor, redundancy index, km² requested, total storage.
+Shows: Network nodes, km² coverage per sensor, redundancy index, km² queried, total storage.
 
 Auto-updated every 30 seconds. Seed list (`peers.json`) updated every 10 minutes from beacon.
 

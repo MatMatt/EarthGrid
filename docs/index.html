@@ -63,7 +63,7 @@ a:hover { text-decoration:underline; }
   <div class="stat loading" id="sNodes"><div class="value" id="vNodes">—</div><div class="label">Network Nodes</div></div>
   <div class="stat loading" id="sArea"><div class="value" id="vArea">—</div><div class="label">km² Data</div></div>
   <div class="stat loading" id="sRedundancy"><div class="value" id="vRedundancy">—</div><div class="label">Redundancy Index</div></div>
-  <div class="stat loading" id="sRequested"><div class="value" id="vRequested">—</div><div class="label">km² Requested</div></div>
+  <div class="stat loading" id="sRequested"><div class="value" id="vRequested">—</div><div class="label">km² Queried</div></div>
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Total Storage</div></div>
 </div>
 
@@ -128,11 +128,11 @@ async function load() {
     if (d.version) document.getElementById('ver').textContent = d.version;
     document.querySelectorAll('.stat.loading').forEach(s => s.classList.remove('loading'));
 
-    // km² requested
+    // km² queried
     try {
       const rr = await fetch(BEACON + '/stats/requests');
       const rd = await rr.json();
-      document.getElementById('vRequested').textContent = (rd.total_km2_requested || 0).toLocaleString();
+      document.getElementById('vRequested').textContent = (rd.total_km2_queried || 0).toLocaleString();
       document.getElementById('sRequested').classList.remove('loading');
     } catch(e) {
       document.getElementById('vRequested').textContent = '0';
