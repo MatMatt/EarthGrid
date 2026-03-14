@@ -111,6 +111,27 @@ earthgrid users remove 1
 
 ---
 
+## Data Sources
+
+EarthGrid can fetch from multiple upstream providers. **All data is stored as Cloud-Optimized GeoTIFF (COG)** regardless of source format — so the data in the grid is identical no matter where it came from.
+
+| Provider | Account needed | Data | Notes |
+|---|---|---|---|
+| **Element84** (AWS) | ❌ No | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG — fastest ingest |
+| **CDSE** (Copernicus) | ✅ Free | S1, S2, S3, S5P, full archive | JP2000 → converted to COG on ingest |
+| **WEkEO** | ✅ Free | CLMS, C3S, CAMS | Climate & land services |
+| **CMEMS** | ✅ Free | Marine data | Ocean & marine products |
+
+### Which source should I use?
+
+- **Just want to contribute?** → Element84. No account, instant start.
+- **Need the full Sentinel archive?** → Add CDSE (free registration).
+- **Both?** → Recommended. More sources = more data available to the network.
+
+Since EarthGrid converts everything to COG, data from Element84 and CDSE is **byte-identical in the grid**. Element84 is simply faster to ingest because the source is already COG (no JP2000→COG conversion step).
+
+---
+
 ## Quick Start
 
 ### Docker (recommended)
