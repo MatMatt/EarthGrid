@@ -231,6 +231,25 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/stats/coverage")
+def stats_coverage():
+    """Spatial coverage in km² per collection (raw vs processed)."""
+    cov = catalog.coverage_by_collection()
+    # Split into raw sensor data vs derived/processed
+    raw = {}
+    processed = {}
+    for col, info in cov["collections"].items():
+        if "_derived" in col:
+            processed[col] = info
+        else:
+            raw[col] = info
+    return {
+        "total_area_km2": cov["total_area_km2"],
+        "raw": raw,
+        "processed": processed,
+    }
+
+
 @app.get("/stats")
 def node_stats():
     """Detailed node statistics — storage, access, uptime."""
