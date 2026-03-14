@@ -224,11 +224,31 @@ def node_info():
         "total_area_km2": summary["total_area_km2"],
         "collections": summary["collections"],
         "peers": len(federation.peers),
+        "redundancy_index": _redundancy_index(),
         "beacon": settings.also_beacon,
         "openeo": True,
         "bandwidth": bandwidth_mgr.status(),
         "max_download_volume_gb": settings.max_download_volume_gb,
     }
+
+
+def _redundancy_index() -> float:
+    """Average replication factor: total chunks across all nodes / unique chunks.
+
+    1.0 = no redundancy, 2.0 = every chunk on 2 nodes, etc.
+    """
+    try:
+        local_chunks = chunk_store.chunk_count
+        if local_chunks == 0:
+            return 0.0
+        total = local_chunks
+        for peer in federation.peers:
+            if hasattr(peer, "chunk_count") and peer.chunk_count:
+                total += peer.chunk_count
+        # Unique chunks = local (beacon has all), so index = total / local
+        return round(total / local_chunks, 2) if local_chunks > 0 else 1.0
+    except Exception:
+        return 1.0
 
 
 @app.get("/health")
@@ -246,6 +266,42 @@ def stats_coverage():
         "total_area_km2": sum(s["area_km2"] for s in sensors.values()),
         "sensors": sensors,
     }
+
+
+@app.get("/stats/requests")
+def stats_requests():
+    """Total km² requested (based on search/access bbox queries)."""
+    try:
+        import sqlite3
+        with sqlite3.connect(stats_engine.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT query_bbox FROM collection_access WHERE query_bbox != ''"
+            ).fetchall()
+        total_km2 = 0.0
+        for r in rows:
+            try:
+                parts = [float(x) for x in r["query_bbox"].split(",")]
+                if len(parts) == 4:
+                    w, s, e, n = parts
+                    # If values look like UTM meters (> 1000)
+                    if abs(w) > 1000 or abs(e) > 1000:
+                        total_km2 += abs((e - w) * (n - s)) / 1e6
+                    else:
+                        # WGS84 degrees — rough conversion
+                        import math
+                        lat_mid = math.radians((n + s) / 2)
+                        km_per_deg_lon = 111.32 * math.cos(lat_mid)
+                        km_per_deg_lat = 111.32
+                        total_km2 += abs((e - w) * km_per_deg_lon * (n - s) * km_per_deg_lat)
+            except (ValueError, ZeroDivisionError):
+                continue
+        return {
+            "total_requests": len(rows),
+            "total_km2_requested": round(total_km2),
+        }
+    except Exception:
+        return {"total_requests": 0, "total_km2_requested": 0}
 
 
 @app.get("/stats")
