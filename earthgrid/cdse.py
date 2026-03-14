@@ -151,12 +151,20 @@ class CDSEClient:
     ) -> list[dict]:
         """List files inside a CDSE product via Nodes API (no download needed)."""
         token = await self.get_token()
-        url = f"{ODATA_URL}/Products({product_id})/Nodes"
+        base = f"{ODATA_URL}/Products({product_id})/Nodes"
         headers = {"Authorization": f"Bearer {token}"}
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        # Use event_hooks to re-inject auth on redirects (CDSE redirects to download domain)
+        async def _inject_auth(request):
+            if "Authorization" not in request.headers:
+                request.headers["Authorization"] = f"Bearer {token}"
+
+        async with httpx.AsyncClient(
+            timeout=30, follow_redirects=True,
+            event_hooks={"request": [_inject_auth]}
+        ) as client:
             # First level: the .SAFE folder
-            resp = await client.get(url, headers=headers)
+            resp = await client.get(base, headers=headers)
             resp.raise_for_status()
             safe_nodes = resp.json().get("result", resp.json().get("value", []))
             if not safe_nodes:
@@ -164,29 +172,36 @@ class CDSEClient:
 
             # Navigate into .SAFE/GRANULE/*/IMG_DATA/ recursively
             all_files = []
+            safe_name = safe_nodes[0].get("Name", safe_nodes[0].get("Id", ""))
 
-            async def _walk(node_url: str, depth: int = 0):
+            async def _walk(path_segments: list[str], depth: int = 0):
                 if depth > 6:
                     return
-                r = await client.get(node_url, headers=headers)
+                # Build URL: base('SAFE.name')/Nodes('dir')/Nodes('subdir')/Nodes
+                url = base
+                for seg in path_segments:
+                    url += f"('{seg}')/Nodes"
+                r = await client.get(url, headers=headers)
                 r.raise_for_status()
                 children = r.json().get("result", r.json().get("value", []))
                 for child in children:
                     name = child.get("Name", "")
-                    child_id = child.get("Id", name)
                     if name.endswith("/"):
                         # Directory — recurse
-                        await _walk(f"{node_url}({child_id!r})/Nodes", depth + 1)
+                        await _walk(path_segments + [name.rstrip("/")], depth + 1)
                     elif name.endswith((".jp2", ".tif", ".tiff")):
+                        # Build download URL
+                        dl_url = base
+                        for seg in path_segments:
+                            dl_url += f"('{seg}')/Nodes"
+                        dl_url += f"('{name}')/$value"
                         all_files.append({
                             "name": name,
-                            "id": child_id,
                             "size": child.get("ContentLength", 0),
-                            "download_url": f"{node_url}({child_id!r})/$value",
+                            "download_url": dl_url,
                         })
 
-            safe_name = safe_nodes[0].get("Name", safe_nodes[0].get("Id", ""))
-            await _walk(f"{url}({safe_name!r})/Nodes")
+            await _walk([safe_name])
 
         return all_files
 
@@ -242,7 +257,14 @@ class CDSEClient:
             logger.info(f"Downloading {len(matching)} band files for {product_id} "
                         f"(of {len(all_nodes)} total files)")
 
-            async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+            async def _inject_auth_dl(request):
+                if "Authorization" not in request.headers:
+                    request.headers["Authorization"] = f"Bearer {token}"
+
+            async with httpx.AsyncClient(
+                timeout=300, follow_redirects=True,
+                event_hooks={"request": [_inject_auth_dl]}
+            ) as client:
                 for node in matching:
                     out_path = output_dir / Path(node["name"]).name
                     try:
@@ -265,7 +287,14 @@ class CDSEClient:
         url = f"{DOWNLOAD_URL}/Products({product_id})/$value"
         zip_path = output_dir / f"{product_id}.zip"
 
-        async with httpx.AsyncClient(timeout=600, follow_redirects=True) as client:
+        async def _inject_auth_zip(request):
+            if "Authorization" not in request.headers:
+                request.headers["Authorization"] = f"Bearer {token}"
+
+        async with httpx.AsyncClient(
+            timeout=600, follow_redirects=True,
+            event_hooks={"request": [_inject_auth_zip]}
+        ) as client:
             logger.info(f"Downloading full product {product_id}...")
             async with client.stream("GET", url, headers=headers) as resp:
                 resp.raise_for_status()
