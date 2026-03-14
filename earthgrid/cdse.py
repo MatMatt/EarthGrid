@@ -46,10 +46,9 @@ class CDSEClient:
 
         if not self.username or not self.password:
             raise ValueError(
-                "CDSE credentials required. Set via:\n"
-                "  earthgrid config cdse_username <email>\n"
-                "  earthgrid config cdse_password <password>\n"
-                "Or env: EARTHGRID_CDSE_USERNAME / EARTHGRID_CDSE_PASSWORD"
+                "CDSE credentials required. Add a source user via CLI:
+"
+                "  earthgrid users add --provider cdse --username <email>"
             )
 
         async with httpx.AsyncClient(timeout=30) as client:
