@@ -31,7 +31,6 @@ pre { background:var(--card); border:1px solid var(--border); border-radius:8px;
 a { color:var(--accent); text-decoration:none; }
 a:hover { text-decoration:underline; }
 .footer { text-align:center; color:var(--dim); font-size:0.8rem; margin-top:3rem; padding-top:1rem; border-top:1px solid var(--border); }
-#nodeList { min-height:40px; }
 .ops { display:flex; flex-wrap:wrap; gap:0.5rem; margin:1rem 0; }
 .op { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:0.5rem 1rem; font-size:0.85rem; }
 .op .opname { font-weight:600; color:var(--accent); }
@@ -161,7 +160,7 @@ async function load() {
     document.getElementById('opsList').innerHTML = oh || '<em>None</em>';
 
   } catch(e) {
-    document.getElementById('nodeList').innerHTML = '<em style="color:var(--orange)">Could not connect to beacon</em>';
+    
     console.error('Load error:', e);
   }
 }
