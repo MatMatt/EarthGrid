@@ -1,14 +1,5 @@
 {
-  "seeds": [
-    {
-      "url": "https://mattiuzzi.zapto.org/earthgrid",
-      "name": "nucleus",
-      "collections": [
-        "sentinel-2-l2a"
-      ],
-      "items": 67
-    }
-  ],
-  "updated": "2026-03-14T20:20:03Z",
+  "seeds": [],
+  "updated": "2026-03-14T20:30:03Z",
   "source": "https://mattiuzzi.zapto.org/earthgrid"
 }
