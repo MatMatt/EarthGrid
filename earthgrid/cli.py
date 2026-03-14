@@ -568,22 +568,45 @@ def _interactive_setup(args):
     store_input = input(f"Data directory? [{default_store}]: ").strip()
     store_path = Path(store_input) if store_input else default_store
 
+    # Node name
+    import socket
+    default_name = socket.gethostname()
+    node_name = input(f"Name your node? [{default_name}]: ").strip()
+    if not node_name:
+        node_name = default_name
+
     # Beacon URL (to connect to the network)
     from . import DEFAULT_BEACON
     beacon_url = input(f"Beacon URL to join? [{DEFAULT_BEACON}]: ").strip()
     if not beacon_url:
         beacon_url = DEFAULT_BEACON
 
-    # CDSE credentials (optional — needed for direct fetch from Copernicus)
-    print("\n📡 CDSE (Copernicus Data Space) — optional")
-    print("  Without credentials: you can only redistribute data from other nodes")
-    print("  With credentials:    you can fetch directly from Copernicus (free account)")
-    print("  Register at: https://dataspace.copernicus.eu")
-    cdse_username = input("  CDSE email (or Enter to skip): ").strip()
+    # Source data provider
+    print("\n📡 Data Sources — where should your node fetch satellite data from?")
+    print("  [1] CDSE (Copernicus) — full Sentinel archive, requires free account")
+    print("  [2] Element84 (AWS) — S2/S1/Landsat mirror, no account needed")
+    print("  [3] Both (recommended)")
+    print("  [4] None — redistribute data from other nodes only")
+    provider_input = input("Choose [3]: ").strip()
+    if not provider_input:
+        provider_input = "3"
+
+    cdse_username = ""
     cdse_password = ""
-    if cdse_username:
-        import getpass
-        cdse_password = getpass.getpass("  CDSE password: ")
+    add_element84 = False
+
+    if provider_input in ("1", "3"):
+        print("\n  🔑 CDSE — Register free at: https://dataspace.copernicus.eu")
+        cdse_username = input("  CDSE email: ").strip()
+        if cdse_username:
+            import getpass
+            cdse_password = getpass.getpass("  CDSE password: ")
+        elif provider_input == "1":
+            print("  ⚠ No CDSE email — skipping CDSE")
+
+    if provider_input in ("2", "3"):
+        add_element84 = True
+        print("  ✓ Element84 (no credentials needed)")
 
     # Port
     port = args.port
@@ -593,20 +616,40 @@ def _interactive_setup(args):
     config_dir.mkdir(parents=True, exist_ok=True)
     config_file = config_dir / "config.json"
 
+    # Generate encryption key for source credentials
+    from cryptography.fernet import Fernet
+    source_key = Fernet.generate_key().decode()
+
     config = {
         "storage_limit_gb": gb,
         "also_beacon": also_beacon,
         "store_path": str(store_path / "store"),
         "catalog_path": str(store_path / "catalog.db"),
+        "source_users_db": str(store_path / "source_users.db"),
+        "source_key": source_key,
+        "node_name": node_name,
         "port": port,
     }
     if beacon_url:
         config["beacon_url"] = beacon_url
-    if cdse_username:
-        config["cdse_username"] = cdse_username
-        config["cdse_password"] = cdse_password
 
     config_file.write_text(json.dumps(config, indent=2))
+
+    # Store credentials securely in encrypted DB (never in plaintext config)
+    from .source_users import SourceUserManager
+    su_mgr = SourceUserManager(store_path / "source_users.db", encryption_key=source_key)
+    if cdse_username and cdse_password:
+        su_mgr.add_user(
+            name="cdse-setup", provider="cdse",
+            username=cdse_username, password=cdse_password,
+        )
+        print("  ✓ CDSE credentials stored (encrypted)")
+    if add_element84:
+        su_mgr.add_user(
+            name="element84", provider="element84",
+            username="public", password="",
+        )
+        print("  ✓ Element84 provider added")
 
     # Create store directory
     store_path.mkdir(parents=True, exist_ok=True)
@@ -622,24 +665,36 @@ def _interactive_setup(args):
     ]
     if beacon_url:
         env_lines.append(f"EARTHGRID_BEACON_URL={beacon_url}")
-    if cdse_username:
-        env_lines.append(f"EARTHGRID_CDSE_USERNAME={cdse_username}")
-        env_lines.append(f"EARTHGRID_CDSE_PASSWORD={cdse_password}")
+    env_lines.append(f"EARTHGRID_NODE_NAME={node_name}")
+    # Credentials are NEVER stored in plaintext — only in encrypted source_users.db
     env_file.write_text("\n".join(env_lines) + "\n")
 
+    # Summary
+    providers_str = []
+    if cdse_username:
+        providers_str.append(f"CDSE ({cdse_username})")
+    if add_element84:
+        providers_str.append("Element84 (public)")
+    if not providers_str:
+        providers_str.append("none — redistribute only")
+
     print(f"\n✅ EarthGrid configured!")
+    print(f"   Node:     {node_name}")
     print(f"   Storage:  {gb} GB at {store_path}")
-    print(f"   Beacon:   {'yes' if also_beacon else 'no'}")
-    print(f"   CDSE:     {'✓ ' + cdse_username if cdse_username else '✗ redistribute only'}")
+    print(f"   Beacon:   {'yes (also coordinator)' if also_beacon else 'no (data node only)'}")
+    print(f"   Sources:  {', '.join(providers_str)}")
     print(f"   Port:     {port}")
     print(f"   Config:   {config_file}")
     if beacon_url:
-        print(f"   Joins:    {beacon_url}")
-    print(f"\nStart with:")
+        print(f"   Network:  {beacon_url}")
+    print(f"\n🚀 Start with:")
     if also_beacon:
-        print(f"   earthgrid node --also-beacon")
+        print(f"   earthgrid start --also-beacon")
     else:
-        print(f"   earthgrid node")
+        print(f"   earthgrid start")
+    print(f"\n📊 Manage source accounts later:")
+    print(f"   earthgrid users list")
+    print(f"   earthgrid users add --provider cdse --username your@email.com")
 
 
 if __name__ == "__main__":
