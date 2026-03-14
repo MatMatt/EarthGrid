@@ -106,7 +106,7 @@ def main():
     p_fetch.add_argument("--limit", type=int, default=1, help="Max products to fetch")
     p_fetch.add_argument("--collection", default="sentinel-2-l2a", help="EarthGrid collection name")
     p_fetch.add_argument("--search-only", action="store_true", help="Only search, don't download")
-    p_fetch.add_argument("--source", default="cdse", choices=["cdse", "element84"], help="Data source (default: cdse)")
+    p_fetch.add_argument("--source", default="element84", choices=["cdse", "element84"], help="Data source (default: cdse)")
 
     # --- Users (local credential management) ---
     p_users = sub.add_parser("users", help="Manage source user credentials (local only)")
