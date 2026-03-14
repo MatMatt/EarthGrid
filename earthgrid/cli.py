@@ -106,6 +106,7 @@ def main():
     p_fetch.add_argument("--limit", type=int, default=1, help="Max products to fetch")
     p_fetch.add_argument("--collection", default="sentinel-2-l2a", help="EarthGrid collection name")
     p_fetch.add_argument("--search-only", action="store_true", help="Only search, don't download")
+    p_fetch.add_argument("--source", default="cdse", choices=["cdse", "element84"], help="Data source (default: cdse)")
 
     # --- Users (local credential management) ---
     p_users = sub.add_parser("users", help="Manage source user credentials (local only)")
@@ -708,20 +709,35 @@ def _cmd_fetch(args):
 
     band_list = [b.strip() for b in args.bands.split(",")] if args.bands else None
 
-    print(f"Fetching from CDSE (bbox={args.bbox}, cloud≤{args.cloud}%)...")
-    results = asyncio.run(fetch_and_ingest(
-        cdse_client=client,
-        chunk_store=cs,
-        catalog=cat,
-        bbox=bbox,
-        start_date=args.start,
-        end_date=args.end,
-        cloud_cover=args.cloud,
-        bands=band_list,
-        product_type=args.product_type,
-        limit=args.limit,
-        earthgrid_collection=args.collection,
-    ))
+    if args.source == "element84":
+        from .element84 import fetch_and_ingest_element84
+        print(f"Fetching from Element84 (bbox={args.bbox}, cloud≤{args.cloud}%)...")
+        results = asyncio.run(fetch_and_ingest_element84(
+            chunk_store=cs,
+            catalog=cat,
+            bbox=bbox,
+            start_date=args.start,
+            end_date=args.end,
+            cloud_cover=args.cloud,
+            bands=band_list,
+            limit=args.limit,
+            earthgrid_collection=args.collection,
+        ))
+    else:
+        print(f"Fetching from CDSE (bbox={args.bbox}, cloud≤{args.cloud}%)...")
+        results = asyncio.run(fetch_and_ingest(
+            cdse_client=client,
+            chunk_store=cs,
+            catalog=cat,
+            bbox=bbox,
+            start_date=args.start,
+            end_date=args.end,
+            cloud_cover=args.cloud,
+            bands=band_list,
+            product_type=args.product_type,
+            limit=args.limit,
+            earthgrid_collection=args.collection,
+        ))
 
     ok = [r for r in results if r.get("item_id")]
     err = [r for r in results if r.get("error")]
