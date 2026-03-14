@@ -367,13 +367,18 @@ def _update():
         subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(project_root)],
                        capture_output=True)
 
-    # Restart service if running
-    result = subprocess.run(["systemctl", "--user", "is-active", "earthgrid.service"],
-                            capture_output=True, text=True)
-    if result.stdout.strip() == "active":
+    # Auto-restart if service is installed
+    unit_path = Path.home() / ".config" / "systemd" / "user" / "earthgrid.service"
+    if unit_path.exists():
         print("  Restarting service...")
         subprocess.run(["systemctl", "--user", "restart", "earthgrid.service"], capture_output=True)
-        print("  \u2713 Updated and restarted!")
+        import time; time.sleep(1)
+        result = subprocess.run(["systemctl", "--user", "is-active", "earthgrid.service"],
+                                capture_output=True, text=True)
+        if result.stdout.strip() == "active":
+            print("  \u2713 Updated and running!")
+        else:
+            print("  \u26a0 Updated but service failed to start. Check: journalctl --user -u earthgrid.service")
     else:
         print("  \u2713 Updated! Run 'earthgrid start' to launch.")
 
