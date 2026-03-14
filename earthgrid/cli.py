@@ -645,19 +645,35 @@ def _cmd_fetch(args):
 
     cfg = _load_config()
 
-    # CDSE credentials from config or env
-    username = cfg.get("cdse_username", os.environ.get("EARTHGRID_CDSE_USERNAME", ""))
-    password = cfg.get("cdse_password", os.environ.get("EARTHGRID_CDSE_PASSWORD", ""))
+    # CDSE credentials: try source_users.db first, then config/env fallback
+    username = ""
+    password = ""
+
+    # Try source_users.db (preferred — encrypted credentials)
+    source_key = cfg.get("source_key", os.environ.get("EARTHGRID_SOURCE_KEY", ""))
+    su_db = Path(cfg.get("source_users_db", os.environ.get("EARTHGRID_SOURCE_USERS_DB", "./data/source_users.db")))
+    if su_db.exists():
+        try:
+            from .source_users import SourceUserManager
+            su_mgr = SourceUserManager(su_db, encryption_key=source_key)
+            creds = su_mgr.select_user(provider="cdse")
+            if creds:
+                username = creds.get("username", "")
+                password = creds.get("password", "")
+        except Exception:
+            pass
+
+    # Fallback to config/env
+    if not username:
+        username = cfg.get("cdse_username", os.environ.get("EARTHGRID_CDSE_USERNAME", ""))
+        password = cfg.get("cdse_password", os.environ.get("EARTHGRID_CDSE_PASSWORD", ""))
 
     if not username or not password:
         print("⚠ CDSE credentials required for direct fetch from Copernicus.")
-        print("  Each node needs its own free account — register at:")
-        print("  https://dataspace.copernicus.eu")
-        print("\n  Then configure via:")
-        print("  earthgrid setup          (interactive)")
-        print("  earthgrid config cdse_username <your-email>")
-        print("  earthgrid config cdse_password <your-password>")
-        print("\n  Without CDSE: use 'earthgrid replicate' to get data from other nodes.")
+        print("  Register free at: https://dataspace.copernicus.eu")
+        print("\n  Then add credentials:")
+        print("  earthgrid users add --name myaccount --provider cdse --username <email>")
+        print("\n  Without CDSE: use 'earthgrid sync <peer_url>' to get data from other nodes.")
         sys.exit(1)
 
     client = CDSEClient(username=username, password=password)
