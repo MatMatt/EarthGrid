@@ -381,6 +381,16 @@ class OpenEOGateway:
                         self.stats.record_collection_access(
                             collection, access_type="download"
                         )
+                        self.stats.record_download(
+                            origin="source",
+                            provider=user_creds.get("provider", "cdse"),
+                            collection_id=collection,
+                            item_id=item_id,
+                            bytes_transferred=sum(
+                                self.chunk_store.chunk_size(h)
+                                for h in (item.chunk_hashes if item else [])
+                            ),
+                        )
                     worker_downloaded += ingested
                     logger.info(f"[{user_creds.get('name','?')}] "
                                 f"{item_id}: {ingested} bands ingested")
