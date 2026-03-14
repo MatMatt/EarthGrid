@@ -134,7 +134,7 @@ Since EarthGrid converts everything to COG, data from Element84 and CDSE is **by
 
 ## Quick Start
 
-### Docker (recommended)
+### Docker *(coming soon)*
 
 ```bash
 docker run -d --name earthgrid \
@@ -143,15 +143,19 @@ docker run -d --name earthgrid \
   matmatt/earthgrid
 ```
 
+> ⚠️ Docker Hub image not yet published. For now, build from source (see below) or use `pip install`.
+
 No Python needed. No dependencies. Just Docker.
 
-### pip
+### pip *(coming soon)*
 
 ```bash
 pip install earthgrid
 earthgrid setup
 earthgrid start
 ```
+
+> ⚠️ PyPI package not yet published. For now, install from source (see below).
 
 Requires Python ≥ 3.9. The node auto-discovers the network via GitHub Pages seeds.
 
@@ -209,18 +213,62 @@ Supported providers: **CDSE** (Sentinel, Landsat), **WEkEO** (CLMS, C3S, CAMS), 
 
 EarthGrid includes an openEO-compatible gateway. Missing data is automatically fetched from upstream sources.
 
-```python
-import openeo
+### Direct API *(works now)*
 
-conn = openeo.connect("http://localhost:8400/openeo")
-cube = conn.load_collection(
-    "sentinel-2-l2a",
+```python
+import requests
+
+r = requests.post("http://localhost:8400/openeo/process", json={
+    "process_graph": {
+        "load": {
+            "process_id": "load_collection",
+            "arguments": {
+                "id": "sentinel-2-l2a",
+                "spatial_extent": {"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
+                "temporal_extent": ["2026-03-01", "2026-03-12"],
+                "bands": ["B04", "B08"]
+            }, "result": False
+        },
+        "ndvi": {
+            "process_id": "ndvi",
+            "arguments": {"data": {"from_node": "load"}, "red": "B04", "nir": "B08"},
+            "result": False
+        },
+        "save": {
+            "process_id": "save_result",
+            "arguments": {"data": {"from_node": "ndvi"}, "format": "GTiff"},
+            "result": True
+        }
+    }
+})
+```
+
+### openEO Client *(coming soon)*
+
+Full compatibility with the official openEO Python and R clients is in progress.
+
+```python
+# Python (openeo client) — coming soon
+import openeo
+conn = openeo.connect("http://localhost:8400")
+cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
     temporal_extent=["2026-03-01", "2026-03-12"],
-    bands=["B04", "B08"]
-)
-ndvi = cube.ndvi(red="B04", nir="B08")
-ndvi.download("ndvi.tif")
+    bands=["B04", "B08"])
+cube.ndvi(red="B04", nir="B08").download("ndvi.tif")
+```
+
+```r
+# R (openeo client) — coming soon
+library(openeo)
+conn <- connect("http://localhost:8400")
+p <- processes()
+cube <- p\$load_collection("sentinel-2-l2a",
+    spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
+    temporal_extent = c("2026-03-01", "2026-03-12"),
+    bands = c("B04", "B08"))
+result <- p\$ndvi(cube, red="B04", nir="B08")
+compute_result(result, "ndvi.tif")
 ```
 
 Processing results are **ephemeral** — computed on-the-fly and returned directly. Only original sensor data is stored in the grid.
