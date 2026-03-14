@@ -182,12 +182,28 @@ class Catalog:
     def item_count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM items").fetchone()[0]
 
+    def total_area_km2(self) -> float:
+        """Compute total spatial coverage from unique bounding boxes (UTM, in m)."""
+        rows = self.db.execute(
+            "SELECT bbox_west, bbox_south, bbox_east, bbox_north FROM items"
+        ).fetchall()
+        seen: set[tuple[float, ...]] = set()
+        total = 0.0
+        for r in rows:
+            w, s, e, n = r["bbox_west"], r["bbox_south"], r["bbox_east"], r["bbox_north"]
+            key = (round(w, -3), round(s, -3), round(e, -3), round(n, -3))
+            if key not in seen:
+                seen.add(key)
+                total += abs((e - w) * (n - s)) / 1e6
+        return round(total)
+
     def summary(self) -> dict:
         """Quick summary for federation sync."""
         collections = self.list_collections()
         return {
             "collections": [c.id for c in collections],
             "item_count": self.item_count(),
+            "total_area_km2": self.total_area_km2(),
         }
 
     def _row_to_item(self, row) -> STACItem:
