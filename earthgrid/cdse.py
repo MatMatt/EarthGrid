@@ -46,8 +46,7 @@ class CDSEClient:
 
         if not self.username or not self.password:
             raise ValueError(
-                "CDSE credentials required. Add a source user via CLI:
-"
+                "CDSE credentials required. Add a source user via CLI:\n"
                 "  earthgrid users add --provider cdse --username <email>"
             )
 
