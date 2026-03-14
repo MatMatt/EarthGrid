@@ -81,6 +81,81 @@ a:hover { text-decoration:underline; }
 </div>
 </div>
 
+
+<div class="section">
+<h2>📖 Usage Examples</h2>
+
+<h3 style="margin:1.5rem 0 0.5rem;font-size:1.1rem;">CLI — Fetch &amp; Manage Data</h3>
+<pre><code># Fetch latest Sentinel-2 scene for an area
+earthgrid fetch --bbox 12.4,55.6,12.6,55.7
+
+# Fetch with date range and multiple scenes
+earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --start 2026-03-01 --end 2026-03-12 --limit 5
+
+# Fetch specific bands only
+earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --bands B04,B08,SCL
+
+# Use CDSE as source (default: Element84)
+earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --source cdse
+
+# Check node status
+earthgrid status
+
+# Search without downloading
+earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --search-only --limit 10</code></pre>
+
+<h3 style="margin:1.5rem 0 0.5rem;font-size:1.1rem;">Python — openEO Client</h3>
+<pre><code>import openeo
+
+conn = openeo.connect("https://mattiuzzi.zapto.org/earthgrid")
+
+# Load a data cube
+cube = conn.load_collection(
+    "sentinel-2-l2a",
+    spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
+    temporal_extent=["2026-03-01", "2026-03-12"],
+    bands=["B04", "B08"]
+)
+
+# Compute NDVI
+ndvi = cube.ndvi(red="B04", nir="B08")
+
+# Download result
+ndvi.download("ndvi.tif")</code></pre>
+
+<h3 style="margin:1.5rem 0 0.5rem;font-size:1.1rem;">R — openEO Client</h3>
+<pre><code>library(openeo)
+
+con &lt;- connect("https://mattiuzzi.zapto.org/earthgrid")
+p &lt;- processes()
+
+# Load a data cube
+cube &lt;- p$load_collection(
+  "sentinel-2-l2a",
+  spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
+  temporal_extent = c("2026-03-01", "2026-03-12"),
+  bands = c("B04", "B08")
+)
+
+# Compute NDVI and save
+result &lt;- p$save_result(p$ndvi(cube, red="B04", nir="B08"), format="GTiff")
+compute_result(result, "ndvi.tif")
+
+# Plot
+library(terra)
+plot(rast("ndvi.tif"), col=colorRampPalette(c("brown","yellow","darkgreen"))(100))</code></pre>
+
+<h3 style="margin:1.5rem 0 0.5rem;font-size:1.1rem;">STAC API — Direct Access</h3>
+<pre><code># Search the STAC catalog
+curl "https://mattiuzzi.zapto.org/earthgrid/stac/search?bbox=12.4,55.6,12.6,55.7"
+
+# List collections
+curl "https://mattiuzzi.zapto.org/earthgrid/collections"
+
+# Get node status
+curl "https://mattiuzzi.zapto.org/earthgrid/nodes"</code></pre>
+</div>
+
 <div class="section">
 <h2>🚀 Quick Start</h2>
 <pre><code>pip install earthgrid
