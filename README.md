@@ -49,14 +49,14 @@ EarthGrid stores **only official data** from sources like Copernicus, Sentinel, 
 
 **Node** — Stores and serves data chunks. Every chunk is identified by its SHA-256 hash (content-addressed). Nodes auto-sync data between each other.
 
-**Source Node** — A node that has credentials to download from official sources (CDSE, Element84). When the network needs data that doesn't exist yet, a source node fetches it. Credentials never leave the node.
+**Source Node** — A node that has credentials to download from official sources (CDSE, WEkEO, Element84, CMEMS). When the network needs data that doesn't exist yet, a source node fetches it. Credentials never leave the node. Each node can have accounts for multiple providers.
 
 ### How Data Flows
 
-1. Someone requests Sentinel-2 data for Copenhagen
+1. Someone requests EO data for Copenhagen (any sensor/provider)
 2. Beacon checks which nodes have it
 3. If cached → served directly from the nearest node
-4. If not cached → a source node fetches it from CDSE, stores it, and serves it
+4. If not cached → a source node fetches it from the appropriate provider (CDSE, WEkEO, etc.), stores it, and serves it
 5. Other nodes automatically replicate the new data
 
 ### Bootstrap & Discovery
@@ -163,7 +163,9 @@ earthgrid info                           # Show config
 ### Data operations
 
 ```bash
-earthgrid fetch --bbox 12.4,55.6,12.6,55.7   # Fetch Sentinel-2 data for area
+earthgrid fetch --bbox 12.4,55.6,12.6,55.7   # Fetch available data for area
+earthgrid fetch --bbox ... --collection S2     # Filter by collection
+earthgrid fetch --bbox ... --start 2026-03-01  # Temporal filter
 earthgrid sync <peer_url>                      # Pull data from a peer
 earthgrid ops                                  # List processing operations
 ```
@@ -171,10 +173,14 @@ earthgrid ops                                  # List processing operations
 ### Credential management (local only)
 
 ```bash
-earthgrid users list                     # List source accounts
-earthgrid users add --name Me --username me@copernicus.eu
+earthgrid users list                     # List all source accounts
+earthgrid users add --provider cdse --username me@copernicus.eu
+earthgrid users add --provider wekeo --username me@wekeo.eu
+earthgrid users add --provider element84  # No auth needed (public)
 earthgrid users remove 1                 # Remove by ID
 ```
+
+Supported providers: **CDSE** (Sentinel, Landsat), **WEkEO** (CLMS, C3S, CAMS), **Element84** (public S2/S1/Landsat mirror), **CMEMS** (marine data).
 
 ---
 
