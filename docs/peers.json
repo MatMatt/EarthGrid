@@ -1,14 +1,5 @@
 {
-  "seeds": [
-    {
-      "url": "http://192.168.188.219:8400",
-      "name": "LenovoTP",
-      "collections": [
-        "sentinel-2-l2a"
-      ],
-      "items": 80
-    }
-  ],
-  "updated": "2026-03-14T21:30:02Z",
+  "seeds": [],
+  "updated": "2026-03-14T21:40:02Z",
   "source": "https://mattiuzzi.zapto.org/earthgrid"
 }
