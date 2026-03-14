@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends, Request, Header
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 import logging
 import time
@@ -31,6 +32,13 @@ app = FastAPI(
 )
 
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['*'],
+)
 
 # --- Security ---
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
