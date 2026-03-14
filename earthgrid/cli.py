@@ -87,6 +87,18 @@ def main():
     p_fetch.add_argument("--collection", default="sentinel-2-l2a", help="EarthGrid collection name")
     p_fetch.add_argument("--search-only", action="store_true", help="Only search, don't download")
 
+    # --- Users (local credential management) ---
+    p_users = sub.add_parser("users", help="Manage source user credentials (local only)")
+    users_sub = p_users.add_subparsers(dest="users_action")
+    users_sub.add_parser("list", help="List source users")
+    p_users_add = users_sub.add_parser("add", help="Add a source user")
+    p_users_add.add_argument("--name", required=True, help="Display name")
+    p_users_add.add_argument("--provider", default="cdse", help="Provider (cdse, element84)")
+    p_users_add.add_argument("--username", required=True, help="Login username/email")
+    p_users_add.add_argument("--password", default="", help="Password (prompted if empty)")
+    p_users_rm = users_sub.add_parser("remove", help="Remove a source user")
+    p_users_rm.add_argument("user_id", type=int, help="User ID to remove")
+
     # --- Sync ---
     p_sync = sub.add_parser("sync", help="Pull data from a remote peer")
     p_sync.add_argument("peer_url", help="Remote node URL (e.g. http://host:8400)")
@@ -118,6 +130,10 @@ def main():
 
     if args.command == "fetch":
         _cmd_fetch(args)
+        return
+
+    if args.command == "users":
+        _cmd_users(args)
         return
 
     if args.command == "sync":
@@ -212,6 +228,49 @@ def _save_config(cfg: dict):
     config_file = Path.home() / ".earthgrid" / "config.json"
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(json.dumps(cfg, indent=2) + "\n")
+
+
+def _cmd_users(args):
+    """Manage source user credentials locally."""
+    cfg = _load_config()
+    db_path = Path(cfg.get("source_users_db", "./data/source_users.db")) if cfg else Path("./data/source_users.db")
+    key = cfg.get("source_key", "") if cfg else ""
+
+    from .source_users import SourceUserManager
+    mgr = SourceUserManager(db_path, encryption_key=key)
+
+    if args.users_action == "list":
+        users = mgr.list_users(include_disabled=True)
+        if not users:
+            print("No source users configured.")
+            print("Add one: earthgrid users add --name MyAccount --username me@example.com")
+            return
+        for u in users:
+            status = "✓" if u["is_enabled"] and u["is_healthy"] else "✗"
+            print(f"  {status} [{u['id']}] {u['name']} ({u['provider']}/{u['username']}) "
+                  f"— {u['success_count']} ok, {u['fail_count']} fail, "
+                  f"{u['total_downloaded_gb']:.1f} GB downloaded")
+
+    elif args.users_action == "add":
+        password = args.password
+        if not password:
+            import getpass
+            password = getpass.getpass(f"Password for {args.username}: ")
+        uid = mgr.add_user(
+            name=args.name, provider=args.provider,
+            username=args.username, password=password,
+        )
+        print(f"✓ Added source user '{args.name}' (id={uid})")
+
+    elif args.users_action == "remove":
+        ok = mgr.remove_user(args.user_id)
+        if ok:
+            print(f"✓ Removed source user {args.user_id}")
+        else:
+            print(f"✗ User {args.user_id} not found")
+
+    else:
+        print("Usage: earthgrid users [list|add|remove]")
 
 
 def _store_usage(store_path: Path) -> tuple[int, int]:
