@@ -30,10 +30,12 @@ def _fetch_github_seeds() -> str | None:
 
 
 def main():
-    # Auto-load .env from CWD or project root
+    # Auto-load .env from CWD, project root, or ~/.earthgrid/
     env_file = Path(".env")
     if not env_file.exists():
         env_file = Path(__file__).resolve().parent.parent / ".env"
+    if not env_file.exists():
+        env_file = Path.home() / ".earthgrid" / ".env"
     if env_file.exists():
         import os
         for line in env_file.read_text().splitlines():
@@ -673,6 +675,8 @@ def _interactive_setup(args):
         f"EARTHGRID_ALSO_BEACON={'true' if also_beacon else 'false'}",
         f"EARTHGRID_STORE_PATH={store_path / 'store'}",
         f"EARTHGRID_CATALOG_PATH={store_path / 'catalog.db'}",
+        f"EARTHGRID_SOURCE_USERS_DB={store_path / 'source_users.db'}",
+        f"EARTHGRID_SOURCE_KEY={source_key}",
         f"EARTHGRID_PORT={port}",
     ]
     if beacon_url:
