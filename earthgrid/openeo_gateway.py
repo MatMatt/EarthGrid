@@ -1020,9 +1020,10 @@ def openeo_well_known(request: Request):
 
 @root_router.get("/credentials/basic")
 def openeo_credentials_basic():
-    """GET /credentials/basic — returns a dummy bearer token (no real auth)."""
+    """GET /credentials/basic — returns bearer token for API access."""
+    token = _auth_settings.api_key or "earthgrid-open-access"
     return {
-        "access_token": "earthgrid-open-access-token",
+        "access_token": token,
         "token_type": "Bearer",
     }
 
@@ -1122,7 +1123,7 @@ def openeo_processes_root():
 
 
 @root_router.post("/result")
-async def openeo_result(request: Request):
+async def openeo_result(request: Request, _auth=Depends(_require_api_key)):
     """POST /result — synchronous process graph execution.
 
     This is the critical endpoint called by conn.download() in the Python
@@ -1163,7 +1164,7 @@ async def openeo_result(request: Request):
 
 
 @root_router.post("/jobs")
-async def openeo_create_job(request: Request):
+async def openeo_create_job(request: Request, _auth=Depends(_require_api_key)):
     """POST /jobs — create a batch job."""
     gw = _get_gateway()
     body = await request.json()
