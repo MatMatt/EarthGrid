@@ -9,6 +9,24 @@ import uvicorn
 from . import __version__
 from .config import settings
 
+GITHUB_SEEDS_URL = "https://matmatt.github.io/EarthGrid/peers.json"
+
+
+def _fetch_github_seeds() -> str | None:
+    """Fetch beacon URL from GitHub Pages seed list (bootstrap fallback)."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(GITHUB_SEEDS_URL, timeout=5) as r:
+            data = json.loads(r.read())
+        seeds = data.get("seeds", [])
+        if seeds:
+            # Return the first seed URL as beacon
+            print(f"   Seeds:   fetched {len(seeds)} from GitHub")
+            return seeds[0]["url"]
+    except Exception:
+        pass
+    return None
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -148,6 +166,12 @@ def main():
             settings.peers = args.peers
         if args.beacon_peers:
             settings.beacon_peers = args.beacon_peers
+
+        # Bootstrap: if no beacon configured, try GitHub seeds
+        if not settings.beacon_url and not settings.also_beacon:
+            seed_url = _fetch_github_seeds()
+            if seed_url:
+                settings.beacon_url = seed_url
 
         print(f"🌍 EarthGrid v{__version__}")
         print(f"   Name:    {settings.node_name}")
