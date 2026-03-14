@@ -3,7 +3,7 @@ __version__ = "0.3.0"
 
 # Beacon discovery: fetch from GitHub, fall back to hardcoded
 _BEACON_LIST_URL = "https://raw.githubusercontent.com/MatMatt/EarthGrid/master/beacons.json"
-_FALLBACK_BEACON = "http://mattiuzzi.zapto.org:8400"
+_FALLBACK_BEACON = "https://mattiuzzi.zapto.org/earthgrid"
 
 
 def get_default_beacon() -> str:

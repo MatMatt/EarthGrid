@@ -1,7 +1,7 @@
 {
   "beacons": [
     {
-      "url": "http://mattiuzzi.zapto.org:8400",
+      "url": "https://mattiuzzi.zapto.org/earthgrid",
       "name": "nucleus",
       "region": "eu-central"
     }
