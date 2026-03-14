@@ -112,6 +112,67 @@ curl http://localhost:8400/process/operations
 | `true_color` | RGB composite |
 | `band_math` | Custom expressions |
 
+## openEO Gateway
+
+EarthGrid includes an openEO-compatible gateway. Submit standard process graphs — missing data is automatically fetched from upstream sources (Element84, CDSE).
+
+### Python (openeo client)
+
+```python
+import openeo
+
+conn = openeo.connect("http://localhost:8400/openeo")
+
+# Load Sentinel-2 data
+cube = conn.load_collection(
+    "sentinel-2-l2a",
+    spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
+    temporal_extent=["2026-03-01", "2026-03-12"],
+    bands=["B04", "B08"]
+)
+
+# Compute NDVI
+ndvi = cube.ndvi(red="B04", nir="B08")
+ndvi.download("ndvi_copenhagen.tif")
+```
+
+### curl (process graph)
+
+```bash
+# Compute NDVI for Copenhagen
+curl -X POST http://localhost:8400/openeo/process \
+  -H "Content-Type: application/json" \
+  -d '{
+    "process_graph": {
+      "load": {
+        "process_id": "load_collection",
+        "arguments": {
+          "id": "sentinel-2-l2a",
+          "spatial_extent": {"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
+          "temporal_extent": ["2026-03-01", "2026-03-12"],
+          "bands": ["B04", "B08"]
+        }
+      },
+      "ndvi": {
+        "process_id": "ndvi",
+        "arguments": {"data": {"from_node": "load"}, "red": "B04", "nir": "B08"},
+        "result": true
+      }
+    }
+  }'
+
+# List available collections
+curl http://localhost:8400/openeo/collections
+
+# List supported processes
+curl http://localhost:8400/openeo/processes
+
+# Check job status
+curl http://localhost:8400/openeo/jobs/{job_id}
+```
+
+> **Note:** EarthGrid implements a subset of the openEO API. Data that isn't cached locally is automatically downloaded from upstream sources on first request.
+
 ## API Endpoints
 
 | Endpoint | Description |
@@ -130,6 +191,11 @@ curl http://localhost:8400/process/operations
 | `GET /process/operations` | List available operations |
 | `POST /register` | Register node with beacon |
 | `POST /heartbeat` | Node heartbeat to beacon |
+| `GET /openeo/collections` | List openEO collections |
+| `GET /openeo/processes` | List supported openEO processes |
+| `POST /openeo/process` | Execute openEO process graph |
+| `GET /openeo/jobs/{id}` | Check job status |
+| `POST /openeo/validate` | Validate process graph |
 
 ## Data Integrity
 
