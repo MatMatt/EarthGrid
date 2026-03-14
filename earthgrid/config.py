@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # --- Source Users ---
     source_key: str = ""  # Fernet encryption key for source user credentials
-    source_users_db: str = "data/source_users.db"
+    source_users_db: str = "/data/source_users.db"
 
     # --- Bandwidth Control ---
     bw_limit_mbps: float = 0  # Global bandwidth limit in Mbps (0 = unlimited)
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     max_download_volume_gb: float = 0  # Max total download volume in GB (0 = unlimited)
 
     # --- Stats ---
-    stats_db: str = "data/stats.db"
+    stats_db: str = "/data/stats.db"
     stats_retain_days: int = 90  # Auto-cleanup logs older than this
 
     model_config = {"env_prefix": "EARTHGRID_"}
