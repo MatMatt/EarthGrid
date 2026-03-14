@@ -95,6 +95,10 @@ async def fetch_and_ingest_element84(
 
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
         for item in items:
+            date_str = item["date"][:10] if item["date"] else "?"
+            cc = item["cloud_cover"]
+            print(f"
+  📦 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
             assets = item["assets"]
             for band_name in target_bands:
                 asset_key = BAND_MAP_S2.get(band_name, band_name.lower())
