@@ -248,66 +248,6 @@ class Processor:
         else:
             result = op_fn(bands, source_item)
 
-        # Store result chunks
-        out_data = result.data
-        n_bands, height, width = out_data.shape
-        tile_cols = math.ceil(width / tile_size)
-        tile_rows = math.ceil(height / tile_size)
-        chunk_hashes = []
-        for row_i in range(tile_rows):
-            for col_i in range(tile_cols):
-                x_off = col_i * tile_size
-                y_off = row_i * tile_size
-                w = min(tile_size, width - x_off)
-                h = min(tile_size, height - y_off)
-                tile = out_data[:, y_off:y_off + h, x_off:x_off + w]
-                sha = self.chunk_store.put(tile.tobytes())
-                chunk_hashes.append(sha)
-
-        if not output_collection:
-            output_collection = f"{source_item.collection}_derived"
-        if not output_item_id:
-            output_item_id = f"{source_label}_{operation}"
-
-        col = self.catalog.get_collection(output_collection)
-        if not col:
-            self.catalog.add_collection(STACCollection(
-                id=output_collection,
-                title=f"{output_collection} (derived)",
-                description=f"Products derived from {source_item.collection}",
-            ))
-
-        now = datetime.now(timezone.utc).isoformat()
-        out_item = STACItem(
-            id=output_item_id,
-            collection=output_collection,
-            geometry=source_item.geometry,
-            bbox=source_item.bbox,
-            properties={
-                "datetime": now,
-                "earthgrid:crs": source_item.properties.get("earthgrid:crs", ""),
-                "earthgrid:width": width,
-                "earthgrid:height": height,
-                "earthgrid:bands": n_bands,
-                "earthgrid:dtype": str(out_data.dtype),
-                "earthgrid:tile_size": tile_size,
-                "earthgrid:tile_cols": tile_cols,
-                "earthgrid:tile_rows": tile_rows,
-                "earthgrid:operation": operation,
-                "earthgrid:source_items": item_id if isinstance(item_id, list) else [item_id],
-                "earthgrid:source_collection": source_item.collection,
-                "earthgrid:band_names": result.band_names,
-                "earthgrid:description": result.description,
-            },
-            assets={
-                "data": {
-                    "href": "/chunks",
-                    "type": "application/octet-stream",
-                    "title": result.description,
-                    "earthgrid:chunk_count": len(chunk_hashes),
-                }
-            },
-            chunk_hashes=chunk_hashes,
-        )
-        self.catalog.add_item(out_item)
-        return out_item
+        # Return result directly — processing results are ephemeral,
+        # only original sensor data belongs in the grid.
+        return result

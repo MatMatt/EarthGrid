@@ -233,20 +233,13 @@ def health():
 
 @app.get("/stats/coverage")
 def stats_coverage():
-    """Spatial coverage in km² per collection (raw vs processed)."""
+    """Spatial coverage in km² per sensor collection."""
     cov = catalog.coverage_by_collection()
-    # Split into raw sensor data vs derived/processed
-    raw = {}
-    processed = {}
-    for col, info in cov["collections"].items():
-        if "_derived" in col:
-            processed[col] = info
-        else:
-            raw[col] = info
+    # Only original sensor data — derived collections are excluded
+    sensors = {col: info for col, info in cov["collections"].items() if "_derived" not in col}
     return {
-        "total_area_km2": cov["total_area_km2"],
-        "raw": raw,
-        "processed": processed,
+        "total_area_km2": sum(s["area_km2"] for s in sensors.values()),
+        "sensors": sensors,
     }
 
 
@@ -732,22 +725,23 @@ def process_item(
         raise HTTPException(400, "Provide item_id or items parameter")
 
     try:
-        result_item = processor.process(
+        result = processor.process(
             item_id=ids,
             operation=operation,
             output_collection=output_collection,
             output_item_id=output_item_id,
             expression=expression,
         )
+        # Processing results are ephemeral — returned directly, not stored in grid.
+        # Only original sensor data belongs in the grid.
         return {
             "status": "processed",
             "operation": operation,
             "source": ids,
-            "result_item": result_item.id,
-            "result_collection": result_item.collection,
-            "chunks": len(result_item.chunk_hashes),
-            "bands": result_item.properties.get("earthgrid:band_names", []),
-            "description": result_item.properties.get("earthgrid:description", ""),
+            "bands": result.band_names,
+            "description": result.description,
+            "shape": list(result.data.shape),
+            "dtype": str(result.data.dtype),
         }
     except (ValueError, KeyError) as e:
         raise HTTPException(400, str(e))
