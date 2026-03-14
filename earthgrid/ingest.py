@@ -1,10 +1,10 @@
-"""Ingest COG/GeoTIFF files into EarthGrid — band-level chunking.
+"""Ingest COG/GeoTIFF files into EarthGrid — spatial tiling.
 
-Each band is split into spatial tiles independently, producing one chunk
-per band per tile.  This enables:
-- Band-selective downloads (NDVI needs only B04 + B08)
-- Better dedup across products
-- Parallel multi-node fetch at band granularity
+Each spatial tile contains ALL bands at that position, producing one chunk
+per tile.  This enables:
+- All bands at one location from a single node (NDVI = one fetch)
+- Spatial parallelism across nodes
+- Natural alignment with COG internal tiling
 """
 from __future__ import annotations
 import hashlib
@@ -58,10 +58,10 @@ def ingest_cog(
     item_id: str | None = None,
     tile_size: int = DEFAULT_TILE_SIZE,
 ) -> STACItem:
-    """Ingest a COG/GeoTIFF: split into per-band tiles, hash, store, catalog.
+    """Ingest a COG/GeoTIFF: split into spatial tiles (all bands per tile).
 
-    Chunk layout: each band is independently tiled into 512x512 spatial chunks.
-    chunk_hashes = {"B04": ["sha1", "sha2", ...], "B08": ["sha3", ...]}
+    Chunk layout: each tile is a (n_bands, tile_h, tile_w) numpy array.
+    chunk_hashes = ["sha1", "sha2", ...] — one per spatial tile, row-major order.
 
     Returns the created STAC item.
     """
@@ -97,30 +97,23 @@ def ingest_cog(
         n_cols = math.ceil(width / tile_size)
         n_rows = math.ceil(height / tile_size)
 
-        # Band-level chunking: one chunk per band per spatial tile
-        chunk_hashes: dict[str, list[str]] = {}
-        total_chunks = 0
+        # Spatial tiling: one chunk per tile, ALL bands together
+        chunk_hashes: list[str] = []
 
-        for band_idx in range(n_bands):
-            band_name = band_names[band_idx]
-            band_hashes = []
+        for row_i in range(n_rows):
+            for col_i in range(n_cols):
+                x_off = col_i * tile_size
+                y_off = row_i * tile_size
+                w = min(tile_size, width - x_off)
+                h = min(tile_size, height - y_off)
 
-            for row_i in range(n_rows):
-                for col_i in range(n_cols):
-                    x_off = col_i * tile_size
-                    y_off = row_i * tile_size
-                    w = min(tile_size, width - x_off)
-                    h = min(tile_size, height - y_off)
-
-                    window = Window(x_off, y_off, w, h)
-                    # Read single band (band_idx+1 because rasterio is 1-indexed)
-                    data = src.read(band_idx + 1, window=window)
-                    raw = data.tobytes()
-                    sha = chunk_store.put(raw)
-                    band_hashes.append(sha)
-                    total_chunks += 1
-
-            chunk_hashes[band_name] = band_hashes
+                window = Window(x_off, y_off, w, h)
+                # Read ALL bands at this spatial position
+                # Result shape: (n_bands, h, w)
+                data = src.read(window=window)
+                raw = data.tobytes()
+                sha = chunk_store.put(raw)
+                chunk_hashes.append(sha)
 
     # Build STAC item
     geometry = {
@@ -147,15 +140,15 @@ def ingest_cog(
         "earthgrid:tile_cols": n_cols,
         "earthgrid:tile_rows": n_rows,
         "earthgrid:source_file": file_path.name,
-        "earthgrid:chunk_format": "band-level",  # marks new format
+        "earthgrid:chunk_format": "spatial-tile",
     }
 
     assets = {
         "data": {
             "href": "/chunks",
             "type": "application/octet-stream",
-            "title": "Band-level chunked raster data",
-            "earthgrid:chunk_count": total_chunks,
+            "title": "Spatial-tiled raster data (all bands per tile)",
+            "earthgrid:chunk_count": len(chunk_hashes),
             "earthgrid:bands_available": band_names,
         }
     }

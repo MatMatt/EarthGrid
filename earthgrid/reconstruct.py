@@ -1,7 +1,11 @@
-"""Reconstruct files from band-level chunks — reverse of ingest.
+"""Reconstruct files from chunks — reverse of ingest.
 
-Supports both new band-level format and legacy all-bands format.
-Band-selective reconstruction: only fetch the bands you need.
+Supports three formats:
+- spatial-tile (new): each chunk = (n_bands, tile_h, tile_w), flat hash list
+- band-level (legacy v2): each chunk = single band tile, dict of hash lists
+- legacy (v1): each chunk = (n_bands, tile_h, tile_w), flat hash list
+
+Band-selective reconstruction: only return the bands you need.
 """
 from __future__ import annotations
 import io
@@ -30,7 +34,7 @@ def reconstruct_bands(
     """Reconstruct per-band 2D arrays from stored chunks.
 
     Args:
-        bands: Only reconstruct these bands (None = all).
+        bands: Only return these bands (None = all).
                E.g. ["B04", "B08"] for NDVI.
 
     Returns:
@@ -57,12 +61,39 @@ def reconstruct_bands(
     tile_size = props["earthgrid:tile_size"]
     tile_cols = props["earthgrid:tile_cols"]
     tile_rows = props["earthgrid:tile_rows"]
+    n_bands = props["earthgrid:bands"]
+    band_names = props.get("earthgrid:band_names", [f"B{i+1:02d}" for i in range(n_bands)])
     chunk_format = props.get("earthgrid:chunk_format", "legacy")
 
-    if chunk_format == "band-level":
-        # New format: chunk_hashes = {"B04": ["sha1", ...], "B08": [...]}
+    if chunk_format in ("spatial-tile", "legacy"):
+        # Both formats: chunk_hashes = ["sha1", "sha2", ...]
+        # Each chunk = (n_bands, tile_h, tile_w) raw bytes
+        hashes = item.chunk_hashes
+        if isinstance(hashes, dict):
+            # Shouldn't happen for these formats, but handle gracefully
+            hashes = list(hashes.values())[0] if hashes else []
+
+        full = np.zeros((n_bands, height, width), dtype=dtype)
+        for idx, sha in enumerate(hashes):
+            row_i = idx // tile_cols
+            col_i = idx % tile_cols
+            raw = chunk_store.get(sha)
+            if raw is None:
+                continue
+            x_off = col_i * tile_size
+            y_off = row_i * tile_size
+            w = min(tile_size, width - x_off)
+            h = min(tile_size, height - y_off)
+            tile = np.frombuffer(raw, dtype=dtype).reshape(n_bands, h, w)
+            full[:, y_off:y_off + h, x_off:x_off + w] = tile
+
+        if bands:
+            return {name: full[i] for i, name in enumerate(band_names) if name in bands}
+        return {name: full[i] for i, name in enumerate(band_names)}
+
+    elif chunk_format == "band-level":
+        # Band-level format: chunk_hashes = {"B04": ["sha1", ...], "B08": [...]}
         all_band_hashes = item.chunk_hashes  # dict
-        band_names = props.get("earthgrid:band_names", list(all_band_hashes.keys()))
 
         # Filter to requested bands
         if bands:
@@ -89,28 +120,7 @@ def reconstruct_bands(
         return result
 
     else:
-        # Legacy format: chunk_hashes = ["sha1", "sha2", ...]
-        n_bands = props["earthgrid:bands"]
-        full = np.zeros((n_bands, height, width), dtype=dtype)
-        for idx, sha in enumerate(item.chunk_hashes):
-            row_i = idx // tile_cols
-            col_i = idx % tile_cols
-            raw = chunk_store.get(sha)
-            if raw is None:
-                continue
-            x_off = col_i * tile_size
-            y_off = row_i * tile_size
-            w = min(tile_size, width - x_off)
-            h = min(tile_size, height - y_off)
-            tile = np.frombuffer(raw, dtype=dtype).reshape(n_bands, h, w)
-            full[:, y_off:y_off + h, x_off:x_off + w] = tile
-
-        source_file = props.get("earthgrid:source_file", "")
-        band_names = _guess_band_names_legacy(source_file, n_bands)
-
-        if bands:
-            return {name: full[i] for i, name in enumerate(band_names) if name in bands}
-        return {name: full[i] for i, name in enumerate(band_names)}
+        raise ValueError(f"Unknown chunk format: {chunk_format}")
 
 
 def _guess_band_names_legacy(source_file: str, n_bands: int) -> list[str]:
@@ -155,8 +165,8 @@ def reconstruct_geotiff(
     crs = props.get("earthgrid:crs", "EPSG:4326")
     bbox = item.bbox
 
-    band_names = list(band_data.keys())
-    stack = np.stack([band_data[b] for b in band_names], axis=0)
+    band_names_out = list(band_data.keys())
+    stack = np.stack([band_data[b] for b in band_names_out], axis=0)
 
     transform = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], width, height)
 
@@ -167,14 +177,13 @@ def reconstruct_geotiff(
         driver="GTiff",
         height=height,
         width=width,
-        count=len(band_names),
+        count=len(band_names_out),
         dtype=str(stack.dtype),
         crs=crs,
         transform=transform,
     ) as dst:
         dst.write(stack)
-        # Set band descriptions
-        for i, name in enumerate(band_names, 1):
+        for i, name in enumerate(band_names_out, 1):
             dst.set_band_description(i, name)
 
     buffer.seek(0)
