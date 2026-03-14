@@ -1,7 +1,8 @@
 """EarthGrid Processing Layer — compute where the data lives.
 
-Operates on STAC items stored locally: reads chunks, applies operations,
-stores results as new STAC items in the catalog.
+Band-aware: operations declare which bands they need, and only those
+bands are read from the chunk store.  This is critical for band-level
+chunking — NDVI reads B04+B08 chunks, not all 13 bands.
 """
 from __future__ import annotations
 import math
@@ -23,6 +24,14 @@ class OpResult:
     data: np.ndarray          # (bands, height, width)
     band_names: list[str]     # output band names
     description: str          # human-readable description
+
+
+@dataclass
+class OpSpec:
+    """Operation specification with required bands."""
+    fn: callable
+    required_bands: list[list[str]] | None  # None = all bands needed
+    description: str
 
 
 def _get_band(bands: dict[str, np.ndarray], names: list[str]) -> np.ndarray:
@@ -133,14 +142,15 @@ def op_band_math(bands: dict[str, np.ndarray], item: STACItem,
     )
 
 
-OPERATIONS: dict[str, callable] = {
-    "ndvi": op_ndvi,
-    "ndwi": op_ndwi,
-    "ndsi": op_ndsi,
-    "evi": op_evi,
-    "cloud_mask": op_cloud_mask,
-    "true_color": op_true_color,
-    "band_math": op_band_math,
+# Operations with their required bands (for selective loading)
+OPERATIONS: dict[str, OpSpec] = {
+    "ndvi": OpSpec(op_ndvi, [["B08", "B8A"], ["B04"]], "NDVI"),
+    "ndwi": OpSpec(op_ndwi, [["B03"], ["B08", "B8A"]], "NDWI"),
+    "ndsi": OpSpec(op_ndsi, [["B03"], ["B11"]], "NDSI"),
+    "evi":  OpSpec(op_evi,  [["B08", "B8A"], ["B04"], ["B02"]], "EVI"),
+    "cloud_mask": OpSpec(op_cloud_mask, [["SCL"]], "Cloud Mask"),
+    "true_color": OpSpec(op_true_color, [["B04"], ["B03"], ["B02"]], "True Color"),
+    "band_math":  OpSpec(op_band_math, None, "Band Math"),  # needs all bands
 }
 
 
@@ -149,7 +159,10 @@ OPERATIONS: dict[str, callable] = {
 # ---------------------------------------------------------------------------
 
 class Processor:
-    """Process STAC items using registered operations."""
+    """Process STAC items using registered operations.
+
+    Band-aware: only reads the chunks needed for each operation.
+    """
 
     def __init__(self, chunk_store: ChunkStore, catalog: Catalog):
         self.chunk_store = chunk_store
@@ -157,65 +170,58 @@ class Processor:
 
     def list_operations(self) -> list[dict]:
         ops = []
-        for name, fn in OPERATIONS.items():
-            doc = (fn.__doc__ or "").strip().split("\n")[0]
-            ops.append({"name": name, "description": doc})
+        for name, spec in OPERATIONS.items():
+            doc = (spec.fn.__doc__ or "").strip().split("\n")[0]
+            required = None
+            if spec.required_bands:
+                required = [group[0] for group in spec.required_bands]
+            ops.append({
+                "name": name,
+                "description": doc,
+                "required_bands": required,
+            })
         return ops
 
-    def reconstruct_bands(self, item: STACItem) -> dict[str, np.ndarray]:
-        """Reconstruct per-band 2D arrays from stored chunks."""
-        props = item.properties
-        width = props["earthgrid:width"]
-        height = props["earthgrid:height"]
-        n_bands = props["earthgrid:bands"]
-        dtype = np.dtype(props["earthgrid:dtype"])
-        tile_size = props["earthgrid:tile_size"]
-        tile_cols = props["earthgrid:tile_cols"]
-        tile_rows = props["earthgrid:tile_rows"]
+    def _resolve_needed_bands(self, operation: str, available_bands: list[str]) -> list[str] | None:
+        """Determine which bands an operation needs from the available set.
 
-        full = np.zeros((n_bands, height, width), dtype=dtype)
-        chunk_idx = 0
-        for row_i in range(tile_rows):
-            for col_i in range(tile_cols):
-                if chunk_idx >= len(item.chunk_hashes):
+        Returns list of band names to load, or None for 'all bands'.
+        """
+        spec = OPERATIONS.get(operation)
+        if not spec or spec.required_bands is None:
+            return None  # load all
+
+        needed = []
+        for band_group in spec.required_bands:
+            # Find first available band from the group (e.g. ["B08", "B8A"])
+            found = False
+            for candidate in band_group:
+                if candidate in available_bands:
+                    needed.append(candidate)
+                    found = True
                     break
-                sha = item.chunk_hashes[chunk_idx]
-                raw = self.chunk_store.get(sha)
-                if raw is None:
-                    chunk_idx += 1
-                    continue
-                x_off = col_i * tile_size
-                y_off = row_i * tile_size
-                w = min(tile_size, width - x_off)
-                h = min(tile_size, height - y_off)
-                tile = np.frombuffer(raw, dtype=dtype).reshape(n_bands, h, w)
-                full[:, y_off:y_off + h, x_off:x_off + w] = tile
-                chunk_idx += 1
+            if not found:
+                # Try case-insensitive
+                for candidate in band_group:
+                    for avail in available_bands:
+                        if candidate.upper() == avail.upper():
+                            needed.append(avail)
+                            found = True
+                            break
+                    if found:
+                        break
+        return needed if needed else None
 
-        source_file = props.get("earthgrid:source_file", "")
-        band_names = self._guess_band_names(source_file, n_bands)
-        return {name: full[i] for i, name in enumerate(band_names)}
-
-    def reconstruct_multi(self, item_ids: list[str]) -> dict[str, np.ndarray]:
-        """Reconstruct bands from multiple items (one band per item)."""
-        merged = {}
-        for item_id in item_ids:
-            bands = self.reconstruct_bands(
-                self.catalog.get_item(item_id)
-            )
-            merged.update(bands)
-        return merged
-
-    def _guess_band_names(self, source_file: str, n_bands: int) -> list[str]:
-        fname = source_file.upper()
-        s2_bands = ["B02", "B03", "B04", "B05", "B06", "B07",
-                     "B08", "B8A", "B09", "B11", "B12", "SCL"]
-        for band_id in s2_bands:
-            if band_id in fname and n_bands == 1:
-                return [band_id]
-        if "TCI" in fname and n_bands == 3:
-            return ["B04", "B03", "B02"]
-        return [f"B{i+1:02d}" for i in range(n_bands)]
+    def reconstruct_bands(self, item: STACItem, bands: list[str] | None = None) -> dict[str, np.ndarray]:
+        """Reconstruct per-band 2D arrays, optionally band-selective."""
+        from .reconstruct import reconstruct_bands as _reconstruct
+        return _reconstruct(
+            item_id=item.id,
+            collection_id=item.collection,
+            catalog=self.catalog,
+            chunk_store=self.chunk_store,
+            bands=bands,
+        )
 
     def process(
         self,
@@ -225,30 +231,41 @@ class Processor:
         output_item_id: str | None = None,
         expression: str = "",
         tile_size: int = 512,
-    ) -> STACItem:
-        """Run an operation on one or more STAC items."""
+    ) -> OpResult:
+        """Run an operation on one or more STAC items.
+
+        Band-selective: only loads the chunks needed for the operation.
+        E.g., NDVI only reads B04 and B08 chunks — not all 13 bands.
+        """
         if operation not in OPERATIONS:
             raise ValueError(f"Unknown operation '{operation}'. Available: {list(OPERATIONS.keys())}")
 
+        spec = OPERATIONS[operation]
+
         # Multi-item or single-item
         if isinstance(item_id, list):
-            bands = self.reconstruct_multi(item_id)
+            bands = {}
+            for iid in item_id:
+                source_item = self.catalog.get_item(iid)
+                if not source_item:
+                    raise ValueError(f"Item '{iid}' not found")
+                available = source_item.properties.get("earthgrid:band_names", [])
+                needed = self._resolve_needed_bands(operation, available)
+                item_bands = self.reconstruct_bands(source_item, bands=needed)
+                bands.update(item_bands)
             source_item = self.catalog.get_item(item_id[0])
-            source_label = "+".join(item_id)
         else:
             source_item = self.catalog.get_item(item_id)
             if not source_item:
                 raise ValueError(f"Item '{item_id}' not found")
-            bands = self.reconstruct_bands(source_item)
-            source_label = item_id
+            available = source_item.properties.get("earthgrid:band_names", [])
+            needed = self._resolve_needed_bands(operation, available)
+            bands = self.reconstruct_bands(source_item, bands=needed)
 
         # Run operation
-        op_fn = OPERATIONS[operation]
         if operation == "band_math":
-            result = op_fn(bands, source_item, expression=expression)
+            result = spec.fn(bands, source_item, expression=expression)
         else:
-            result = op_fn(bands, source_item)
+            result = spec.fn(bands, source_item)
 
-        # Return result directly — processing results are ephemeral,
-        # only original sensor data belongs in the grid.
         return result
