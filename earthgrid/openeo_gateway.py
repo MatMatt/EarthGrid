@@ -29,6 +29,25 @@ logger = logging.getLogger("earthgrid.openeo")
 router = APIRouter(prefix="/openeo", tags=["openeo-legacy"])
 
 # New root-level router — openEO API v1.2.0
+
+# --- Auth: API key for processing endpoints ---
+async def _require_api_key(
+    authorization: str | None = Header(None),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+):
+    """Require API key for processing endpoints. Skip if no key configured."""
+    from .config import settings as _s
+    if not _s.api_key:
+        return  # No key configured = open access
+    if x_api_key and x_api_key == _s.api_key:
+        return
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1] == _s.api_key:
+            return
+    raise HTTPException(403, "Invalid or missing API key. Use X-API-Key header or Bearer token.")
+
+
 root_router = APIRouter(tags=["openeo"])
 
 API_VERSION = "1.2.0"
