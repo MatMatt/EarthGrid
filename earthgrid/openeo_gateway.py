@@ -507,17 +507,39 @@ class OpenEOGateway:
     # Core execution: compute raster and return GeoTIFF bytes
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _extract_band_from_item_id(item_id: str) -> str | None:
+        """Extract a band name embedded in a SAFE/item ID string.
+
+        EarthGrid ingest creates item IDs like:
+          S2C_..._B04_10m  →  "B04"
+          S2C_..._B08      →  "B08"
+          S2C_..._TCI      →  "TCI"
+
+        Returns the band name (e.g. "B04") or None if not detectable.
+        """
+        import re
+        # Match _(B\w+)_?(\d+m)?$ or _TCI at end of id
+        m = re.search(r"_(B\w+?)(?:_\d+m)?$", item_id)
+        if m:
+            return m.group(1)
+        m = re.search(r"_(TCI)(?:_\d+m)?$", item_id)
+        if m:
+            return m.group(1)
+        return None
+
     async def execute_sync(self, process_graph: dict) -> bytes:
         """Execute process graph synchronously and return GeoTIFF bytes.
 
         This is the implementation behind POST /result.
         Steps:
           1. Parse data requirements (load_collection nodes)
-          2. Resolve chunks; self-fill from CDSE if missing
+          2. Resolve items from catalog (with CRS-aware spatial fallback)
           3. Reconstruct band arrays from chunks
           4. Apply operation (ndvi, etc.)
           5. Return GeoTIFF bytes
         """
+        import re
         import numpy as np
         import rasterio
         from rasterio.transform import from_bounds
@@ -528,111 +550,218 @@ class OpenEOGateway:
             raise HTTPException(400, "No load_collection found in process graph")
 
         op_info = self._extract_operation(process_graph)
-
-        req = requirements[0]  # primary collection
+        req = requirements[0]
         collection_id = req.collection_id
         bands = req.bands or None
 
-        # 2. Resolve chunks / self-fill
+        op = op_info.get("operation")
+        nir_name = op_info.get("nir", "B08")
+        red_name = op_info.get("red", "B04")
+
+        # Determine which bands we need to reconstruct
+        if op == "ndvi":
+            need_bands = list({nir_name, red_name} | set(bands or []))
+        else:
+            need_bands = bands  # None = all
+
+        # 2. Find items in catalog
+        # First try with full spatial/temporal filter
         resolved = await self.resolve_chunks(req)
         items = resolved.get("items", [])
 
-        if not items or resolved.get("items_found", 0) == 0:
+        # Fallback: stored bbox may be in projected CRS (UTM) while query is WGS84.
+        # In that case the bbox numbers don't compare correctly — fall back to
+        # collection-only search (no spatial filter).
+        if not items and self.catalog:
+            logger.info(
+                f"Spatial search returned 0 items for {collection_id} "
+                f"(possible WGS84/UTM mismatch). Falling back to collection-only search."
+            )
+            # Temporal filter still applies; skip bbox
+            datetime_range = None
+            t = req.temporal_extent
+            if t and len(t) >= 2:
+                datetime_range = f"{t[0]}/{t[1]}"
+            elif t:
+                datetime_range = f"{t[0]}/.."
+            items = self.catalog.search(
+                collections=[collection_id],
+                bbox=None,
+                datetime_range=datetime_range,
+                limit=500,
+            )
+            logger.info(f"Collection-only fallback found {len(items)} items.")
+
+        # Second fallback: ignore temporal extent too (get whatever is stored)
+        if not items and self.catalog:
+            logger.info(f"Temporal search returned 0 items. Falling back to all items in {collection_id}.")
+            items = self.catalog.search(collections=[collection_id], limit=500)
+            logger.info(f"Collection-all fallback found {len(items)} items.")
+
+        # Still nothing? try self-fill from CDSE
+        if not items:
             logger.info(f"No local data for {collection_id}, triggering self-fill")
             fill = await self.search_and_acquire(req)
             if fill.get("downloaded", 0) == 0:
                 errors = fill.get("errors", [fill.get("error", "unknown")])
                 raise HTTPException(
                     503,
-                    f"No data available for collection '{collection_id}' in the "
-                    f"requested extent/time. Self-fill errors: {errors}"
+                    f"No data available for collection '{collection_id}'. "
+                    f"Self-fill errors: {errors}"
                 )
             resolved = await self.resolve_chunks(req)
             items = resolved.get("items", [])
+            if not items and self.catalog:
+                items = self.catalog.search(collections=[collection_id], limit=500)
 
         if not items:
             raise HTTPException(404, f"No items found for collection '{collection_id}'")
 
-        # 3. Reconstruct bands from first matching item (or merge multiple)
+        # 3. Filter items to only the bands we need (band name embedded in item ID)
+        #    and reconstruct into a per-band dict.
+        #
+        # EarthGrid stores each band as a separate item with the band name at the
+        # end of the item ID (e.g. "...._B04", "..._B08_10m").  We detect the
+        # band name from the item ID and map it to the correct output band.
+
         from .reconstruct import reconstruct_bands
 
-        # Determine which bands to load based on operation
-        load_bands = bands
-        op = op_info.get("operation")
-        if op == "ndvi" and not load_bands:
-            load_bands = [op_info.get("nir", "B08"), op_info.get("red", "B04")]
-        elif op == "ndvi" and load_bands:
-            # Ensure both red and nir are in the list
-            nir_band = op_info.get("nir", "B08")
-            red_band = op_info.get("red", "B04")
-            load_bands = list(set(load_bands) | {nir_band, red_band})
-
-        # Use all items if multiple (mosaic-style: last item wins per pixel)
-        all_band_data: dict[str, "np.ndarray"] = {}
+        all_band_data: dict[str, np.ndarray] = {}
         reference_item = None
 
+        def _item_band(item) -> str | None:
+            """Return the band name for an item, from properties or item ID."""
+            props = item.properties if hasattr(item, "properties") else {}
+            # Try explicit band_names property first
+            band_names = props.get("earthgrid:band_names")
+            if band_names and len(band_names) == 1:
+                return band_names[0]
+            # Fall back to extracting from item ID
+            return self._extract_band_from_item_id(item.id)
+
+        # Group items by their detected band name.
+        # For each needed band, pick the highest-resolution item.
+        band_items: dict[str, list] = {}
         for item in items:
+            bname = _item_band(item)
+            if bname:
+                band_items.setdefault(bname, []).append(item)
+
+        logger.info(f"Detected bands in catalog: {list(band_items.keys())}")
+
+        def _pick_best_item(item_list):
+            """Pick highest-resolution item (smallest tile size / largest width)."""
+            if len(item_list) == 1:
+                return item_list[0]
+            def _width(it):
+                return it.properties.get("earthgrid:width", 0)
+            return max(item_list, key=_width)
+
+        # Reconstruct each needed band from its dedicated item
+        for bname, item_list in band_items.items():
+            # Skip if we don't need this band
+            if need_bands and bname not in need_bands:
+                continue
+            item = _pick_best_item(item_list)
             try:
+                # Each item is a single-band file; reconstruct_bands returns
+                # {"B01": array} (generic name) — rename to the actual band name.
                 bd = reconstruct_bands(
                     item_id=item.id,
                     collection_id=collection_id,
                     catalog=self.catalog,
                     chunk_store=self.chunk_store,
-                    bands=load_bands,
+                    bands=None,  # load all (it's just one band)
                 )
                 if bd:
-                    all_band_data.update(bd)
+                    # bd keys are generic ("B01") — replace with actual band name
+                    arr = next(iter(bd.values()))
+                    all_band_data[bname] = arr
                     if reference_item is None:
                         reference_item = item
+                    logger.info(f"Reconstructed band {bname} from {item.id}: shape={arr.shape}")
             except Exception as e:
-                logger.warning(f"Could not reconstruct {item.id}: {e}")
-                continue
+                logger.warning(f"Could not reconstruct {item.id} ({bname}): {e}")
+
+        # If band-name detection failed (no band in item ID), try generic reconstruct
+        # on a multi-band item using user-specified band names.
+        if not all_band_data:
+            logger.info("Band-from-ID detection yielded nothing; trying generic multi-band reconstruct")
+            for item in items[:10]:  # limit to first 10 items
+                try:
+                    bd = reconstruct_bands(
+                        item_id=item.id,
+                        collection_id=collection_id,
+                        catalog=self.catalog,
+                        chunk_store=self.chunk_store,
+                        bands=need_bands,
+                    )
+                    if bd:
+                        all_band_data.update(bd)
+                        if reference_item is None:
+                            reference_item = item
+                except Exception as e:
+                    logger.warning(f"Generic reconstruct failed for {item.id}: {e}")
 
         if not all_band_data:
+            available_bands = list(band_items.keys())
             raise HTTPException(
                 422,
-                f"Failed to reconstruct any band data from {len(items)} items. "
-                "Check that chunks are stored locally."
+                f"Failed to reconstruct band data. "
+                f"Needed bands: {need_bands}. "
+                f"Available in catalog: {available_bands}. "
+                f"Items checked: {len(items)}."
             )
 
+        logger.info(f"Reconstructed bands: {list(all_band_data.keys())}")
+
         # 4. Apply operation
+        def _find_band(target: str, data: dict) -> np.ndarray:
+            """Flexible band lookup with fallback aliases."""
+            if target in data:
+                return data[target].astype(np.float32)
+            for k in data:
+                if k.upper() == target.upper():
+                    return data[k].astype(np.float32)
+            aliases = {"B08": ["B8A", "nir", "NIR"], "B04": ["red", "RED"]}
+            for fb in aliases.get(target, []):
+                if fb in data:
+                    return data[fb].astype(np.float32)
+            raise KeyError(f"Band '{target}' not found; available: {list(data.keys())}")
+
         if op == "ndvi":
-            nir_name = op_info.get("nir", "B08")
-            red_name = op_info.get("red", "B04")
-
-            # Flexible band lookup
-            def _find_band(target: str, data: dict) -> "np.ndarray":
-                if target in data:
-                    return data[target].astype(np.float32)
-                # Try case-insensitive
-                for k in data:
-                    if k.upper() == target.upper():
-                        return data[k].astype(np.float32)
-                # Fallbacks
-                fallbacks = {
-                    "B08": ["B8A", "nir", "NIR"],
-                    "B04": ["red", "RED"],
-                }
-                for fb in fallbacks.get(target, []):
-                    if fb in data:
-                        return data[fb].astype(np.float32)
-                raise KeyError(f"Band '{target}' not found; available: {list(data.keys())}")
-
             try:
-                nir = _find_band(nir_name, all_band_data)
-                red = _find_band(red_name, all_band_data)
+                nir_arr = _find_band(nir_name, all_band_data)
+                red_arr = _find_band(red_name, all_band_data)
             except KeyError as e:
                 raise HTTPException(422, str(e))
 
+            # Align shapes if they differ (e.g. different resolutions ingested)
+            if nir_arr.shape != red_arr.shape:
+                # Resize to match the larger array using nearest-neighbor
+                target_shape = (
+                    max(nir_arr.shape[0], red_arr.shape[0]),
+                    max(nir_arr.shape[1], red_arr.shape[1]),
+                )
+                from PIL import Image as _PILImage
+                def _resize(arr, shape):
+                    img = _PILImage.fromarray(arr)
+                    return np.array(img.resize((shape[1], shape[0]), _PILImage.NEAREST))
+                if nir_arr.shape != target_shape:
+                    nir_arr = _resize(nir_arr, target_shape)
+                if red_arr.shape != target_shape:
+                    red_arr = _resize(red_arr, target_shape)
+
             with np.errstate(divide="ignore", invalid="ignore"):
-                ndvi = np.where((nir + red) == 0, np.float32(0),
-                                (nir - red) / (nir + red))
-            ndvi = np.nan_to_num(ndvi, nan=0.0, posinf=1.0, neginf=-1.0)
-            output_data = ndvi[np.newaxis, :, :]  # (1, H, W)
+                ndvi = np.where(
+                    (nir_arr + red_arr) == 0, np.float32(0),
+                    (nir_arr - red_arr) / (nir_arr + red_arr)
+                )
+            ndvi = np.nan_to_num(ndvi.astype(np.float32), nan=0.0, posinf=1.0, neginf=-1.0)
+            output_data = ndvi[np.newaxis, :, :]
             output_band_names = ["ndvi"]
             output_dtype = "float32"
         else:
-            # Default: return all reconstructed bands as-is
             band_names_out = list(all_band_data.keys())
             output_data = np.stack([all_band_data[b] for b in band_names_out], axis=0)
             output_band_names = band_names_out
@@ -640,10 +769,10 @@ class OpenEOGateway:
 
         # 5. Write GeoTIFF to memory buffer
         props = reference_item.properties
-        width  = props.get("earthgrid:width", output_data.shape[2])
-        height = props.get("earthgrid:height", output_data.shape[1])
+        width  = output_data.shape[2]
+        height = output_data.shape[1]
         crs    = props.get("earthgrid:crs", "EPSG:4326")
-        bbox   = reference_item.bbox  # [west, south, east, north]
+        bbox   = reference_item.bbox  # [west, south, east, north] in native CRS
 
         from rasterio.transform import from_bounds
         transform = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], width, height)
@@ -665,11 +794,13 @@ class OpenEOGateway:
                 dst.set_band_description(i, name)
 
         buf.seek(0)
+        result_bytes = buf.read()
         logger.info(
-            f"execute_sync: {collection_id} → {op or 'passthrough'} "
-            f"→ GeoTIFF {width}x{height}x{output_data.shape[0]} ({output_dtype})"
+            f"execute_sync: {collection_id} → op={op or 'passthrough'} "
+            f"→ GeoTIFF {width}x{height}x{output_data.shape[0]} ({output_dtype}) "
+            f"= {len(result_bytes):,} bytes"
         )
-        return buf.read()
+        return result_bytes
 
     # ------------------------------------------------------------------
     # Async job execution (wraps execute_sync, stores result)
@@ -831,15 +962,34 @@ def _capabilities(base_url: str = "") -> dict:
         ],
         "billing": None,
         "file_formats": {
-            "output": [
-                {
-                    "name": "GTiff",
+            "output": {
+                "GTiff": {
                     "title": "GeoTIFF",
                     "gis_data_types": ["raster"],
                     "parameters": {},
                     "links": [],
-                }
-            ]
+                },
+                "netCDF": {
+                    "title": "Network Common Data Form",
+                    "gis_data_types": ["raster"],
+                    "parameters": {},
+                    "links": [],
+                },
+                "JSON": {
+                    "title": "JSON",
+                    "gis_data_types": ["raster", "vector"],
+                    "parameters": {},
+                    "links": [],
+                },
+            },
+            "input": {
+                "GTiff": {
+                    "title": "GeoTIFF",
+                    "gis_data_types": ["raster"],
+                    "parameters": {},
+                    "links": [],
+                },
+            },
         },
     }
 
