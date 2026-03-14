@@ -182,28 +182,41 @@ class Catalog:
     def item_count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM items").fetchone()[0]
 
-    def total_area_km2(self) -> float:
-        """Compute total spatial coverage from unique bounding boxes (UTM, in m)."""
+    def coverage_by_collection(self) -> dict[str, dict]:
+        """Compute km² coverage per collection from unique UTM bounding boxes."""
         rows = self.db.execute(
-            "SELECT bbox_west, bbox_south, bbox_east, bbox_north FROM items"
+            "SELECT collection, bbox_west, bbox_south, bbox_east, bbox_north FROM items"
         ).fetchall()
-        seen: set[tuple[float, ...]] = set()
-        total = 0.0
+        from collections import defaultdict
+        stats: dict[str, dict] = {}
         for r in rows:
+            col = r["collection"]
+            if col not in stats:
+                stats[col] = {"items": 0, "seen": set(), "area_km2": 0.0}
             w, s, e, n = r["bbox_west"], r["bbox_south"], r["bbox_east"], r["bbox_north"]
             key = (round(w, -3), round(s, -3), round(e, -3), round(n, -3))
-            if key not in seen:
-                seen.add(key)
-                total += abs((e - w) * (n - s)) / 1e6
-        return round(total)
+            stats[col]["items"] += 1
+            if key not in stats[col]["seen"]:
+                stats[col]["seen"].add(key)
+                stats[col]["area_km2"] += abs((e - w) * (n - s)) / 1e6
+        # Clean up sets (not serializable) and round
+        result = {}
+        total_area = 0.0
+        for col, s in stats.items():
+            area = round(s["area_km2"])
+            total_area += area
+            result[col] = {"items": s["items"], "tiles": len(s["seen"]), "area_km2": area}
+        return {"collections": result, "total_area_km2": round(total_area)}
 
     def summary(self) -> dict:
         """Quick summary for federation sync."""
         collections = self.list_collections()
+        cov = self.coverage_by_collection()
         return {
             "collections": [c.id for c in collections],
             "item_count": self.item_count(),
-            "total_area_km2": self.total_area_km2(),
+            "total_area_km2": cov["total_area_km2"],
+            "coverage": cov["collections"],
         }
 
     def _row_to_item(self, row) -> STACItem:
