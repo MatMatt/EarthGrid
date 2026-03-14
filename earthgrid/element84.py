@@ -97,8 +97,7 @@ async def fetch_and_ingest_element84(
         for item in items:
             date_str = item["date"][:10] if item["date"] else "?"
             cc = item["cloud_cover"]
-            print(f"
-  📦 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
+            print(f"\n  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
             assets = item["assets"]
             for band_name in target_bands:
                 asset_key = BAND_MAP_S2.get(band_name, band_name.lower())
@@ -109,7 +108,7 @@ async def fetch_and_ingest_element84(
 
                 cog_url = assets[asset_key]["href"]
                 logger.info(f"Downloading {band_name} from {item['id']}...")
-                print(f"  ⬇ {item['id']} / {band_name}...")
+                print(f"  \u2b07 {item['id']} / {band_name}...")
 
                 try:
                     resp = await client.get(cog_url)
