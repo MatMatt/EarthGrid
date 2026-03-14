@@ -146,18 +146,65 @@ class CDSEClient:
 
         return products
 
+    async def _list_product_nodes(
+        self, product_id: str
+    ) -> list[dict]:
+        """List files inside a CDSE product via Nodes API (no download needed)."""
+        token = await self.get_token()
+        url = f"{ODATA_URL}/Products({product_id})/Nodes"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            # First level: the .SAFE folder
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            safe_nodes = resp.json().get("result", resp.json().get("value", []))
+            if not safe_nodes:
+                return []
+
+            # Navigate into .SAFE/GRANULE/*/IMG_DATA/ recursively
+            all_files = []
+
+            async def _walk(node_url: str, depth: int = 0):
+                if depth > 6:
+                    return
+                r = await client.get(node_url, headers=headers)
+                r.raise_for_status()
+                children = r.json().get("result", r.json().get("value", []))
+                for child in children:
+                    name = child.get("Name", "")
+                    child_id = child.get("Id", name)
+                    if name.endswith("/"):
+                        # Directory — recurse
+                        await _walk(f"{node_url}({child_id!r})/Nodes", depth + 1)
+                    elif name.endswith((".jp2", ".tif", ".tiff")):
+                        all_files.append({
+                            "name": name,
+                            "id": child_id,
+                            "size": child.get("ContentLength", 0),
+                            "download_url": f"{node_url}({child_id!r})/$value",
+                        })
+
+            safe_name = safe_nodes[0].get("Name", safe_nodes[0].get("Id", ""))
+            await _walk(f"{url}({safe_name!r})/Nodes")
+
+        return all_files
+
     async def download_product(
         self,
         product_id: str,
         output_dir: Path,
         bands: list[str] | None = None,
     ) -> list[Path]:
-        """Download a CDSE product (or specific bands).
+        """Download specific bands from a CDSE product.
+
+        Uses the Nodes API to download individual band files instead of
+        the full product ZIP (~1 GB → ~50-100 MB per band).
 
         Args:
             product_id: CDSE product UUID
             output_dir: Where to save files
-            bands: Specific bands to extract (None = all)
+            bands: Specific bands to download (None = all bands)
 
         Returns:
             List of downloaded file paths.
@@ -165,46 +212,84 @@ class CDSEClient:
         token = await self.get_token()
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        url = f"{DOWNLOAD_URL}/Products({product_id})/$value"
         headers = {"Authorization": f"Bearer {token}"}
-
-        zip_path = output_dir / f"{product_id}.zip"
         downloaded_files = []
 
-        async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
-            logger.info(f"Downloading product {product_id}...")
+        # Try band-level download via Nodes API
+        try:
+            all_nodes = await self._list_product_nodes(product_id)
+        except Exception as e:
+            logger.warning(f"Nodes API failed ({e}), falling back to full ZIP download")
+            all_nodes = []
+
+        if all_nodes:
+            # Filter to requested bands
+            matching = all_nodes
+            if bands:
+                matching = [
+                    n for n in all_nodes
+                    if any(b.upper() in Path(n["name"]).stem.upper() for b in bands)
+                ]
+            if not matching and bands:
+                # Fallback: try less strict matching
+                matching = [
+                    n for n in all_nodes
+                    if any(b.upper() in n["name"].upper() for b in bands)
+                ]
+            if not matching:
+                matching = all_nodes  # download all if no match
+
+            logger.info(f"Downloading {len(matching)} band files for {product_id} "
+                        f"(of {len(all_nodes)} total files)")
+
+            async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+                for node in matching:
+                    out_path = output_dir / Path(node["name"]).name
+                    try:
+                        async with client.stream(
+                            "GET", node["download_url"], headers=headers
+                        ) as resp:
+                            resp.raise_for_status()
+                            with open(out_path, "wb") as f:
+                                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                                    f.write(chunk)
+                        downloaded_files.append(out_path)
+                        size_mb = out_path.stat().st_size / 1024 / 1024
+                        logger.info(f"  Downloaded: {out_path.name} ({size_mb:.1f} MB)")
+                    except Exception as e:
+                        logger.error(f"  Failed: {node['name']}: {e}")
+
+            return downloaded_files
+
+        # Fallback: full ZIP download (for non-S2 products or Nodes API failure)
+        url = f"{DOWNLOAD_URL}/Products({product_id})/$value"
+        zip_path = output_dir / f"{product_id}.zip"
+
+        async with httpx.AsyncClient(timeout=600, follow_redirects=True) as client:
+            logger.info(f"Downloading full product {product_id}...")
             async with client.stream("GET", url, headers=headers) as resp:
                 resp.raise_for_status()
                 with open(zip_path, "wb") as f:
-                    async for chunk in resp.aiter_bytes(chunk_size=8192):
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
                         f.write(chunk)
 
         # Extract relevant bands from ZIP
         logger.info(f"Extracting bands from {zip_path.name}...")
         with zipfile.ZipFile(zip_path, "r") as zf:
             for name in zf.namelist():
-                # Match band files (e.g. *_B04_10m.jp2, *_SCL_20m.jp2, *_TCI_10m.jp2)
                 if not name.endswith((".jp2", ".tif", ".tiff")):
                     continue
-
                 fname_upper = Path(name).stem.upper()
-
-                # If bands filter specified, check match
                 if bands:
                     if not any(b.upper() in fname_upper for b in bands):
                         continue
-
-                # Extract
                 out_path = output_dir / Path(name).name
                 with zf.open(name) as src, open(out_path, "wb") as dst:
                     dst.write(src.read())
                 downloaded_files.append(out_path)
                 logger.info(f"  Extracted: {out_path.name}")
 
-        # Clean up ZIP
         zip_path.unlink(missing_ok=True)
-
         return downloaded_files
 
 

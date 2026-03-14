@@ -17,4 +17,4 @@ ENV EARTHGRID_STORE_PATH=/data/store
 ENV EARTHGRID_CATALOG_PATH=/data/catalog.db
 
 # Run at lowest CPU + I/O priority (idle resources only)
-CMD ["nice", "-n", "19", "ionice", "-c", "3", "uvicorn", "earthgrid.main:app", "--host", "0.0.0.0", "--port", "8400"]
+CMD ["nice", "-n", "19", "ionice", "-c", "3", "uvicorn", "earthgrid.main:app", "--host", "0.0.0.0", "--port", "8400", "--workers", "2"]
