@@ -412,7 +412,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory={work_dir}
-ExecStart={earthgrid_bin} start
+ExecStart={earthgrid_bin} start --foreground
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
