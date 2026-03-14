@@ -550,7 +550,7 @@ def chunk_map(
     """Return chunk map for parallel multi-node download.
 
     Clients use this to fetch chunks from multiple nodes simultaneously.
-    Returns per-band chunk hashes with metadata needed for reassembly.
+    Returns chunk hashes with metadata needed for reassembly.
     """
     item = catalog.get_item(item_id)
     if not item:
@@ -562,17 +562,22 @@ def chunk_map(
     band_list = [b.strip() for b in bands.split(',')] if bands else None
 
     if chunk_format == 'band-level':
+        # Band-level: chunk_hashes = {"B04": ["sha1", ...], "B08": [...]}
         all_hashes = item.chunk_hashes  # dict
         if band_list:
             selected = {b: h for b, h in all_hashes.items() if b in band_list}
         else:
             selected = all_hashes
+        total = sum(len(h) for h in selected.values())
+        chunks_response = selected
+    elif chunk_format == 'spatial-tile':
+        # Spatial tile: chunk_hashes = ["sha1", "sha2", ...] — all bands per tile
+        total = len(item.chunk_hashes)
+        chunks_response = item.chunk_hashes
     else:
-        # Legacy: return flat list
-        selected = {'all': item.chunk_hashes}
-
-    # Count total chunks
-    total = sum(len(h) for h in selected.values())
+        # Legacy: flat list
+        total = len(item.chunk_hashes) if isinstance(item.chunk_hashes, list) else 0
+        chunks_response = item.chunk_hashes
 
     return {
         'item_id': item_id,
@@ -585,8 +590,9 @@ def chunk_map(
         'height': props.get('earthgrid:height'),
         'dtype': props.get('earthgrid:dtype'),
         'crs': props.get('earthgrid:crs'),
+        'bands': props.get('earthgrid:band_names', []),
         'total_chunks': total,
-        'bands': selected,
+        'chunks': chunks_response,
         'node_url': settings.public_url or f'http://{settings.host}:{settings.port}',
     }
 
