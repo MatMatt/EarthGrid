@@ -19,6 +19,10 @@ class ChunkStore:
         self.store_path.mkdir(parents=True, exist_ok=True)
         self.limit_bytes = int(limit_gb * 1024 * 1024 * 1024) if limit_gb > 0 else 0
 
+        # Cached counters (lazy-init on first access)
+        self._cached_total_bytes: int | None = None
+        self._cached_chunk_count: int | None = None
+
         # Stats tracking
         self._stats_file = store_path.parent / "stats.json" if store_path.parent.exists() else None
         self._stats = self._load_stats()
@@ -113,6 +117,11 @@ class ChunkStore:
                 )
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+            # Update cached counters
+            if self._cached_total_bytes is not None:
+                self._cached_total_bytes += len(data)
+            if self._cached_chunk_count is not None:
+                self._cached_chunk_count += 1
             self._track_store(len(data))
         return sha
 
@@ -147,12 +156,16 @@ class ChunkStore:
 
     @property
     def chunk_count(self) -> int:
-        return len(self.list_chunks())
+        if self._cached_chunk_count is None:
+            self._cached_chunk_count = len(self.list_chunks())
+        return self._cached_chunk_count
 
     @property
     def total_bytes(self) -> int:
-        total = 0
-        for p in self.store_path.rglob("*"):
-            if p.is_file() and len(p.name) == 64:
-                total += p.stat().st_size
-        return total
+        if self._cached_total_bytes is None:
+            total = 0
+            for p in self.store_path.rglob("*"):
+                if p.is_file() and len(p.name) == 64:
+                    total += p.stat().st_size
+            self._cached_total_bytes = total
+        return self._cached_total_bytes
