@@ -103,7 +103,7 @@ def main():
     p_fetch.add_argument("--cloud", type=float, default=30.0, help="Max cloud cover %% (default: 30)")
     p_fetch.add_argument("--bands", help="Comma-separated bands (e.g. B02,B03,B04,B08,SCL)")
     p_fetch.add_argument("--product-type", default="S2MSI2A", help="Product type (default: S2MSI2A)")
-    p_fetch.add_argument("--limit", type=int, default=1, help="Max products to fetch")
+    p_fetch.add_argument("--limit", type=int, default=5, help="Max products to fetch (default: 5)")
     p_fetch.add_argument("--collection", default="sentinel-2-l2a", help="EarthGrid collection name")
     p_fetch.add_argument("--search-only", action="store_true", help="Only search, don't download")
     p_fetch.add_argument("--source", default="element84", choices=["cdse", "element84"], help="Data source (default: cdse)")
