@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     stats_db: str = "./data/stats.db"
     stats_retain_days: int = 90  # Auto-cleanup logs older than this
 
+    # --- Beacon ---
+    beacon_db: str = "./data/beacon.db"
+
     model_config = {"env_prefix": "EARTHGRID_"}
 
     def __init__(self, **kwargs):
