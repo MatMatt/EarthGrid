@@ -47,10 +47,7 @@ a:hover { text-decoration:underline; }
 .cov-table td { padding:0.6rem 0.5rem; border-bottom:1px solid var(--border); font-size:0.9rem; }
 .cov-table .sensor { font-weight:600; }
 .cov-table .num { text-align:right; font-variant-numeric:tabular-nums; }
-.bar-cell { width:40%; }
-.bar-wrap { background:var(--card); border:1px solid var(--border); border-radius:6px; height:22px; overflow:hidden; position:relative; }
-.bar-fill { height:100%; border-radius:5px; min-width:2px; transition: width 0.5s ease; }
-.bar-fill.raw { background:var(--green); }
+
 
 </style>
 </head>
@@ -63,7 +60,7 @@ a:hover { text-decoration:underline; }
   <div class="stat loading" id="sNodes"><div class="value" id="vNodes">—</div><div class="label">Network Nodes</div></div>
   <div class="stat loading" id="sArea"><div class="value" id="vArea">—</div><div class="label">km² Data</div></div>
   <div class="stat loading" id="sRedundancy"><div class="value" id="vRedundancy">—</div><div class="label">Redundancy Index</div></div>
-  <div class="stat loading" id="sRequested"><div class="value" id="vRequested">—</div><div class="label">km² Queried</div></div>
+  <div class="stat loading" id="sRequested"><div class="value" id="vRequested">—</div><div class="label">km² Requested</div></div>
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Total Storage</div></div>
 </div>
 
@@ -128,11 +125,11 @@ async function load() {
     if (d.version) document.getElementById('ver').textContent = d.version;
     document.querySelectorAll('.stat.loading').forEach(s => s.classList.remove('loading'));
 
-    // km² queried
+    // km² requested
     try {
       const rr = await fetch(BEACON + '/stats/requests');
       const rd = await rr.json();
-      document.getElementById('vRequested').textContent = (rd.total_km2_queried || 0).toLocaleString();
+      document.getElementById('vRequested').textContent = (rd.total_km2_requested || 0).toLocaleString();
       document.getElementById('sRequested').classList.remove('loading');
     } catch(e) {
       document.getElementById('vRequested').textContent = '0';
@@ -143,17 +140,13 @@ async function load() {
     const cd = await cr.json();
     const sensors = cd.sensors || {};
 
-    const maxKm2 = Math.max(...Object.values(sensors).map(s => s.area_km2 || 1));
-
-    let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">km²</th><th class="num">Tiles</th><th class="num">Items</th><th class="bar-cell">Coverage</th></tr></thead><tbody>';
+    let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">km²</th><th class="num">Tiles</th><th class="num">Items</th></tr></thead><tbody>';
     for (const [col, s] of Object.entries(sensors).sort((a,b) => b[1].area_km2 - a[1].area_km2)) {
-      const pct = (s.area_km2 / maxKm2 * 100).toFixed(1);
       html += '<tr>';
       html += '<td class="sensor">' + sensorLabel(col) + '</td>';
       html += '<td class="num">' + s.area_km2.toLocaleString() + '</td>';
       html += '<td class="num">' + s.tiles + '</td>';
       html += '<td class="num">' + s.items + '</td>';
-      html += '<td class="bar-cell"><div class="bar-wrap"><div class="bar-fill raw" style="width:' + pct + '%;position:absolute"></div></div></td>';
       html += '</tr>';
     }
     html += '</tbody></table>';
@@ -163,20 +156,23 @@ async function load() {
     const nr = await fetch(BEACON + '/nodes');
     const nd = await nr.json();
     const nodes = nd.nodes || [];
-    const allNodes = [{node_name: d.node_name || 'beacon', url: BEACON, chunk_count: d.chunks, item_count: d.item_count, alive: true, collections: d.collections || []}].concat(nodes);
+    const allNodes = [{node_name: d.node_name || 'beacon', chunk_count: d.chunks || 0, item_count: d.item_count || 0, alive: true, can_source: false}].concat(nodes);
+    const online = allNodes.filter(n => n.alive !== false).length;
+    const offline = allNodes.length - online;
+    const sourceNodes = allNodes.filter(n => n.can_source).length;
+    const totalChunks = allNodes.reduce((s, n) => s + (n.chunk_count || 0), 0);
+    const totalItems = allNodes.reduce((s, n) => s + (n.item_count || 0), 0);
     document.getElementById('vNodes').textContent = allNodes.length;
     document.getElementById('sNodes').classList.remove('loading');
 
-    let nh = '';
-    allNodes.forEach(n => {
-      const alive = n.alive !== false;
-      nh += '<div class="node"><div><span class="name">' + (n.node_name||'unknown') + '</span> <span class="badge ' + (alive?'green':'orange') + '">' + (alive?'online':'offline') + '</span>';
-      if (n.collections && n.collections.length) nh += ' <span class="badge blue">' + n.collections.join(', ') + '</span>';
-      if (n.can_source) nh += ' <span class="badge green" title="Can fetch from official sources">source</span>';
-      nh += '<br><span class="info">' + (n.chunk_count||0).toLocaleString() + ' chunks · ' + (n.item_count||0) + ' items</span>';
-      nh += '</div></div>';
-    });
-    document.getElementById('nodeList').innerHTML = nh || '<em>No nodes</em>';
+    let nh = '<div class="stats" style="margin:0">';
+    nh += '<div class="stat"><div class="value" style="color:var(--green)">' + online + '</div><div class="label">Online</div></div>';
+    if (offline > 0) nh += '<div class="stat"><div class="value" style="color:var(--orange)">' + offline + '</div><div class="label">Offline</div></div>';
+    nh += '<div class="stat"><div class="value">' + sourceNodes + '</div><div class="label">Source Nodes</div></div>';
+    nh += '<div class="stat"><div class="value">' + totalChunks.toLocaleString() + '</div><div class="label">Total Chunks</div></div>';
+    nh += '<div class="stat"><div class="value">' + totalItems.toLocaleString() + '</div><div class="label">Total Items</div></div>';
+    nh += '</div>';
+    document.getElementById('nodeList').innerHTML = nh;
 
     // Operations
     const or2 = await fetch(BEACON + '/process/operations');
