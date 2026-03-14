@@ -1,4 +1,5 @@
 """Ingest COG/GeoTIFF files into EarthGrid — chunk, hash, catalog."""
+from __future__ import annotations
 import hashlib
 import math
 import os

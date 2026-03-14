@@ -5,6 +5,7 @@ download bands, and ingest into the local EarthGrid node.
 
 Requires a CDSE account: https://dataspace.copernicus.eu
 """
+from __future__ import annotations
 import asyncio
 import logging
 import tempfile

@@ -7,6 +7,7 @@ A beacon does NOT store data. It:
 4. Provides node discovery for new nodes joining the network
 5. Federates with other beacons — shares node registries
 """
+from __future__ import annotations
 import asyncio
 import json
 import logging

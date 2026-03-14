@@ -1,4 +1,5 @@
 """EarthGrid Client — M2M access to any EarthGrid node."""
+from __future__ import annotations
 import httpx
 from pathlib import Path
 from typing import Optional

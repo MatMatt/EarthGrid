@@ -3,6 +3,7 @@
 Protects EarthGrid nodes from abuse without requiring nginx/reverse proxy config.
 Uses a sliding window counter per IP address.
 """
+from __future__ import annotations
 import time
 from collections import defaultdict
 from threading import Lock

@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "earthgrid"
 version = "0.2.0"
 description = "Distributed storage and access for satellite imagery and Earth observation products"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 license = "EUPL-1.2"
 readme = "README.md"
 keywords = ["earth-observation", "satellite", "distributed", "STAC", "geospatial"]
@@ -17,6 +17,8 @@ classifiers = [
     "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -33,7 +35,6 @@ dependencies = [
     "aiofiles>=23.0",
     "python-multipart>=0.0.6",
     "websockets>=12.0",
-    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

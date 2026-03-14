@@ -3,6 +3,7 @@
 Operates on STAC items stored locally: reads chunks, applies operations,
 stores results as new STAC items in the catalog.
 """
+from __future__ import annotations
 import math
 import numpy as np
 from datetime import datetime, timezone
