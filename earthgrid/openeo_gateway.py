@@ -349,8 +349,13 @@ class OpenEOGateway:
         datetime_range = None
         if requirement.temporal_extent:
             t = requirement.temporal_extent
+            def _normalise_end(dt: str) -> str:
+                """Extend date-only end to end-of-day so full-timestamp items match."""
+                if dt and len(dt) == 10 and dt != "..":
+                    return dt + "T23:59:59"
+                return dt
             if len(t) >= 2:
-                datetime_range = f"{t[0]}/{t[1]}"
+                datetime_range = f"{t[0]}/{_normalise_end(t[1])}"
             elif t:
                 datetime_range = f"{t[0]}/.."
 
@@ -577,13 +582,25 @@ class OpenEOGateway:
                 f"Spatial search returned 0 items for {collection_id} "
                 f"(possible WGS84/UTM mismatch). Falling back to collection-only search."
             )
-            # Temporal filter still applies; skip bbox
+            # Temporal filter still applies; skip bbox.
+            # Normalise end date: "2026-03-12" → "2026-03-12T23:59:59" so that
+            # items stored with full timestamps on that day are included.
+            def _normalise_dt(dt: str | None, is_end: bool = False) -> str | None:
+                if not dt or dt == "..":
+                    return dt
+                if is_end and len(dt) == 10:  # date-only
+                    return dt + "T23:59:59"
+                return dt
+
             datetime_range = None
             t = req.temporal_extent
             if t and len(t) >= 2:
-                datetime_range = f"{t[0]}/{t[1]}"
+                start = _normalise_dt(t[0], is_end=False)
+                end   = _normalise_dt(t[1], is_end=True)
+                datetime_range = f"{start}/{end}"
             elif t:
-                datetime_range = f"{t[0]}/.."
+                start = _normalise_dt(t[0], is_end=False)
+                datetime_range = f"{start}/.."
             items = self.catalog.search(
                 collections=[collection_id],
                 bbox=None,
@@ -962,34 +979,15 @@ def _capabilities(base_url: str = "") -> dict:
         ],
         "billing": None,
         "file_formats": {
-            "output": {
-                "GTiff": {
+            "output": [
+                {
+                    "name": "GTiff",
                     "title": "GeoTIFF",
                     "gis_data_types": ["raster"],
                     "parameters": {},
                     "links": [],
-                },
-                "netCDF": {
-                    "title": "Network Common Data Form",
-                    "gis_data_types": ["raster"],
-                    "parameters": {},
-                    "links": [],
-                },
-                "JSON": {
-                    "title": "JSON",
-                    "gis_data_types": ["raster", "vector"],
-                    "parameters": {},
-                    "links": [],
-                },
-            },
-            "input": {
-                "GTiff": {
-                    "title": "GeoTIFF",
-                    "gis_data_types": ["raster"],
-                    "parameters": {},
-                    "links": [],
-                },
-            },
+                }
+            ]
         },
     }
 

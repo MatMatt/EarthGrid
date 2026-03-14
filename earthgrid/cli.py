@@ -55,7 +55,7 @@ def main():
 
     # --- Start ---
     start_p = sub.add_parser("start", help="Start EarthGrid node (uses setup config)")
-    start_p.add_argument("-d", "--daemon", action="store_true", help="Run as background daemon")
+    start_p.add_argument("-f", "--foreground", action="store_true", help="Run in foreground (debug mode)")
     start_p.add_argument("--host", default=settings.host)
     start_p.add_argument("--port", type=int, default=settings.port)
     start_p.add_argument("--name", default=settings.node_name, help="Node name")
@@ -67,6 +67,7 @@ def main():
 
     # --- Setup ---
     sub.add_parser("stop", help="Stop background daemon")
+    sub.add_parser("update", help="Pull latest code, reinstall, restart service")
     sub.add_parser("install-service", help="Install systemd service (auto-start at boot)")
     sub.add_parser("uninstall-service", help="Remove systemd service")
     setup_p = sub.add_parser("setup", help="Interactive first-time setup")
@@ -182,6 +183,13 @@ def main():
 
     elif args.command == "stop":
         _stop_daemon()
+        # Also stop systemd service if running
+        import subprocess as _sp
+        _sp.run(["systemctl", "--user", "stop", SYSTEMD_UNIT], capture_output=True)
+        return
+
+    elif args.command == "update":
+        _update()
         return
 
     elif args.command == "install-service":
@@ -232,15 +240,57 @@ def main():
         if settings.beacon_peers:
             print(f"   Beacon peers: {', '.join(settings.beacon_peers)}")
         print()
-        if args.daemon:
-            _start_daemon(args.host, args.port)
-        else:
+        if args.foreground:
             uvicorn.run(
                 "earthgrid.main:app",
                 host=args.host,
                 port=args.port,
                 log_level="info",
             )
+        else:
+            # Default: install + start as systemd service (survives reboot)
+            _ensure_service(args.host, args.port)
+
+
+def _ensure_service(host: str, port: int):
+    """Ensure EarthGrid runs as a systemd service (default behavior)."""
+    import subprocess, os
+
+    unit_dir = Path.home() / ".config" / "systemd" / "user"
+    unit_path = unit_dir / SYSTEMD_UNIT
+
+    if not unit_path.exists():
+        print("  Installing systemd service...")
+        _install_systemd_service()
+    else:
+        # Service exists — just (re)start it
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", SYSTEMD_UNIT],
+            capture_output=True, text=True
+        )
+        if result.stdout.strip() == "active":
+            print("  Restarting service...")
+            subprocess.run(["systemctl", "--user", "restart", SYSTEMD_UNIT], capture_output=True)
+        else:
+            print("  Starting service...")
+            subprocess.run(["systemctl", "--user", "start", SYSTEMD_UNIT], capture_output=True)
+
+    # Verify
+    import time
+    time.sleep(1)
+    result = subprocess.run(
+        ["systemctl", "--user", "is-active", SYSTEMD_UNIT],
+        capture_output=True, text=True
+    )
+    if result.stdout.strip() == "active":
+        print(f"  \u2713 EarthGrid running (systemd service)")
+        print(f"    Status:  systemctl --user status {SYSTEMD_UNIT}")
+        print(f"    Logs:    journalctl --user -u {SYSTEMD_UNIT} -f")
+        print(f"    Stop:    earthgrid stop")
+        print(f"    Debug:   earthgrid start --foreground")
+    else:
+        print("  \u26a0 Service failed to start. Trying direct daemon...")
+        _start_daemon(host, port)
 
 
 def _start_daemon(host: str, port: int):
@@ -293,6 +343,39 @@ def _stop_daemon():
     except OSError:
         print(f"  ⚠ Process {pid} not found (already stopped?)")
     pid_file.unlink(missing_ok=True)
+
+
+def _update():
+    """Pull latest code, reinstall, restart."""
+    import subprocess
+
+    # Find project root (where .git is)
+    project_root = Path(__file__).resolve().parent.parent
+    git_dir = project_root / ".git"
+
+    if not git_dir.exists():
+        # Installed via pip, try pip upgrade
+        print("  Updating via pip...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "earthgrid"],
+                       capture_output=False)
+    else:
+        print(f"  Pulling latest from {project_root}...")
+        result = subprocess.run(["git", "pull"], cwd=project_root, capture_output=True, text=True)
+        print(f"  {result.stdout.strip()}")
+
+        print("  Reinstalling...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(project_root)],
+                       capture_output=True)
+
+    # Restart service if running
+    result = subprocess.run(["systemctl", "--user", "is-active", "earthgrid.service"],
+                            capture_output=True, text=True)
+    if result.stdout.strip() == "active":
+        print("  Restarting service...")
+        subprocess.run(["systemctl", "--user", "restart", "earthgrid.service"], capture_output=True)
+        print("  \u2713 Updated and restarted!")
+    else:
+        print("  \u2713 Updated! Run 'earthgrid start' to launch.")
 
 
 SYSTEMD_UNIT = "earthgrid.service"
