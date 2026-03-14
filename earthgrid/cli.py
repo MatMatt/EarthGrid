@@ -739,13 +739,19 @@ def _cmd_fetch(args):
             earthgrid_collection=args.collection,
         ))
 
-    ok = [r for r in results if r.get("item_id")]
+    ingested = [r for r in results if r.get("item_id") and not r.get("skipped")]
+    skipped = [r for r in results if r.get("skipped")]
     err = [r for r in results if r.get("error")]
 
-    if ok:
-        print(f"\n✅ Ingested {len(ok)} bands:")
-        for r in ok:
+    if ingested:
+        print(f"\n\u2705 Ingested {len(ingested)} bands:")
+        for r in ingested:
             print(f"  {r['item_id']} ({r.get('chunks', '?')} chunks)")
+    if skipped:
+        print(f"\n\u23ed Skipped {len(skipped)} bands (already ingested)")
+    if not ingested and not err:
+        if skipped:
+            print("  Nothing new to download.")
     if err:
         print(f"\n⚠ {len(err)} errors:")
         for r in err:
