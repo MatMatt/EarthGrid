@@ -19,13 +19,7 @@ h1 span { color:var(--accent); }
 .stat.loading .value { color:var(--dim); }
 .section { margin:2.5rem 0; }
 .section h2 { font-size:1.3rem; margin-bottom:1rem; border-bottom:1px solid var(--border); padding-bottom:0.5rem; }
-.node { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:1rem; margin:0.5rem 0; display:flex; justify-content:space-between; align-items:center; }
-.node .name { font-weight:600; }
-.node .info { color:var(--dim); font-size:0.85rem; }
-.badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
-.badge.green { background:#238636; color:#fff; }
-.badge.orange { background:#9e6a03; color:#fff; }
-.badge.blue { background:#1f6feb; color:#fff; }
+
 
 .features { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:1rem; }
 .feature { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1.5rem; }
@@ -69,10 +63,7 @@ a:hover { text-decoration:underline; }
 <div id="coverageTable"><em style="color:var(--dim)">Loading...</em></div>
 </div>
 
-<div class="section">
-<h2>🖧 Network Nodes</h2>
-<div id="nodeList"><em style="color:var(--dim)">Loading...</em></div>
-</div>
+
 
 <div class="section">
 <h2>⚡ Processing Operations</h2>
@@ -156,23 +147,9 @@ async function load() {
     const nr = await fetch(BEACON + '/nodes');
     const nd = await nr.json();
     const nodes = nd.nodes || [];
-    const allNodes = [{node_name: d.node_name || 'beacon', chunk_count: d.chunks || 0, item_count: d.item_count || 0, alive: true, can_source: false}].concat(nodes);
-    const online = allNodes.filter(n => n.alive !== false).length;
-    const offline = allNodes.length - online;
-    const sourceNodes = allNodes.filter(n => n.can_source).length;
-    const totalChunks = allNodes.reduce((s, n) => s + (n.chunk_count || 0), 0);
-    const totalItems = allNodes.reduce((s, n) => s + (n.item_count || 0), 0);
+    const allNodes = [{alive: true}].concat(nodes);
     document.getElementById('vNodes').textContent = allNodes.length;
     document.getElementById('sNodes').classList.remove('loading');
-
-    let nh = '<div class="stats" style="margin:0">';
-    nh += '<div class="stat"><div class="value" style="color:var(--green)">' + online + '</div><div class="label">Online</div></div>';
-    if (offline > 0) nh += '<div class="stat"><div class="value" style="color:var(--orange)">' + offline + '</div><div class="label">Offline</div></div>';
-    nh += '<div class="stat"><div class="value">' + sourceNodes + '</div><div class="label">Source Nodes</div></div>';
-    nh += '<div class="stat"><div class="value">' + totalChunks.toLocaleString() + '</div><div class="label">Total Chunks</div></div>';
-    nh += '<div class="stat"><div class="value">' + totalItems.toLocaleString() + '</div><div class="label">Total Items</div></div>';
-    nh += '</div>';
-    document.getElementById('nodeList').innerHTML = nh;
 
     // Operations
     const or2 = await fetch(BEACON + '/process/operations');
