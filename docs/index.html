@@ -61,8 +61,9 @@ a:hover { text-decoration:underline; }
 
 <div class="stats">
   <div class="stat loading" id="sNodes"><div class="value" id="vNodes">—</div><div class="label">Network Nodes</div></div>
-  <div class="stat loading" id="sItems"><div class="value" id="vItems">—</div><div class="label">STAC Items</div></div>
-  <div class="stat loading" id="sArea"><div class="value" id="vArea">—</div><div class="label">km² Coverage</div></div>
+  <div class="stat loading" id="sArea"><div class="value" id="vArea">—</div><div class="label">km² Data</div></div>
+  <div class="stat loading" id="sRedundancy"><div class="value" id="vRedundancy">—</div><div class="label">Redundancy Index</div></div>
+  <div class="stat loading" id="sRequested"><div class="value" id="vRequested">—</div><div class="label">km² Requested</div></div>
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Total Storage</div></div>
 </div>
 
@@ -121,11 +122,21 @@ async function load() {
     // Root status
     const r = await fetch(BEACON + '/');
     const d = await r.json();
-    document.getElementById('vItems').textContent = (d.item_count || 0).toLocaleString();
     document.getElementById('vArea').textContent = (d.total_area_km2 || 0).toLocaleString();
+    document.getElementById('vRedundancy').textContent = (d.redundancy_index || 1.0) + 'x';
     document.getElementById('vStorage').textContent = ((d.chunks_bytes || 0) / 1e9).toFixed(1) + ' GB';
     if (d.version) document.getElementById('ver').textContent = d.version;
     document.querySelectorAll('.stat.loading').forEach(s => s.classList.remove('loading'));
+
+    // km² requested
+    try {
+      const rr = await fetch(BEACON + '/stats/requests');
+      const rd = await rr.json();
+      document.getElementById('vRequested').textContent = (rd.total_km2_requested || 0).toLocaleString();
+      document.getElementById('sRequested').classList.remove('loading');
+    } catch(e) {
+      document.getElementById('vRequested').textContent = '0';
+    }
 
     // Coverage per sensor
     const cr = await fetch(BEACON + '/stats/coverage');
