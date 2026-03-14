@@ -106,6 +106,12 @@ async def fetch_and_ingest_element84(
                     results.append({"error": f"Band {band_name} not found", "product": item["id"]})
                     continue
 
+                item_id_full = f"{item['id']}_{band_name}"
+                if catalog.get_item(item_id_full):
+                    print(f"  \u2714 {item['id']} / {band_name} (already ingested, skipping)")
+                    results.append({"item_id": item_id_full, "band": band_name, "product": item["id"], "skipped": True})
+                    continue
+
                 cog_url = assets[asset_key]["href"]
                 logger.info(f"Downloading {band_name} from {item['id']}...")
                 print(f"  \u2b07 {item['id']} / {band_name}...")
