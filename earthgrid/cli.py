@@ -745,11 +745,11 @@ def _cmd_fetch(args):
     if ok:
         print(f"\n✅ Ingested {len(ok)} bands:")
         for r in ok:
-            print(f"  {r['item_id']} ({r['chunks']} chunks)")
+            print(f"  {r['item_id']} ({r.get('chunks', '?')} chunks)")
     if err:
         print(f"\n⚠ {len(err)} errors:")
         for r in err:
-            print(f"  {r['band_file']}: {r['error']}")
+            print(f"  {r.get('band_file', r.get('product', '?'))}: {r['error']}")
 
 
 def _cmd_sync(args):
