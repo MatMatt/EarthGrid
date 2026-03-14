@@ -54,6 +54,7 @@ def main():
 
     # --- Start ---
     start_p = sub.add_parser("start", help="Start EarthGrid node (uses setup config)")
+    start_p.add_argument("-d", "--daemon", action="store_true", help="Run as background daemon")
     start_p.add_argument("--host", default=settings.host)
     start_p.add_argument("--port", type=int, default=settings.port)
     start_p.add_argument("--name", default=settings.node_name, help="Node name")
@@ -64,6 +65,7 @@ def main():
     start_p.add_argument("--beacon-peers", nargs="*", default=[], help="Other beacon URLs to federate with")
 
     # --- Setup ---
+    sub.add_parser("stop", help="Stop background daemon")
     setup_p = sub.add_parser("setup", help="Interactive first-time setup")
     setup_p.add_argument("--port", type=int, default=8400)
 
@@ -175,6 +177,10 @@ def main():
         if args.command is None:
             return
 
+    elif args.command == "stop":
+        _stop_daemon()
+        return
+
     elif args.command == "start":
         # Load config from setup if exists
         config_file = Path.home() / ".earthgrid" / "config.json"
@@ -215,12 +221,67 @@ def main():
         if settings.beacon_peers:
             print(f"   Beacon peers: {', '.join(settings.beacon_peers)}")
         print()
-        uvicorn.run(
-            "earthgrid.main:app",
-            host=args.host,
-            port=args.port,
-            log_level="info",
+        if args.daemon:
+            _start_daemon(args.host, args.port)
+        else:
+            uvicorn.run(
+                "earthgrid.main:app",
+                host=args.host,
+                port=args.port,
+                log_level="info",
+            )
+
+
+def _start_daemon(host: str, port: int):
+    """Start EarthGrid as a background daemon."""
+    import subprocess, os
+    pid_file = Path.home() / ".earthgrid" / "earthgrid.pid"
+    log_file = Path.home() / ".earthgrid" / "earthgrid.log"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check if already running
+    if pid_file.exists():
+        old_pid = int(pid_file.read_text().strip())
+        try:
+            os.kill(old_pid, 0)
+            print(f"  ⚠ Already running (PID {old_pid}). Stop first: earthgrid stop")
+            return
+        except OSError:
+            pid_file.unlink()
+
+    env = os.environ.copy()
+    env["EARTHGRID_HOST"] = host
+    env["EARTHGRID_PORT"] = str(port)
+
+    with open(log_file, "a") as lf:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "earthgrid.main:app",
+             "--host", host, "--port", str(port), "--log-level", "info"],
+            stdout=lf, stderr=lf,
+            env=env, start_new_session=True,
         )
+
+    pid_file.write_text(str(proc.pid))
+    print(f"  ✓ Daemon started (PID {proc.pid})")
+    print(f"    Log: {log_file}")
+    print(f"    Stop: earthgrid stop")
+
+
+def _stop_daemon():
+    """Stop the EarthGrid background daemon."""
+    import os, signal
+    pid_file = Path.home() / ".earthgrid" / "earthgrid.pid"
+    if not pid_file.exists():
+        print("  No daemon running (no PID file)")
+        return
+
+    pid = int(pid_file.read_text().strip())
+    try:
+        os.kill(pid, signal.SIGTERM)
+        print(f"  ✓ Stopped daemon (PID {pid})")
+    except OSError:
+        print(f"  ⚠ Process {pid} not found (already stopped?)")
+    pid_file.unlink(missing_ok=True)
 
 
 def _human_bytes(b: int) -> str:
