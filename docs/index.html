@@ -109,9 +109,21 @@ async function load() {
     // Root status
     const r = await fetch(BEACON + '/');
     const d = await r.json();
+
+    // Aggregate storage from all nodes (beacon + registered)
+    const nr2 = await fetch(BEACON + '/nodes');
+    const nd2 = await nr2.json();
+    const allN = nd2.nodes || [];
+    let totalBytes = d.chunks_bytes || d.earthgrid?.chunks_bytes || 0;
+    let totalItems = d.item_count || d.earthgrid?.item_count || 0;
+    for (const n of allN) {
+      totalBytes += n.chunks_bytes || 0;
+      totalItems += n.item_count || 0;
+    }
+
     document.getElementById('vArea').textContent = (d.total_area_km2 || 0).toLocaleString();
     document.getElementById('vRedundancy').textContent = (d.redundancy_index || 1.0) + 'x';
-    document.getElementById('vStorage').textContent = ((d.chunks_bytes || 0) / 1e9).toFixed(1) + ' GB';
+    document.getElementById('vStorage').textContent = (totalBytes / 1e9).toFixed(1) + ' GB';
     if (d.version) document.getElementById('ver').textContent = d.version;
     document.querySelectorAll('.stat.loading').forEach(s => s.classList.remove('loading'));
 
