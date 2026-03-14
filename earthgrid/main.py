@@ -133,6 +133,7 @@ async def _register_with_beacon():
                     "item_count": summary["item_count"],
                     "chunk_count": chunk_store.chunk_count,
                     "chunks_bytes": chunk_store.total_bytes,
+                    "can_source": source_user_mgr.list_users() != [],
                 },
             )
     except Exception:

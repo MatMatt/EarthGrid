@@ -36,6 +36,7 @@ class RegisteredNode:
     item_count: int = 0
     chunk_count: int = 0
     chunks_bytes: int = 0
+    can_source: bool = False  # can fetch from official sources (CDSE etc.)
     last_seen: float = 0.0
     bbox_index: list[list[float]] = field(default_factory=list)  # per-collection bboxes
 
@@ -56,6 +57,7 @@ class RegisteredNode:
             "item_count": self.item_count,
             "chunk_count": self.chunk_count,
             "chunks_bytes": self.chunks_bytes,
+            "can_source": self.can_source,
             "alive": self.alive,
             "reachable": self.url is not None or self.reachable_via_ws,
             "last_seen": self.last_seen,
@@ -94,6 +96,7 @@ class BeaconRegistry:
         item_count: int = 0,
         chunk_count: int = 0,
         chunks_bytes: int = 0,
+        can_source: bool = False,
     ) -> RegisteredNode:
         async with self._lock:
             existing = self.nodes.get(node_id)
@@ -107,6 +110,7 @@ class BeaconRegistry:
                 existing.item_count = item_count
                 existing.chunk_count = chunk_count
                 existing.chunks_bytes = chunks_bytes
+                existing.can_source = can_source
                 return existing
 
             node = RegisteredNode(
@@ -118,6 +122,7 @@ class BeaconRegistry:
                 item_count=item_count,
                 chunk_count=chunk_count,
                 chunks_bytes=chunks_bytes,
+                can_source=can_source,
                 last_seen=time.time(),
             )
             self.nodes[node_id] = node
@@ -336,6 +341,7 @@ async def register_node(
     item_count: int = Query(0),
     chunk_count: int = Query(0),
     chunks_bytes: int = Query(0),
+    can_source: bool = Query(False, description="Node can fetch from official sources"),
 ):
     """Register a data node with this beacon."""
     # Auto-detect peer IP if url is 0.0.0.0 or missing
@@ -355,6 +361,7 @@ async def register_node(
         item_count=item_count,
         chunk_count=chunk_count,
         chunks_bytes=chunks_bytes,
+        can_source=can_source,
     )
     return {"status": "registered", "node": node.to_dict()}
 
