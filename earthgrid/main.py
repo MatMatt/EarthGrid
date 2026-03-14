@@ -25,7 +25,7 @@ from .stats import StatsEngine
 from .source_users import SourceUserManager
 from .bandwidth import BandwidthManager
 from .ratelimit import RateLimitMiddleware
-from .openeo_gateway import router as openeo_router, OpenEOGateway, set_gateway
+from .openeo_gateway import router as openeo_router, root_router, OpenEOGateway, set_gateway, _capabilities, API_VERSION, BACKEND_VERSION
 
 app = FastAPI(
     title="EarthGrid Node",
@@ -115,8 +115,9 @@ openeo_gw = OpenEOGateway(
 )
 set_gateway(openeo_gw)
 
-# Include openEO router
-app.include_router(openeo_router)
+# Include openEO routers
+app.include_router(openeo_router)   # legacy /openeo/* routes
+app.include_router(root_router)     # openEO API v1.2.0 root-level routes
 
 
 # --- Beacon Registration ---
@@ -219,9 +220,9 @@ async def stats_middleware(request: Request, call_next):
 
 # --- Node Info ---
 
-@app.get("/")
-def node_info():
-    """Node identity and status."""
+@app.get("/node-info")
+def node_info_detail():
+    """EarthGrid node identity and status (full detail endpoint)."""
     summary = catalog.summary()
     return {
         "name": "EarthGrid",
@@ -242,6 +243,30 @@ def node_info():
         "bandwidth": bandwidth_mgr.status(),
         "max_download_volume_gb": settings.max_download_volume_gb,
     }
+
+
+@app.get("/")
+def node_info(request: Request):
+    """Root endpoint — openEO capabilities merged with EarthGrid node info.
+
+    The openEO Python/R clients call GET / to discover the api_version field.
+    EarthGrid-specific clients can use /node-info for full node details.
+    """
+    base = str(request.base_url).rstrip("/")
+    caps = _capabilities(base)
+    # Embed EarthGrid-specific metadata (non-breaking additions to openEO response)
+    summary = catalog.summary()
+    caps["earthgrid"] = {
+        "name": "EarthGrid",
+        "version": __version__,
+        "node_id": settings.node_id,
+        "node_name": settings.node_name,
+        "chunks": chunk_store.chunk_count,
+        "chunks_bytes": chunk_store.total_bytes,
+        "item_count": summary["item_count"],
+        "collections": summary["collections"],
+    }
+    return caps
 
 
 def _redundancy_index() -> float:

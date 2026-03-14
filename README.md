@@ -132,6 +132,44 @@ Since EarthGrid converts everything to COG, data from Element84 and CDSE is **by
 
 ---
 
+## Data Licensing & Attribution
+
+All data served by EarthGrid originates from official Copernicus and public sources. **The data is free and open**, but usage requires proper attribution.
+
+### Copernicus Sentinel Data
+
+Free, full and open access under [EU Regulation 1159/2013](https://sentinels.copernicus.eu/documents/247904/690755/Sentinel_Data_Legal_Notice). You may reproduce, distribute, adapt and combine the data freely — but **you must cite the source**:
+
+| Data type | Required attribution |
+|---|---|
+| Unmodified Sentinel data | *"Copernicus Sentinel data [Year]"* |
+| Modified Sentinel data | *"Contains modified Copernicus Sentinel data [Year]"* |
+| Copernicus Service Information | *"Copernicus Service information [Year]"* |
+| Modified Service Information | *"Contains modified Copernicus Service information [Year]"* |
+
+### Copernicus Services (CLMS, CMEMS, C3S, CAMS)
+
+Each Copernicus Service has its own licence. Common requirements:
+
+| Service | Licence | Citation |
+|---|---|---|
+| **CLMS** (Land) | [Copernicus Land](https://land.copernicus.eu/en/data-policy) | *"© Copernicus Land Monitoring Service [Year], EEA"* |
+| **CMEMS** (Marine) | [Copernicus Marine](https://marine.copernicus.eu/user-corner/service-commitments-and-licence) | Product-specific DOI (see product page) |
+| **C3S** (Climate) | [Copernicus Climate](https://cds.climate.copernicus.eu/disclaimer) | *"Contains modified Copernicus Climate Change Service information [Year]"* |
+| **CAMS** (Atmosphere) | [Copernicus Atmosphere](https://ads.atmosphere.copernicus.eu/disclaimer) | *"Contains modified Copernicus Atmosphere Monitoring Service information [Year]"* |
+
+### Landsat (via Element84)
+
+[USGS Data Policy](https://www.usgs.gov/data-management/data-policies-and-guidance) — free and open, citation recommended: *"Landsat Level-2 data courtesy of USGS"*.
+
+### EarthGrid's role
+
+EarthGrid **redistributes** official data as-is (content-addressed, integrity-verified). It does not claim ownership of any upstream data. Users of data obtained through EarthGrid remain subject to the original data provider's licence terms.
+
+> ⚠️ **If you use data from EarthGrid in publications, products or services, you must attribute the original data source as described above.**
+
+---
+
 ## Quick Start
 
 ### Docker *(coming soon)*
