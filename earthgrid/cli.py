@@ -30,6 +30,18 @@ def _fetch_github_seeds() -> str | None:
 
 
 def main():
+    # Auto-load .env from CWD or project root
+    env_file = Path(".env")
+    if not env_file.exists():
+        env_file = Path(__file__).resolve().parent.parent / ".env"
+    if env_file.exists():
+        import os
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+
     parser = argparse.ArgumentParser(
         prog="earthgrid",
         description="EarthGrid — Distributed Earth observation data storage",
