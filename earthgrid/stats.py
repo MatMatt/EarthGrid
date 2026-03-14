@@ -54,11 +54,26 @@ class StatsEngine:
                 nice_level INTEGER NOT NULL DEFAULT 0,
                 source_user_id INTEGER NOT NULL DEFAULT 0
             )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS download_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                origin TEXT NOT NULL DEFAULT 'source',
+                provider TEXT NOT NULL DEFAULT '',
+                collection_id TEXT NOT NULL DEFAULT '',
+                item_id TEXT NOT NULL DEFAULT '',
+                bytes_transferred INTEGER NOT NULL DEFAULT 0,
+                bbox TEXT NOT NULL DEFAULT '',
+                client_ip TEXT NOT NULL DEFAULT ''
+            )""")
+            # origin: 'source' = fetched from CDSE/WEkEO/etc
+            #         'user'   = served to an EarthGrid user
             # Indexes for fast aggregation
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chunk_ts ON chunk_access(timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chunk_sha ON chunk_access(chunk_sha)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_coll_ts ON collection_access(timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_coll_id ON collection_access(collection_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_dl_ts ON download_log(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_dl_origin ON download_log(origin)")
 
     def record_chunk_access(self, chunk_sha: str, access_type: str = "read",
                             node_id: str = "", collection_id: str = "",
@@ -94,6 +109,109 @@ class StatsEngine:
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (time.time(), node_id, direction, bytes_transferred, nice_level, source_user_id)
             )
+
+    def record_download(self, origin: str, collection_id: str = "",
+                        item_id: str = "", bytes_transferred: int = 0,
+                        provider: str = "", bbox: str = "",
+                        client_ip: str = ""):
+        """Record a download event.
+        
+        Args:
+            origin: 'source' (fetched from CDSE/WEkEO) or 'user' (served to EarthGrid user)
+            provider: upstream provider name (cdse, wekeo, element84, cmems)
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO download_log
+                   (timestamp, origin, provider, collection_id, item_id,
+                    bytes_transferred, bbox, client_ip)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (time.time(), origin, provider, collection_id, item_id,
+                 bytes_transferred, bbox, client_ip)
+            )
+
+    def download_stats(self, period_hours: int = 720) -> dict:
+        """Download statistics split by source vs user.
+        
+        Default period: 30 days (720 hours).
+        Returns counts and bytes for both origins, broken down by collection and provider.
+        """
+        cutoff = time.time() - (period_hours * 3600)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            # Totals by origin
+            totals = conn.execute(
+                """SELECT origin,
+                   COUNT(*) as count,
+                   SUM(bytes_transferred) as bytes
+                   FROM download_log WHERE timestamp > ?
+                   GROUP BY origin""",
+                (cutoff,)
+            ).fetchall()
+            # Source downloads by provider
+            by_provider = conn.execute(
+                """SELECT provider, collection_id,
+                   COUNT(*) as count,
+                   SUM(bytes_transferred) as bytes
+                   FROM download_log
+                   WHERE timestamp > ? AND origin = 'source'
+                   GROUP BY provider, collection_id
+                   ORDER BY bytes DESC""",
+                (cutoff,)
+            ).fetchall()
+            # User downloads by collection
+            by_collection = conn.execute(
+                """SELECT collection_id,
+                   COUNT(*) as count,
+                   SUM(bytes_transferred) as bytes
+                   FROM download_log
+                   WHERE timestamp > ? AND origin = 'user'
+                   GROUP BY collection_id
+                   ORDER BY bytes DESC""",
+                (cutoff,)
+            ).fetchall()
+            # Daily trend (last 30 days)
+            daily = conn.execute(
+                """SELECT date(timestamp, 'unixepoch') as day, origin,
+                   COUNT(*) as count,
+                   SUM(bytes_transferred) as bytes
+                   FROM download_log WHERE timestamp > ?
+                   GROUP BY day, origin
+                   ORDER BY day""",
+                (cutoff,)
+            ).fetchall()
+
+        source = next((dict(r) for r in totals if r["origin"] == "source"), {"count": 0, "bytes": 0})
+        user = next((dict(r) for r in totals if r["origin"] == "user"), {"count": 0, "bytes": 0})
+
+        return {
+            "period_hours": period_hours,
+            "source_downloads": {
+                "count": source.get("count", 0),
+                "bytes": source.get("bytes", 0) or 0,
+                "gb": round((source.get("bytes", 0) or 0) / (1024**3), 2),
+                "by_provider": [
+                    {"provider": r["provider"], "collection": r["collection_id"],
+                     "count": r["count"], "gb": round((r["bytes"] or 0) / (1024**3), 2)}
+                    for r in by_provider
+                ],
+            },
+            "user_downloads": {
+                "count": user.get("count", 0),
+                "bytes": user.get("bytes", 0) or 0,
+                "gb": round((user.get("bytes", 0) or 0) / (1024**3), 2),
+                "by_collection": [
+                    {"collection": r["collection_id"],
+                     "count": r["count"], "gb": round((r["bytes"] or 0) / (1024**3), 2)}
+                    for r in by_collection
+                ],
+            },
+            "daily_trend": [
+                {"date": r["day"], "origin": r["origin"],
+                 "count": r["count"], "gb": round((r["bytes"] or 0) / (1024**3), 2)}
+                for r in daily
+            ],
+        }
 
     def top_collections(self, period_hours: int = 168, limit: int = 20) -> list[dict]:
         """Top accessed collections in the given period (default: 1 week)."""

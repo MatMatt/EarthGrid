@@ -196,11 +196,17 @@ async def stats_middleware(request: Request, call_next):
             for c in collections.split(","):
                 if c.strip():
                     stats_engine.record_collection_access(c.strip(), access_type="query")
-        # Track downloads
+        # Track user downloads (served by EarthGrid)
         elif path.startswith("/download/") and response.status_code == 200:
             parts = path.split("/download/")[1].split("/")
             if len(parts) >= 2:
                 stats_engine.record_collection_access(parts[0], access_type="download")
+                client_ip = request.headers.get("x-real-ip") or request.client.host or ""
+                content_length = int(response.headers.get("content-length", 0))
+                stats_engine.record_download(
+                    origin="user", collection_id=parts[0],
+                    item_id=parts[1] if len(parts) > 1 else "",
+                    bytes_transferred=content_length, client_ip=client_ip)
     except Exception:
         pass
     return response
@@ -357,6 +363,11 @@ def stats_bandwidth(hours: int = Query(24)):
 def stats_replication_advice():
     """Replication factor advice based on access patterns."""
     return stats_engine.replication_advice()
+
+@app.get("/stats/downloads")
+def stats_downloads(days: int = Query(30)):
+    """Download statistics: source (from CDSE/WEkEO) vs user (served by EarthGrid)."""
+    return stats_engine.download_stats(period_hours=days * 24)
 
 
 # --- Source Users API ---
