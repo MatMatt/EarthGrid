@@ -576,7 +576,7 @@ def _interactive_setup(args):
         node_name = default_name
 
     # Beacon URL (to connect to the network)
-    from . import DEFAULT_BEACON
+    from . import get_default_beacon; DEFAULT_BEACON = get_default_beacon()
     beacon_url = input(f"Beacon URL to join? [{DEFAULT_BEACON}]: ").strip()
     if not beacon_url:
         beacon_url = DEFAULT_BEACON

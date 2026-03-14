@@ -1,0 +1,10 @@
+{
+  "beacons": [
+    {
+      "url": "http://mattiuzzi.zapto.org:8400",
+      "name": "nucleus",
+      "region": "eu-central"
+    }
+  ],
+  "updated": "2026-03-14"
+}
