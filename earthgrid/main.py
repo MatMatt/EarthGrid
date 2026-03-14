@@ -84,6 +84,11 @@ def _require_admin_auth(request: Request, x_api_key: str = Depends(_api_key_head
         raise HTTPException(401, "Invalid or missing admin API key")
 
 
+# Ensure data directories exist (native installs may not have /data)
+for _p in [settings.store_path, Path(settings.catalog_path).parent,
+           Path(settings.stats_db).parent, Path(settings.source_users_db).parent]:
+    _p.mkdir(parents=True, exist_ok=True)
+
 # Initialize components
 chunk_store = ChunkStore(settings.store_path, limit_gb=settings.storage_limit_gb)
 catalog = Catalog(settings.catalog_path)
