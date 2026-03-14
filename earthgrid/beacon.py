@@ -11,8 +11,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -79,12 +82,146 @@ class PeerBeacon:
 
 
 class BeaconRegistry:
-    """Central registry of all data nodes + peer beacons."""
+    """Central registry of all data nodes + peer beacons.
 
-    def __init__(self):
-        self.nodes: dict[str, RegisteredNode] = {}
-        self.peer_beacons: dict[str, PeerBeacon] = {}
+    Node metadata is persisted in SQLite; WebSocket connections are in-memory only.
+    """
+
+    def __init__(self, db_path: Optional[Path] = None):
+        # In-memory WebSocket connections (cannot be persisted)
+        self._websockets: dict[str, WebSocket] = {}
         self._lock = asyncio.Lock()
+        self._db_lock = threading.Lock()
+
+        # SQLite persistence
+        if db_path is None:
+            db_path = Path(settings.beacon_db)
+        self._db_path = Path(db_path)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+        # In-memory caches (loaded from DB on first access)
+        self._nodes_cache: dict[str, RegisteredNode] = {}
+        self._peers_cache: dict[str, PeerBeacon] = {}
+        self._load_from_db()
+
+    def _init_db(self):
+        """Create tables if they don't exist."""
+        with self._db_lock:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS nodes (
+                        node_id      TEXT PRIMARY KEY,
+                        node_name    TEXT,
+                        url          TEXT,
+                        collections  TEXT,
+                        item_count   INTEGER DEFAULT 0,
+                        chunk_count  INTEGER DEFAULT 0,
+                        chunks_bytes INTEGER DEFAULT 0,
+                        can_source   BOOLEAN DEFAULT 0,
+                        last_seen    REAL DEFAULT 0
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS peer_beacons (
+                        url          TEXT PRIMARY KEY,
+                        node_id      TEXT DEFAULT '',
+                        node_name    TEXT DEFAULT '',
+                        last_seen    REAL DEFAULT 0,
+                        nodes_count  INTEGER DEFAULT 0
+                    )
+                """)
+                conn.commit()
+
+    def _load_from_db(self):
+        """Load persisted nodes and peer beacons into in-memory cache."""
+        with self._db_lock:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.row_factory = sqlite3.Row
+
+                for row in conn.execute("SELECT * FROM nodes"):
+                    try:
+                        cols = json.loads(row["collections"] or "[]")
+                    except (json.JSONDecodeError, TypeError):
+                        cols = []
+                    node = RegisteredNode(
+                        node_id=row["node_id"],
+                        node_name=row["node_name"] or "",
+                        url=row["url"],
+                        collections=cols,
+                        item_count=row["item_count"] or 0,
+                        chunk_count=row["chunk_count"] or 0,
+                        chunks_bytes=row["chunks_bytes"] or 0,
+                        can_source=bool(row["can_source"]),
+                        last_seen=row["last_seen"] or 0.0,
+                    )
+                    self._nodes_cache[node.node_id] = node
+
+                for row in conn.execute("SELECT * FROM peer_beacons"):
+                    peer = PeerBeacon(
+                        url=row["url"],
+                        node_id=row["node_id"] or "",
+                        node_name=row["node_name"] or "",
+                        last_seen=row["last_seen"] or 0.0,
+                        nodes_count=row["nodes_count"] or 0,
+                    )
+                    self._peers_cache[peer.url] = peer
+
+        logger.info(
+            f"BeaconRegistry loaded {len(self._nodes_cache)} nodes, "
+            f"{len(self._peers_cache)} peer beacons from {self._db_path}"
+        )
+
+    def _db_upsert_node(self, node: RegisteredNode):
+        """Persist a node to SQLite (INSERT OR REPLACE)."""
+        with self._db_lock:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO nodes
+                       (node_id, node_name, url, collections, item_count,
+                        chunk_count, chunks_bytes, can_source, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        node.node_id,
+                        node.node_name,
+                        node.url,
+                        json.dumps(node.collections),
+                        node.item_count,
+                        node.chunk_count,
+                        node.chunks_bytes,
+                        int(node.can_source),
+                        node.last_seen,
+                    ),
+                )
+                conn.commit()
+
+    def _db_delete_node(self, node_id: str):
+        """Remove a node from SQLite."""
+        with self._db_lock:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute("DELETE FROM nodes WHERE node_id = ?", (node_id,))
+                conn.commit()
+
+    def _db_upsert_peer(self, peer: PeerBeacon):
+        """Persist a peer beacon to SQLite."""
+        with self._db_lock:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO peer_beacons
+                       (url, node_id, node_name, last_seen, nodes_count)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (peer.url, peer.node_id, peer.node_name, peer.last_seen, peer.nodes_count),
+                )
+                conn.commit()
+
+    # Expose dicts as properties for backward-compat with code that does registry.nodes / registry.peer_beacons
+    @property
+    def nodes(self) -> dict[str, RegisteredNode]:
+        return self._nodes_cache
+
+    @property
+    def peer_beacons(self) -> dict[str, PeerBeacon]:
+        return self._peers_cache
 
     async def register(
         self,
@@ -99,9 +236,12 @@ class BeaconRegistry:
         can_source: bool = False,
     ) -> RegisteredNode:
         async with self._lock:
-            existing = self.nodes.get(node_id)
-            if existing and websocket:
-                existing.websocket = websocket
+            existing = self._nodes_cache.get(node_id)
+            if existing:
+                # Update in-memory
+                if websocket:
+                    self._websockets[node_id] = websocket
+                    existing.websocket = websocket
                 existing.last_seen = time.time()
                 if url:
                     existing.url = url
@@ -111,6 +251,7 @@ class BeaconRegistry:
                 existing.chunk_count = chunk_count
                 existing.chunks_bytes = chunks_bytes
                 existing.can_source = can_source
+                self._db_upsert_node(existing)
                 return existing
 
             node = RegisteredNode(
@@ -125,24 +266,31 @@ class BeaconRegistry:
                 can_source=can_source,
                 last_seen=time.time(),
             )
-            self.nodes[node_id] = node
+            self._nodes_cache[node_id] = node
+            if websocket:
+                self._websockets[node_id] = websocket
+            self._db_upsert_node(node)
             return node
 
     async def unregister(self, node_id: str):
         async with self._lock:
-            self.nodes.pop(node_id, None)
+            self._nodes_cache.pop(node_id, None)
+            self._websockets.pop(node_id, None)
+            self._db_delete_node(node_id)
 
     async def heartbeat(self, node_id: str, **updates):
         async with self._lock:
-            node = self.nodes.get(node_id)
+            node = self._nodes_cache.get(node_id)
             if node:
                 node.last_seen = time.time()
                 for k, v in updates.items():
                     if hasattr(node, k) and v is not None:
                         setattr(node, k, v)
+                self._db_upsert_node(node)
 
     def get_alive_nodes(self) -> list[RegisteredNode]:
-        return [n for n in self.nodes.values() if n.alive]
+        cutoff = time.time() - 300
+        return [n for n in self._nodes_cache.values() if n.last_seen > cutoff]
 
     def find_nodes_for_collection(self, collection: str) -> list[RegisteredNode]:
         return [n for n in self.get_alive_nodes() if collection in n.collections]
@@ -160,13 +308,13 @@ class BeaconRegistry:
             total_bytes += n.chunks_bytes
         return {
             "nodes_alive": len(alive),
-            "nodes_total": len(self.nodes),
+            "nodes_total": len(self._nodes_cache),
             "collections": sorted(all_collections),
             "total_items": total_items,
             "total_chunks": total_chunks,
             "total_bytes": total_bytes,
-            "peer_beacons": len(self.peer_beacons),
-            "peer_beacons_alive": len([b for b in self.peer_beacons.values() if b.alive]),
+            "peer_beacons": len(self._peers_cache),
+            "peer_beacons_alive": len([b for b in self._peers_cache.values() if b.alive]),
         }
 
     # --- Beacon Federation ---
@@ -175,18 +323,15 @@ class BeaconRegistry:
         """Register a peer beacon."""
         url = url.rstrip("/")
         async with self._lock:
-            peer = self.peer_beacons.get(url)
+            peer = self._peers_cache.get(url)
             if not peer:
                 peer = PeerBeacon(url=url)
-                self.peer_beacons[url] = peer
+                self._peers_cache[url] = peer
+                self._db_upsert_peer(peer)
             return peer
 
     async def sync_with_peer_beacon(self, url: str) -> dict:
-        """Exchange node registries with a peer beacon.
-
-        1. GET /nodes from peer → merge their nodes into our registry (tagged as remote)
-        2. POST /beacon/exchange with our nodes → peer merges ours
-        """
+        """Exchange node registries with a peer beacon."""
         url = url.rstrip("/")
         try:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -194,12 +339,13 @@ class BeaconRegistry:
                 info_resp = await client.get(f"{url}/")
                 if info_resp.status_code == 200:
                     info = info_resp.json()
-                    peer = self.peer_beacons.get(url)
+                    peer = self._peers_cache.get(url)
                     if peer:
                         peer.node_id = info.get("node_id", "")
                         peer.node_name = info.get("node_name", "")
                         peer.last_seen = time.time()
                         peer.nodes_count = info.get("nodes_alive", 0)
+                        self._db_upsert_peer(peer)
 
                 # Get their nodes
                 resp = await client.get(f"{url}/nodes", params={"alive_only": True})
@@ -208,8 +354,7 @@ class BeaconRegistry:
                     merged = 0
                     for rn in remote_nodes:
                         nid = rn.get("node_id", "")
-                        if nid and nid not in self.nodes:
-                            # Add remote node (reachable via their URL, not ours)
+                        if nid and nid not in self._nodes_cache:
                             await self.register(
                                 node_id=nid,
                                 node_name=rn.get("node_name", ""),
@@ -220,8 +365,7 @@ class BeaconRegistry:
                                 chunks_bytes=rn.get("chunks_bytes", 0),
                             )
                             merged += 1
-                        elif nid in self.nodes:
-                            # Update existing with fresher data
+                        elif nid in self._nodes_cache:
                             await self.heartbeat(
                                 nid,
                                 collections=rn.get("collections"),
@@ -232,7 +376,7 @@ class BeaconRegistry:
 
                     # Send our nodes + our beacon peers to peer (gossip)
                     our_nodes = [n.to_dict() for n in self.get_alive_nodes()]
-                    our_beacons = [b.url for b in self.peer_beacons.values()]
+                    our_beacons = [b.url for b in self._peers_cache.values()]
                     await client.post(f"{url}/beacon/exchange", json={
                         "nodes": our_nodes,
                         "beacons": our_beacons,
@@ -245,8 +389,7 @@ class BeaconRegistry:
                             their_beacons = peers_resp.json().get("beacons", [])
                             for tb in their_beacons:
                                 tb_url = tb.get("url", "")
-                                if tb_url and tb_url not in self.peer_beacons:
-                                    # Don't add ourselves
+                                if tb_url and tb_url not in self._peers_cache:
                                     if settings.public_url and tb_url == settings.public_url:
                                         continue
                                     await self.add_peer_beacon(tb_url)
@@ -263,7 +406,7 @@ class BeaconRegistry:
 
     async def sync_all_beacons(self) -> list[dict]:
         """Sync with all known peer beacons."""
-        tasks = [self.sync_with_peer_beacon(url) for url in list(self.peer_beacons.keys())]
+        tasks = [self.sync_with_peer_beacon(url) for url in list(self._peers_cache.keys())]
         return await asyncio.gather(*tasks)
 
 
@@ -275,7 +418,7 @@ beacon_app = FastAPI(
     description="Coordination node for the EarthGrid network",
 )
 
-registry = BeaconRegistry()
+registry = BeaconRegistry(db_path=Path(settings.beacon_db))
 
 
 _beacon_started = time.time()
@@ -483,18 +626,12 @@ async def routed_search(
     datetime: str = Query(None),
     limit: int = Query(100, le=1000),
 ):
-    """Smart routed search — beacon knows which nodes have which data.
-
-    1. Find nodes that have the requested collections
-    2. Fan out search to those nodes (skip nodes without relevant data)
-    3. Merge and return results
-    """
+    """Smart routed search — beacon knows which nodes have which data."""
     col_list = collections.split(",") if collections else None
     bbox_list = [float(x) for x in bbox.split(",")] if bbox else None
 
     # Find relevant nodes
     if col_list:
-        # Only query nodes that have at least one requested collection
         target_nodes = set()
         for col in col_list:
             for node in registry.find_nodes_for_collection(col):
@@ -546,8 +683,6 @@ async def routed_search(
         all_results.extend(r)
 
     # Also query peer beacons (federated search across beacons)
-    peer_results = []
-
     async def query_peer_beacon(beacon_url: str):
         try:
             params = {"limit": limit}
@@ -602,15 +737,7 @@ async def routed_search(
 
 @beacon_app.websocket("/ws/{node_id}")
 async def node_websocket(websocket: WebSocket, node_id: str):
-    """WebSocket connection for nodes behind NAT.
-
-    Node connects outbound → beacon can route queries back through the socket.
-    Protocol:
-    - Node sends: {"type": "register", "node_name": "...", "collections": [...], ...}
-    - Node sends: {"type": "heartbeat", ...}
-    - Beacon sends: {"type": "search", "params": {...}} → Node responds with results
-    - Beacon sends: {"type": "chunk_request", "sha": "..."} → Node sends chunk data
-    """
+    """WebSocket connection for nodes behind NAT."""
     await websocket.accept()
     node = None
 
@@ -649,9 +776,11 @@ async def node_websocket(websocket: WebSocket, node_id: str):
     except WebSocketDisconnect:
         if node:
             node.websocket = None
+            registry._websockets.pop(node_id, None)
     except Exception:
         if node:
             node.websocket = None
+            registry._websockets.pop(node_id, None)
 
 
 # --- Seed Endpoint ---

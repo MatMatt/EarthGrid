@@ -178,6 +178,21 @@ async def startup():
     if settings.also_beacon:
         from .beacon import beacon_router, registry, _beacon_sync_loop
         app.include_router(beacon_router)
+        # Self-register this node with its own beacon registry
+        try:
+            summary = catalog.summary()
+            await registry.register(
+                node_id=settings.node_id,
+                node_name=settings.node_name,
+                url=settings.public_url or f"http://{settings.host}:{settings.port}",
+                collections=summary["collections"],
+                item_count=summary["item_count"],
+                chunk_count=chunk_store.chunk_count,
+                chunks_bytes=chunk_store.total_bytes,
+                can_source=source_user_mgr.list_users() != [],
+            )
+        except Exception as e:
+            logger.warning(f"Self-registration with local beacon failed: {e}")
         if settings.beacon_peers:
             for url in settings.beacon_peers:
                 await registry.add_peer_beacon(url)
