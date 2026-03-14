@@ -540,27 +540,85 @@ def stac_search(
 
 # --- Download / File Access ---
 
+
+@app.get('/chunk-map/{collection_id}/{item_id}')
+def chunk_map(
+    collection_id: str,
+    item_id: str,
+    bands: str = Query(None, description='Comma-separated band names to include'),
+):
+    """Return chunk map for parallel multi-node download.
+
+    Clients use this to fetch chunks from multiple nodes simultaneously.
+    Returns per-band chunk hashes with metadata needed for reassembly.
+    """
+    item = catalog.get_item(item_id)
+    if not item:
+        raise HTTPException(404, f'Item {item_id} not found')
+
+    props = item.properties
+    chunk_format = props.get('earthgrid:chunk_format', 'legacy')
+
+    band_list = [b.strip() for b in bands.split(',')] if bands else None
+
+    if chunk_format == 'band-level':
+        all_hashes = item.chunk_hashes  # dict
+        if band_list:
+            selected = {b: h for b, h in all_hashes.items() if b in band_list}
+        else:
+            selected = all_hashes
+    else:
+        # Legacy: return flat list
+        selected = {'all': item.chunk_hashes}
+
+    # Count total chunks
+    total = sum(len(h) for h in selected.values())
+
+    return {
+        'item_id': item_id,
+        'collection': collection_id,
+        'format': chunk_format,
+        'tile_size': props.get('earthgrid:tile_size', 512),
+        'tile_cols': props.get('earthgrid:tile_cols', 1),
+        'tile_rows': props.get('earthgrid:tile_rows', 1),
+        'width': props.get('earthgrid:width'),
+        'height': props.get('earthgrid:height'),
+        'dtype': props.get('earthgrid:dtype'),
+        'crs': props.get('earthgrid:crs'),
+        'total_chunks': total,
+        'bands': selected,
+        'node_url': settings.public_url or f'http://{settings.host}:{settings.port}',
+    }
+
+
 @app.get("/download/{collection_id}/{item_id}")
-def download_file(collection_id: str, item_id: str):
-    """Download a reconstructed GeoTIFF from stored chunks."""
+def download_file(
+    collection_id: str,
+    item_id: str,
+    bands: str = Query(None, description="Comma-separated band names (e.g. B04,B08). Omit for all."),
+):
+    """Download a reconstructed GeoTIFF. Band-selective: request only the bands you need."""
     try:
         from .reconstruct import reconstruct_geotiff
     except ImportError:
         raise HTTPException(501, "Reconstruction requires rasterio (pip install earthgrid[geo])")
 
+    band_list = [b.strip() for b in bands.split(",")] if bands else None
+
     try:
-        data = reconstruct_geotiff(item_id, collection_id, catalog, chunk_store)
+        data = reconstruct_geotiff(item_id, collection_id, catalog, chunk_store, bands=band_list)
     except FileNotFoundError:
         raise HTTPException(404, f"Item {item_id} not found in {collection_id}")
 
     # Track in stats
     stats_engine.record_collection_access(collection_id, access_type="download")
 
+    suffix = f"_{'_'.join(band_list)}" if band_list else ""
     return Response(
         content=data,
         media_type="image/tiff",
         headers={
-            "Content-Disposition": f'attachment; filename="{item_id}.tif"',
+            "Content-Disposition": f'attachment; filename="{item_id}{suffix}.tif"',
         },
     )
 

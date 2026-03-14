@@ -15,7 +15,7 @@ class STACItem:
     bbox: list[float]  # [west, south, east, north]
     properties: dict  # must include "datetime"
     assets: dict  # name → {href, type, ...}
-    chunk_hashes: list[str] = field(default_factory=list)
+    chunk_hashes: dict[str, list[str]] | list[str] = field(default_factory=dict)
 
     def to_stac(self, base_url: str = "", include_chunks: bool = False) -> dict:
         d = {

@@ -121,7 +121,13 @@ class Replicator:
                         break
 
                     item_id = item_data["id"]
-                    chunk_hashes = item_data.get("earthgrid:chunk_hashes", [])
+                    # Support both band-level (dict) and legacy (list) chunk formats
+                    raw_hashes = item_data.get("earthgrid:chunk_hashes",
+                                   feat.get("properties", {}).get("earthgrid:chunk_hashes", {}))
+                    if isinstance(raw_hashes, dict):
+                        chunk_hashes = [h for band_h in raw_hashes.values() for h in band_h]
+                    else:
+                        chunk_hashes = raw_hashes if isinstance(raw_hashes, list) else []
 
                     # Skip if we already have this item with all chunks
                     existing = self.catalog.get_item(item_id)
