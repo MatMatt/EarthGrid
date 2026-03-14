@@ -360,50 +360,8 @@ def stats_replication_advice():
 
 # --- Source Users API ---
 
-@app.get("/source-users", dependencies=[Depends(_require_admin_auth)])
-def list_source_users(include_disabled: bool = Query(False)):
-    """List source user accounts (credentials excluded)."""
-    return {"users": source_user_mgr.list_users(include_disabled=include_disabled)}
-
-@app.post("/source-users", dependencies=[Depends(_require_admin_auth)])
-def add_source_user(
-    name: str = Query(...),
-    provider: str = Query("cdse"),
-    username: str = Query(...),
-    password: str = Query(""),
-    token: str = Query(""),
-    max_requests_hour: int = Query(100),
-    max_download_gb: float = Query(50.0),
-):
-    """Add a source user account (credentials encrypted at rest)."""
-    uid = source_user_mgr.add_user(
-        name=name, provider=provider, username=username,
-        password=password, token=token,
-        max_requests_hour=max_requests_hour,
-        max_download_gb=max_download_gb,
-    )
-    _audit("source_user_add", f"{name} ({provider}/{username})")
-    return {"status": "added", "user_id": uid}
-
-@app.delete("/source-users/{user_id}", dependencies=[Depends(_require_admin_auth)])
-def remove_source_user(user_id: int):
-    """Remove a source user account."""
-    ok = source_user_mgr.remove_user(user_id)
-    if not ok:
-        raise HTTPException(404, "Source user not found")
-    _audit("source_user_remove", f"id={user_id}")
-    return {"status": "removed"}
-
-@app.post("/source-users/{user_id}/reset", dependencies=[Depends(_require_admin_auth)])
-def reset_source_user_health(user_id: int):
-    """Reset health status for a source user."""
-    source_user_mgr.reset_health(user_id)
-    return {"status": "reset"}
-
-@app.get("/source-users/downloads", dependencies=[Depends(_require_admin_auth)])
-def source_user_downloads(user_id: int = Query(None), hours: int = Query(24)):
-    """Get download logs for source users."""
-    return {"logs": source_user_mgr.get_download_stats(user_id=user_id, hours=hours)}
+# Source user management removed from API — credentials are local-only.
+# Use CLI: earthgrid users add/list/remove
 
 
 # --- Bandwidth API ---
