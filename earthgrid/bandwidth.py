@@ -3,6 +3,7 @@
 Implements a token bucket rate limiter with Unix-style nice levels.
 Higher priority requests (lower nice) get more bandwidth.
 """
+from __future__ import annotations
 import asyncio
 import logging
 import os

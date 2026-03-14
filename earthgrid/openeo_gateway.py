@@ -6,6 +6,7 @@ triggers auto-download for missing data, and executes supported operations.
 This is NOT a full openEO backend — it supports the subset needed for common
 Earth observation workflows.
 """
+from __future__ import annotations
 import asyncio
 import logging
 import time

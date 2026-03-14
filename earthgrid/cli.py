@@ -1,4 +1,5 @@
 """EarthGrid CLI — start a node or beacon."""
+from __future__ import annotations
 import argparse
 import json
 import sys

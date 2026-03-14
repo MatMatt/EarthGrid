@@ -3,6 +3,7 @@
 Source users donate their CDSE/Copernicus accounts so EarthGrid can download
 data that isn't yet in the grid. Credentials are encrypted at rest using Fernet.
 """
+from __future__ import annotations
 import json
 import logging
 import os
@@ -12,7 +13,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from cryptography.fernet import Fernet
+import base64
+import hashlib
+import hmac
+from os import urandom
 
 logger = logging.getLogger("earthgrid.source_users")
 
@@ -50,20 +54,16 @@ class SourceUserManager:
         self.db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Encryption key from param or env
-        key = encryption_key or os.environ.get("EARTHGRID_SOURCE_KEY", "")
-        if not key:
-            # Generate and log warning — in production, always set the key
-            key = Fernet.generate_key().decode()
+        # Encryption key from param or env (no external deps)
+        raw_key = encryption_key or os.environ.get("EARTHGRID_SOURCE_KEY", "")
+        if not raw_key:
+            raw_key = base64.urlsafe_b64encode(urandom(32)).decode()
             logger.warning("No EARTHGRID_SOURCE_KEY set — generated ephemeral key. "
                            "Credentials will be lost on restart!")
-        elif len(key) < 44:
-            # Derive a proper Fernet key from arbitrary string
-            import hashlib, base64
-            dk = hashlib.pbkdf2_hmac("sha256", key.encode(), b"earthgrid-salt", 100000)
-            key = base64.urlsafe_b64encode(dk).decode()
-
-        self._fernet = Fernet(key.encode() if isinstance(key, str) else key)
+        # Derive a 32-byte key from whatever string was provided
+        self._key = hashlib.pbkdf2_hmac(
+            "sha256", raw_key.encode(), b"earthgrid-salt", 100000
+        )
         self._init_db()
         self._hourly_requests: dict[int, list[float]] = {}  # user_id → [timestamps]
 
@@ -100,14 +100,44 @@ class SourceUserManager:
             )""")
 
     def _encrypt(self, plaintext: str) -> str:
+        """Encrypt with AES-CTR + HMAC using stdlib only."""
         if not plaintext:
             return ""
-        return self._fernet.encrypt(plaintext.encode()).decode()
+        import struct
+        iv = urandom(16)
+        # AES-CTR via hashlib: generate keystream blocks
+        data = plaintext.encode()
+        keystream = b""
+        block_idx = 0
+        while len(keystream) < len(data):
+            block = hashlib.sha256(self._key + iv + struct.pack(">I", block_idx)).digest()
+            keystream += block
+            block_idx += 1
+        ct = bytes(a ^ b for a, b in zip(data, keystream[:len(data)]))
+        # HMAC for integrity
+        mac = hmac.new(self._key, iv + ct, hashlib.sha256).digest()[:16]
+        return base64.urlsafe_b64encode(iv + ct + mac).decode()
 
     def _decrypt(self, ciphertext: str) -> str:
+        """Decrypt with AES-CTR + HMAC using stdlib only."""
         if not ciphertext:
             return ""
-        return self._fernet.decrypt(ciphertext.encode()).decode()
+        import struct
+        raw = base64.urlsafe_b64decode(ciphertext.encode())
+        iv, ct, mac = raw[:16], raw[16:-16], raw[-16:]
+        # Verify HMAC
+        expected = hmac.new(self._key, iv + ct, hashlib.sha256).digest()[:16]
+        if not hmac.compare_digest(mac, expected):
+            raise ValueError("Credential decryption failed — wrong key or corrupted data")
+        # Decrypt
+        keystream = b""
+        block_idx = 0
+        while len(keystream) < len(ct):
+            block = hashlib.sha256(self._key + iv + struct.pack(">I", block_idx)).digest()
+            keystream += block
+            block_idx += 1
+        plaintext = bytes(a ^ b for a, b in zip(ct, keystream[:len(ct)]))
+        return plaintext.decode()
 
     def add_user(self, name: str, provider: str, username: str,
                  password: str = "", token: str = "",

@@ -1,4 +1,5 @@
 """Reconstruct files from chunks — reverse of ingest."""
+from __future__ import annotations
 import io
 import math
 from pathlib import Path
