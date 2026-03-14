@@ -172,6 +172,7 @@ async function load() {
       const alive = n.alive !== false;
       nh += '<div class="node"><div><span class="name">' + (n.node_name||'unknown') + '</span> <span class="badge ' + (alive?'green':'orange') + '">' + (alive?'online':'offline') + '</span>';
       if (n.collections && n.collections.length) nh += ' <span class="badge blue">' + n.collections.join(', ') + '</span>';
+      if (n.can_source) nh += ' <span class="badge green" title="Can fetch from official sources">source</span>';
       nh += '<br><span class="info">' + (n.chunk_count||0).toLocaleString() + ' chunks · ' + (n.item_count||0) + ' items</span>';
       nh += '</div></div>';
     });
