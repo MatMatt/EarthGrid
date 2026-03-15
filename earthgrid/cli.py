@@ -109,16 +109,19 @@ def main():
     p_fetch.add_argument("--source", default="element84", choices=["cdse", "element84"], help="Data source (default: cdse)")
 
     # --- Users (local credential management) ---
-    p_users = sub.add_parser("users", help="Manage source user credentials (local only)")
+    p_sources = sub.add_parser("sources", help="Manage data source credentials (CDSE, Element84, etc.)")
+    p_users = sub.add_parser("users", help="Alias for 'sources' (deprecated)")
+    sources_sub = p_sources.add_subparsers(dest="users_action")
     users_sub = p_users.add_subparsers(dest="users_action")
-    users_sub.add_parser("list", help="List source users")
-    p_users_add = users_sub.add_parser("add", help="Add a source user")
-    p_users_add.add_argument("--name", default="", help="Display name (auto-generated if omitted)")
-    p_users_add.add_argument("--provider", default="cdse", help="Provider (cdse, element84)")
-    p_users_add.add_argument("--username", required=True, help="Login username/email")
-    p_users_add.add_argument("--password", default="", help="Password (prompted if empty)")
-    p_users_rm = users_sub.add_parser("remove", help="Remove a source user")
-    p_users_rm.add_argument("user_id", type=int, help="User ID to remove")
+    for _sub in (sources_sub, users_sub):
+        _sub.add_parser("list", help="List data sources")
+        _p_add = _sub.add_parser("add", help="Add a data source")
+        _p_add.add_argument("--name", default="", help="Display name (auto-generated if omitted)")
+        _p_add.add_argument("--provider", default="cdse", help="Provider (cdse, element84)")
+        _p_add.add_argument("--username", required=True, help="Login username/email")
+        _p_add.add_argument("--password", default="", help="Password (prompted if empty)")
+        _p_rm = _sub.add_parser("remove", help="Remove a data source")
+        _p_rm.add_argument("user_id", type=int, help="Source ID to remove")
 
     # --- Sync ---
     p_sync = sub.add_parser("sync", help="Pull data from a remote peer")
@@ -191,7 +194,7 @@ def main():
         _cmd_fetch(args)
         return
 
-    if args.command == "users":
+    if args.command in ("sources", "users"):
         _cmd_users(args)
         return
 
@@ -519,7 +522,7 @@ def _save_config(cfg: dict):
     config_file.write_text(json.dumps(cfg, indent=2) + "\n")
 
 
-def _cmd_users(args):
+def _cmd_users(args):  # handles both "sources" and "users"
     """Manage source user credentials locally."""
     cfg = _load_config()
     db_path = Path(cfg.get("source_users_db", "./data/source_users.db")) if cfg else Path("./data/source_users.db")
@@ -560,7 +563,7 @@ def _cmd_users(args):
             print(f"✗ User {args.user_id} not found")
 
     else:
-        print("Usage: earthgrid users [list|add|remove]")
+        print("Usage: earthgrid sources [list|add|remove]")
 
 
 def _store_usage(store_path: Path) -> tuple[int, int]:

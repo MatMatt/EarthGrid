@@ -101,9 +101,9 @@ Source account credentials are:
 
 ```bash
 # These manage data provider logins (CDSE, WEkEO, etc.), NOT EarthGrid user accounts
-earthgrid users add --provider cdse --username me@copernicus.eu
-earthgrid users list
-earthgrid users remove 1
+earthgrid sources add --provider cdse --username me@copernicus.eu
+earthgrid sources list
+earthgrid sources remove 1
 ```
 
 ### User Authentication (EarthGrid accounts)
@@ -297,7 +297,7 @@ earthgrid docker status                          # Show status + config
 earthgrid docker logs                            # Tail logs
 earthgrid docker restart                         # Regenerate + restart
 earthgrid docker update                          # Pull + rebuild + restart
-earthgrid docker exec users list                 # Run commands inside container
+earthgrid docker exec sources list                 # Run commands inside container
 earthgrid docker exec admin show-key             # Show admin API key
 ```
 
@@ -311,23 +311,23 @@ earthgrid sync <peer_url>                      # Pull data from a peer
 earthgrid ops                                  # List processing operations
 ```
 
-### Source account management (data provider logins)
+### Data source management
 
 These commands manage credentials for upstream data providers (CDSE, WEkEO, etc.) — the accounts your node uses to **download satellite data**. This is separate from EarthGrid user accounts (see API endpoints below).
 
 ```bash
-earthgrid users list                     # List source accounts (CDSE, WEkEO, etc.)
-earthgrid users add --provider cdse --username me@copernicus.eu
-earthgrid users add --provider wekeo --username me@wekeo.eu
-earthgrid users add --provider element84  # No auth needed (public)
-earthgrid users remove 1                 # Remove by ID
+earthgrid sources list                     # List source accounts (CDSE, WEkEO, etc.)
+earthgrid sources add --provider cdse --username me@copernicus.eu
+earthgrid sources add --provider wekeo --username me@wekeo.eu
+earthgrid sources add --provider element84  # No auth needed (public)
+earthgrid sources remove 1                 # Remove by ID
 ```
 
 **Docker:** Use `earthgrid docker exec` to run these commands inside the container:
 
 ```bash
-earthgrid docker exec users list
-earthgrid docker exec users add --provider cdse --username me@copernicus.eu
+earthgrid docker exec sources list
+earthgrid docker exec sources add --provider cdse --username me@copernicus.eu
 earthgrid docker exec admin show-key
 earthgrid docker exec admin renew-key
 ```
