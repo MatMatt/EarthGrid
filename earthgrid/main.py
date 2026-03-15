@@ -1126,16 +1126,41 @@ async def point_extract(
     else:
         raise HTTPException(400, f"Unsupported CRS: {crs}")
 
-    # Geographic coordinates to pixel coordinates
-    # bbox = [west, south, east, north]
-    res_x = (bbox[2] - bbox[0]) / width
-    res_y = (bbox[3] - bbox[1]) / height
+    # Quick check: is point within WGS84 bbox?
+    if lon < bbox[0] or lon > bbox[2] or lat < bbox[1] or lat > bbox[3]:
+        raise HTTPException(400, f"Point ({lon}, {lat}) is outside item extent")
 
-    col = int((x - bbox[0]) / res_x)
-    row = int((bbox[3] - y) / res_y)  # y-axis is inverted (north=0)
+    # For UTM CRS: transform bbox corners to get extent in projection coords
+    if crs.startswith("EPSG:326"):
+        # Re-use the UTM conversion for bbox corners
+        def _to_utm(ln, lt, zone):
+            import math as m
+            lat_r = m.radians(lt); lon_r = m.radians(ln)
+            lon0 = m.radians((zone - 1) * 6 - 180 + 3)
+            a = 6378137.0; f_e = 1/298.257223563; e2 = 2*f_e - f_e**2
+            N = a / m.sqrt(1 - e2 * m.sin(lat_r)**2)
+            T = m.tan(lat_r)**2; C = (e2/(1-e2)) * m.cos(lat_r)**2
+            A_v = m.cos(lat_r) * (lon_r - lon0)
+            M = a*((1-e2/4-3*e2**2/64-5*e2**3/256)*lat_r - (3*e2/8+3*e2**2/32+45*e2**3/1024)*m.sin(2*lat_r) + (15*e2**2/256+45*e2**3/1024)*m.sin(4*lat_r) - (35*e2**3/3072)*m.sin(6*lat_r))
+            ex = 500000 + 0.9996*N*(A_v + (1-T+C)*A_v**3/6 + (5-18*T+T**2+72*C-58*(e2/(1-e2)))*A_v**5/120)
+            ey = 0.9996*(M + N*m.tan(lat_r)*(A_v**2/2 + (5-T+9*C+4*C**2)*A_v**4/24 + (61-58*T+T**2+600*C-330*(e2/(1-e2)))*A_v**6/720))
+            if lt < 0: ey += 10000000
+            return ex, ey
+        zone = int(crs.split(":")[1]) - 32600
+        x_min, y_min = _to_utm(bbox[0], bbox[1], zone)
+        x_max, y_max = _to_utm(bbox[2], bbox[3], zone)
+    else:
+        x_min, y_min = bbox[0], bbox[1]
+        x_max, y_max = bbox[2], bbox[3]
+
+    res_x = (x_max - x_min) / width
+    res_y = (y_max - y_min) / height
+
+    col = int((x - x_min) / res_x)
+    row = int((y_max - y) / res_y)  # y-axis inverted (north=0)
 
     if col < 0 or col >= width or row < 0 or row >= height:
-        raise HTTPException(400, f"Point ({lon}, {lat}) is outside item extent")
+        raise HTTPException(400, f"Point ({lon}, {lat}) maps to pixel ({col},{row}) — outside raster {width}x{height}")
 
     # Find which tile contains this pixel
     tile_col = col // tile_size
