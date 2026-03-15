@@ -234,7 +234,7 @@ async function load() {
       sensors = cd.sensors || {};
     } catch(e) {}
     // Merge coverage from peer nodes (if reachable)
-    for (const node of nodes) {
+    for (const node of allN) {
       if (!node.alive || !node.url || node.url === BEACON) continue;
       try {
         const pcr = await fetch(node.url + '/stats/coverage');
@@ -263,11 +263,8 @@ async function load() {
     html += '</tbody></table>';
     document.getElementById('coverageTable').innerHTML = html;
 
-    // Nodes
-    const nr = await fetch(BEACON + '/nodes');
-    const nd = await nr.json();
-    const nodes = nd.nodes || [];
-    document.getElementById('vNodes').textContent = nodes.length;
+    // Nodes (reuse allN from earlier fetch)
+    document.getElementById('vNodes').textContent = allN.length;
     document.getElementById('sNodes').classList.remove('loading');
 
     // Operations
