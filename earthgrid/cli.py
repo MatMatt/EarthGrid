@@ -752,7 +752,11 @@ def _cmd_fetch(args):
 
     if args.source == "element84":
         from .element84 import fetch_and_ingest_element84
-        print(f"Fetching from Element84 (bbox={args.bbox}, cloud≤{args.cloud}%)...")
+        if args.limit > 0:
+            print(f"Fetching from Element84 (bbox={args.bbox}, cloud2264{args.cloud}%, limit={args.limit} products)...")
+            print(f"  Tip: use --limit 0 for all available products")
+        else:
+            print(f"Fetching from Element84 (bbox={args.bbox}, cloud2264{args.cloud}%, no limit)...")
         results = asyncio.run(fetch_and_ingest_element84(
             chunk_store=cs,
             catalog=cat,
