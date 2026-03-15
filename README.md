@@ -146,21 +146,6 @@ Node A                            Node B
 
 - **Node operators**: Authentication is automatic. When your node joins the network via federation, it exchanges Ed25519-signed keys with other nodes. No setup needed — start your node and you can process data on any peer.
 
-Connect to your own node — your API key is in `docker-compose.yml` (`EARTHGRID_API_KEY`):
-```python
-# Python
-import openeo
-conn = openeo.connect("http://localhost:8400")
-conn.authenticate_basic("me", "YOUR_API_KEY")  # EARTHGRID_API_KEY from docker-compose.yml
-```
-
-```r
-# R
-library(openeo)
-con <- connect("http://localhost:8400")
-login(con, login_type = "basic", user = "me", password = "YOUR_API_KEY")  # from docker-compose.yml
-```
-
 ### Built-in protections
 
 - **Content-addressed storage**: Every chunk verified by SHA-256. Corrupted or fake data is automatically rejected.
