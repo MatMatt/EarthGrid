@@ -88,7 +88,7 @@ New nodes discover the network via a seed list hosted on GitHub Pages:
 | Ingest new data | API key | Prevents unauthorized writes |
 | Run processing (NDVI etc.) | Per-user API key | Only registered EarthGrid users can process |
 | Manage source accounts (CDSE etc.) | **CLI only** (no network access) | Provider credentials never leave the node |
-| User management | Admin API key | Only node admins can create/delete users |
+| EarthGrid user management | Admin API key | Only node admins can create/delete EarthGrid users |
 
 ### Source Account Credentials (CDSE, WEkEO, etc.)
 
