@@ -489,8 +489,6 @@ async def _discover_peers_from_beacon():
         log.debug(f"Peer discovery failed: {e}")
 
 
-@app.on_event("startup")
-
 async def _speed_measure_loop():
     """Measure internet speed periodically (every 6h) using a lightweight test."""
     import time as _time
@@ -517,6 +515,7 @@ async def _speed_measure_loop():
             log.debug(f"Speed test failed: {e}")
         await asyncio.sleep(6 * 3600)  # every 6 hours
 
+@app.on_event("startup")
 async def startup():
     await _register_with_beacon()
     await _discover_peers_from_beacon()
