@@ -86,8 +86,9 @@ New nodes discover the network via a seed list hosted on GitHub Pages:
 | Action | Protection | Why |
 |---|---|---|
 | Ingest new data | API key | Prevents unauthorized writes |
-| Run processing (NDVI etc.) | API key | Prevents CPU abuse |
+| Run processing (NDVI etc.) | Per-user API key | Only registered EarthGrid users can process |
 | Manage credentials | **CLI only** (no network access) | Credentials never leave the node |
+| User management | Admin API key | Only node admins can create/delete users |
 
 ### Credentials are local
 
@@ -102,6 +103,54 @@ earthgrid users add --name MyAccount --username me@copernicus.eu
 earthgrid users list
 earthgrid users remove 1
 ```
+
+### User Authentication
+
+EarthGrid uses **per-user API keys** that work across the entire network. Users registered on any node can process data on all nodes.
+
+**Roles:**
+- **admin** — Can create/delete users + process data
+- **member** — Can process data
+
+**How it works:**
+
+1. Node admin creates a user:
+```bash
+curl -X POST http://localhost:8400/admin/users \
+  -H "X-API-Key: $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice", "role": "member"}'
+# → Returns: {"user_id": "...", "username": "alice", "api_key": "YOUR_KEY", ...}
+```
+
+2. User authenticates via openEO clients:
+```python
+# Python
+import openeo
+conn = openeo.connect("https://your-node.example.com/earthgrid")
+conn.authenticate_basic("alice", "YOUR_KEY")
+```
+
+```r
+# R
+library(openeo)
+con <- connect("https://your-node.example.com/earthgrid")
+login(con, login_type = "basic", user = "alice", password = "YOUR_KEY")
+```
+
+3. User keys sync automatically between federated nodes — register once, use everywhere.
+
+**Admin endpoints:**
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/admin/users` | POST | Create user (requires admin key) |
+| `/admin/users` | GET | List all users (requires admin key) |
+| `/admin/users/{id}` | DELETE | Deactivate user (requires admin key) |
+| `/federation/users` | GET | Export users for federation sync |
+| `/federation/users` | POST | Import users from another node |
+
+An **admin user is auto-created** on first start — the API key is printed to the container logs once. Save it!
 
 ### Built-in protections
 
@@ -292,14 +341,15 @@ curl -X POST http://localhost:8400/openeo/process \
 > These examples assume EarthGrid is running locally on port 8400.
 > Replace `localhost` with your node's address if accessing remotely.
 
-### openEO Client *(coming soon)*
+### openEO Client
 
-Full compatibility with the official openEO Python and R clients is in progress.
+Works with the official openEO Python and R clients. Authentication required for processing.
 
 ```python
-# Python (openeo client) — coming soon
+# Python (openeo client)
 import openeo
 conn = openeo.connect("http://localhost:8400")
+conn.authenticate_basic("your_username", "YOUR_API_KEY")
 cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
     temporal_extent=["2026-03-01", "2026-03-12"],
@@ -308,9 +358,10 @@ cube.ndvi(red="B04", nir="B08").download("ndvi.tif")
 ```
 
 ```r
-# R (openeo client) — coming soon
+# R (openeo client)
 library(openeo)
 conn <- connect("http://localhost:8400")
+login(conn, login_type = "basic", user = "your_username", password = "YOUR_API_KEY")
 p <- processes()
 cube <- p\$load_collection("sentinel-2-l2a",
     spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
@@ -351,7 +402,19 @@ Processing results are **ephemeral** — computed on-the-fly and returned direct
 | `POST /ingest` | Write key | Ingest GeoTIFF |
 | `POST /process` | Write key | Run processing operation |
 | `POST /sync-item` | Write key | Trigger item sync |
-| `POST /openeo/process` | Write key | Execute openEO process graph |
+| `POST /result` | User key | Execute openEO process graph |
+| `GET /credentials/basic` | Basic auth | Validate user, get bearer token |
+| `GET /me` | Bearer token | Current user info |
+
+### Admin endpoints (admin key required)
+
+| Endpoint | Auth | Description |
+|---|---|---|
+| `POST /admin/users` | Admin key | Create user |
+| `GET /admin/users` | Admin key | List users |
+| `DELETE /admin/users/{id}` | Admin key | Deactivate user |
+| `GET /federation/users` | Write key | Export users for sync |
+| `POST /federation/users` | Write key | Import users from peer |
 
 ### Beacon endpoints
 
