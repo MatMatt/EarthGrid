@@ -117,3 +117,47 @@ class Federation:
                 deduped.append(item)
 
         return deduped[:limit]
+
+    async def sync_users(self, url: str, local_api_key: str = "",
+                         user_auth=None) -> dict:
+        """Sync user registry with a peer node.
+
+        Exports our users to the peer and imports theirs.
+        Requires API key for authenticated federation endpoint.
+        """
+        if not user_auth:
+            return {"error": "No user_auth configured"}
+        url = url.rstrip("/")
+        headers = {}
+        if local_api_key:
+            headers["X-API-Key"] = local_api_key
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                # Push our users
+                our_users = user_auth.export_users()
+                await client.post(
+                    f"{url}/federation/users",
+                    json={"users": our_users},
+                    headers=headers,
+                )
+                # Pull their users
+                resp = await client.get(
+                    f"{url}/federation/users",
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    result = user_auth.import_users(data.get("users", []))
+                    return result
+        except Exception as e:
+            return {"error": str(e)}
+        return {"error": "Failed to sync users"}
+
+    async def sync_all_users(self, local_api_key: str = "",
+                             user_auth=None) -> list[dict]:
+        """Sync users with all known peers."""
+        results = []
+        for url in list(self.peers.keys()):
+            r = await self.sync_users(url, local_api_key, user_auth)
+            results.append({"peer": url, **r})
+        return results
