@@ -43,7 +43,7 @@ class Federation:
 
     async def sync_peer(self, url: str, local_node_name: str = "",
                        local_node_id: str = "", local_api_key: str = "",
-                       user_auth=None) -> Peer | None:
+                       user_auth=None, node_identity=None) -> Peer | None:
         """Fetch info from a peer, update registry, and exchange keys."""
         url = url.rstrip("/")
         try:
@@ -61,39 +61,39 @@ class Federation:
                     )
                     self.peers[url] = peer
 
-                    # Auto key exchange: register ourselves on the peer,
-                    # and register the peer on our node
-                    if local_api_key and user_auth:
+                    # Auto key exchange with Ed25519 signatures
+                    if local_api_key and user_auth and node_identity:
                         try:
+                            signed_payload = node_identity.sign_exchange(
+                                local_node_name, local_node_id, local_api_key,
+                            )
                             kx = await client.post(
                                 f"{url}/federation/exchange-key",
-                                json={
-                                    "node_name": local_node_name,
-                                    "node_id": local_node_id,
-                                    "api_key": local_api_key,
-                                },
+                                json=signed_payload,
                                 timeout=10,
                             )
                             if kx.status_code == 200:
-                                peer_info = kx.json()
-                                # Register the peer as a user on our node
-                                peer_uname = f"node:{peer_info.get('node_name', peer.node_name)}"
-                                peer_key = peer_info.get("api_key", "")
-                                if peer_key:
-                                    try:
-                                        user_auth.create_user(
-                                            username=peer_uname,
-                                            role="member",
-                                            node_origin=peer_info.get("node_name", ""),
-                                        )
-                                    except ValueError:
-                                        pass  # already exists
-                                    import sqlite3 as _sql3
-                                    with _sql3.connect(user_auth.db_path) as _conn:
-                                        _conn.execute(
-                                            "UPDATE users SET api_key = ?, updated_at = ? WHERE username = ?",
-                                            (peer_key, time.time(), peer_uname)
-                                        )
+                                peer_resp = kx.json()
+                                # Verify the peer's response signature
+                                from .node_identity import NodeIdentity
+                                if NodeIdentity.verify_exchange(peer_resp):
+                                    peer_uname = f"node:{peer_resp.get('node_name', peer.node_name)}"
+                                    peer_key = peer_resp.get("api_key", "")
+                                    if peer_key:
+                                        try:
+                                            user_auth.create_user(
+                                                username=peer_uname,
+                                                role="member",
+                                                node_origin=peer_resp.get("node_name", ""),
+                                            )
+                                        except ValueError:
+                                            pass
+                                        import sqlite3 as _sql3
+                                        with _sql3.connect(user_auth.db_path) as _conn:
+                                            _conn.execute(
+                                                "UPDATE users SET api_key = ?, updated_at = ? WHERE username = ?",
+                                                (peer_key, time.time(), peer_uname)
+                                            )
                         except Exception:
                             pass  # key exchange failed — non-fatal
 
@@ -104,11 +104,11 @@ class Federation:
 
     async def sync_all(self, local_node_name: str = "",
                        local_node_id: str = "", local_api_key: str = "",
-                       user_auth=None) -> list[Peer]:
+                       user_auth=None, node_identity=None) -> list[Peer]:
         """Sync with all known peers (including key exchange)."""
         tasks = [
             self.sync_peer(url, local_node_name, local_node_id,
-                           local_api_key, user_auth)
+                           local_api_key, user_auth, node_identity)
             for url in list(self.peers.keys())
         ]
         results = await asyncio.gather(*tasks)

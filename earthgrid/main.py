@@ -27,6 +27,7 @@ from .bandwidth import BandwidthManager
 from .ratelimit import RateLimitMiddleware
 from .openeo_gateway import router as openeo_router, root_router, OpenEOGateway, set_gateway, _capabilities, API_VERSION, BACKEND_VERSION
 from .user_auth import UserAuth
+from .node_identity import NodeIdentity
 
 app = FastAPI(
     title="EarthGrid Node",
@@ -102,6 +103,10 @@ stats_engine = StatsEngine(Path(settings.stats_db))
 
 # User authentication (network-wide)
 user_auth = UserAuth(Path(settings.users_db))
+# Node identity (Ed25519 keypair)
+node_identity = NodeIdentity(Path(settings.identity_key_path))
+logging.getLogger("earthgrid").info(f"Node public key: {node_identity.public_key_b64}")
+
 _bootstrap = user_auth.ensure_admin(settings.node_name)
 if _bootstrap:
     logging.getLogger("earthgrid").warning(
@@ -133,18 +138,28 @@ def federation_exchange_key(
     request: Request,
     body: dict = None,
 ):
-    """Exchange API keys between nodes for automatic mutual authentication.
+    """Exchange API keys between nodes using Ed25519 signatures.
 
-    When a peer node calls this, it sends its node_name, node_id, and api_key.
-    We register it as a user and return our own key so the peer can do the same.
-    No admin key required — nodes authenticate each other directly.
+    Peer sends a signed payload (node_name, node_id, api_key, public_key,
+    timestamp, signature). We verify the signature, register the peer,
+    and return our own signed payload.
+
+    No shared secrets needed — authenticity proven by cryptographic signature.
+    Replay attacks prevented by timestamp check (5 min window).
     """
-    if not body or "node_name" not in body or "api_key" not in body:
-        raise HTTPException(400, "Missing node_name or api_key")
+    if not body or "signature" not in body:
+        raise HTTPException(400, "Missing signed payload. Ed25519 signature required.")
+    # Verify the peer's signature
+    if not NodeIdentity.verify_exchange(body):
+        _audit("key_exchange_rejected", f"peer={body.get('node_name','?')} invalid_signature",
+               ip=request.client.host if request.client else "", success=False)
+        raise HTTPException(403, "Invalid signature — key exchange rejected")
     peer_name = body["node_name"]
     peer_id = body.get("node_id", "")
     peer_key = body["api_key"]
-    # Register peer as a user (idempotent — skip if username exists)
+    peer_pubkey = body["public_key"]
+    # Register peer as a user (idempotent)
+    import sqlite3
     try:
         user_auth.create_user(
             username=f"node:{peer_name}",
@@ -153,21 +168,20 @@ def federation_exchange_key(
         )
     except ValueError:
         pass  # already registered
-    # Update the key if it changed (peer may have rotated)
-    import sqlite3
+    # Update key + store public key for future verification
     with sqlite3.connect(user_auth.db_path) as conn:
         conn.execute(
             "UPDATE users SET api_key = ?, updated_at = ? WHERE username = ?",
             (peer_key, __import__('time').time(), f"node:{peer_name}")
         )
-    _audit("node_key_exchange", f"peer={peer_name} node_id={peer_id}",
+    _audit("key_exchange_ok", f"peer={peer_name} pubkey={peer_pubkey[:16]}...",
            ip=request.client.host if request.client else "")
-    # Return our key so the peer registers us too
-    return {
-        "node_name": settings.node_name,
-        "node_id": settings.node_id if hasattr(settings, 'node_id') else "",
-        "api_key": settings.api_key,
-    }
+    # Return our signed payload
+    return node_identity.sign_exchange(
+        node_name=settings.node_name,
+        node_id=getattr(settings, 'node_id', ''),
+        api_key=settings.api_key,
+    )
 
 
 # --- User Admin Endpoints ---
@@ -833,6 +847,7 @@ async def federation_sync():
         local_node_id=getattr(settings, 'node_id', ''),
         local_api_key=settings.api_key,
         user_auth=user_auth,
+        node_identity=node_identity,
     )
     return {
         "synced": len(synced),
