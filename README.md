@@ -101,7 +101,7 @@ Source account credentials are:
 
 ```bash
 # These manage data provider logins (CDSE, WEkEO, etc.), NOT EarthGrid user accounts
-earthgrid users add --name MyAccount --provider cdse --username me@copernicus.eu
+earthgrid users add --provider cdse --username me@copernicus.eu
 earthgrid users list
 earthgrid users remove 1
 ```
