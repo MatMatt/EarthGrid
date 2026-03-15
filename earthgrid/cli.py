@@ -524,8 +524,8 @@ def _save_config(cfg: dict):
 def _cmd_users(args):  # handles both "sources" and "users"
     """Manage source user credentials locally."""
     cfg = _load_config()
-    db_path = Path(cfg.get("source_users_db", "./data/source_users.db")) if cfg else Path("./data/source_users.db")
-    key = cfg.get("source_key", "") if cfg else ""
+    import os; db_path = Path(os.environ.get("EARTHGRID_SOURCE_USERS_DB", cfg.get("source_users_db", "./data/source_users.db") if cfg else "./data/source_users.db"))
+    key = os.environ.get("EARTHGRID_SOURCE_KEY", cfg.get("source_key", "") if cfg else "")
 
     from .source_users import SourceUserManager
     mgr = SourceUserManager(db_path, encryption_key=key)
