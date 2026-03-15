@@ -469,6 +469,22 @@ Your other workloads always come first.
 
 ---
 
+
+
+---
+
+## Disclaimer
+
+EarthGrid is provided **"as is"**, without warranty of any kind, express or implied. The authors and contributors accept no liability for any loss, damage, or consequence arising from the use of this software or data obtained through it.
+
+**Data accuracy:** EarthGrid redistributes data from official sources (Copernicus, USGS, etc.) using content-addressed storage with SHA-256 integrity verification. While this ensures bit-level fidelity of stored data, EarthGrid makes no guarantees about the accuracy, completeness, or fitness for purpose of upstream data.
+
+**Not an official service:** EarthGrid is an independent, community-driven project. It is not affiliated with, endorsed by, or operated by the European Space Agency (ESA), the European Environment Agency (EEA), Copernicus, USGS, or any other data provider.
+
+**No guaranteed availability:** Nodes are operated by volunteers. Data availability, network uptime, and transfer speeds are not guaranteed.
+
+**User responsibility:** Users are responsible for complying with the licence terms of the original data providers (see [Data Licensing](#data-licensing--attribution)) and for verifying data suitability for their use case.
+
 ## License
 
 [EUPL-1.2](LICENSE) — European Union Public Licence.
