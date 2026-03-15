@@ -288,12 +288,10 @@ async def fetch_and_ingest_element84(
             target_id = node_cycle[i % len(node_cycle)]
             assignments[target_id].append(item)
 
-        # Process each node's items
-        for node in nodes:
-            node_items = assignments[node["node_id"]]
-            if not node_items:
-                continue
-
+        # Process all nodes in parallel
+        async def _process_node(node, node_items):
+            """Process items for a single node (local or remote)."""
+            node_results = []
             if node["is_local"]:
                 print(f"\n\U0001f4e6 Local ({node['node_name']}): {len(node_items)} items")
                 for item in node_items:
@@ -301,15 +299,37 @@ async def fetch_and_ingest_element84(
                     cc = item["cloud_cover"]
                     print(f"  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
                     r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
-                    results.extend(r)
+                    node_results.extend(r)
             else:
                 print(f"\n\U0001f4e1 Remote ({node['node_name']}): {len(node_items)} items")
+                tasks = []
                 for item in node_items:
                     date_str = item["date"][:10] if item["date"] else "?"
                     cc = item["cloud_cover"]
                     print(f"  \U0001f4e1 {item['id']}  ({date_str}, {cc:.0f}% cloud) \u2192 {node['node_name']}")
-                    r = await _delegate_item_to_node(node, item, target_bands, earthgrid_collection, cloud_cover)
-                    results.extend(r)
+                    tasks.append(_delegate_item_to_node(node, item, target_bands, earthgrid_collection, cloud_cover))
+                # All items to this remote node in parallel
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                for r in batch_results:
+                    if isinstance(r, Exception):
+                        node_results.append({"error": str(r)})
+                    else:
+                        node_results.extend(r)
+            return node_results
+
+        # Launch all nodes in parallel (local + all remotes simultaneously)
+        node_tasks = []
+        for node in nodes:
+            node_items = assignments[node["node_id"]]
+            if node_items:
+                node_tasks.append(_process_node(node, node_items))
+
+        all_node_results = await asyncio.gather(*node_tasks, return_exceptions=True)
+        for r in all_node_results:
+            if isinstance(r, Exception):
+                results.append({"error": str(r)})
+            else:
+                results.extend(r)
     else:
         # Single node or distribution disabled — local only
         if distribute and not nodes:
