@@ -590,8 +590,13 @@ def health():
 
 
 @app.get("/ui", response_class=HTMLResponse)
-async def node_ui():
+async def node_ui(request: Request):
     """Serve the EarthGrid Node management UI."""
+    # Only allow localhost access (beacons/headless remain public)
+    if not settings.also_beacon:
+        client_ip = request.client.host if request.client else ""
+        if not _is_local_ip(client_ip):
+            raise HTTPException(403, "Node UI is only accessible from localhost")
     ui_path = Path(__file__).parent / "static" / "ui.html"
     if not ui_path.exists():
         return HTMLResponse("<h1>UI not found</h1>", status_code=404)
