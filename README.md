@@ -111,7 +111,9 @@ earthgrid users remove 1
 
 > **Not to be confused with source accounts** (above). EarthGrid user accounts control **who can process data** on the network. Source accounts control **where data is downloaded from**.
 
-EarthGrid uses **per-user API keys** that work across the entire network. Users registered on any node can process data on all nodes.
+**Running a node = being authenticated.** When nodes discover each other via federation, they automatically exchange API keys. No manual user creation needed — your node's API key works on all peers in the network.
+
+For users without their own node, admins can manually create accounts (see below).
 
 **Roles:**
 - **admin** — Can create/delete users + process data
