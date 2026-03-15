@@ -32,6 +32,7 @@ router = APIRouter(prefix="/openeo", tags=["openeo-legacy"])
 
 # --- Auth: API key for processing endpoints ---
 async def _require_api_key(
+    request: Request = None,
     authorization: str | None = Header(None),
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
@@ -41,6 +42,11 @@ async def _require_api_key(
     per-user keys from the network-wide user registry.
     """
     from .config import settings as _s
+    # Localhost = node operator = always allowed
+    if request and hasattr(request, 'client') and request.client:
+        client_ip = request.client.host
+        if _is_local(client_ip):
+            return
     # Extract token from either header
     token = x_api_key
     if not token and authorization:

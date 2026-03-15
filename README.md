@@ -342,10 +342,9 @@ curl -X POST http://localhost:8400/openeo/process \
 Works with the official openEO Python and R clients. Authentication required for processing.
 
 ```python
-# Python (openeo client)
+# Python (openeo client) — no auth needed on your own node
 import openeo
 conn = openeo.connect("http://localhost:8400")
-conn.authenticate_basic("your_username", "YOUR_API_KEY")
 cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
     temporal_extent=["2026-03-01", "2026-03-12"],
@@ -354,10 +353,9 @@ cube.ndvi(red="B04", nir="B08").download("ndvi.tif")
 ```
 
 ```r
-# R (openeo client)
+# R (openeo client) — no auth needed on your own node
 library(openeo)
-conn <- connect("http://localhost:8400")
-login(conn, login_type = "basic", user = "your_username", password = "YOUR_API_KEY")
+con <- connect("http://localhost:8400")
 p <- processes()
 cube <- p\$load_collection("sentinel-2-l2a",
     spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),

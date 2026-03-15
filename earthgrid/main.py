@@ -67,7 +67,9 @@ def _audit(action: str, detail: str = "", ip: str = "", success: bool = True):
         pass
 
 def _require_write_auth(request: Request, x_api_key: str = Depends(_api_key_header)):
-    """Require API key for write operations."""
+    """Require API key for write operations. Localhost is always allowed."""
+    if request.client and _is_local_ip(request.client.host):
+        return  # node operator
     if not settings.api_key:
         return  # no key configured = open (backward compatible)
     if x_api_key != settings.api_key:
