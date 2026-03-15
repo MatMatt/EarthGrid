@@ -122,6 +122,7 @@ class BeaconRegistry:
                         chunk_count  INTEGER DEFAULT 0,
                         chunks_bytes INTEGER DEFAULT 0,
                         can_source   BOOLEAN DEFAULT 0,
+                        storage_limit_gb REAL DEFAULT 0,
                         last_seen    REAL DEFAULT 0
                     )
                 """)
@@ -156,6 +157,7 @@ class BeaconRegistry:
                         chunk_count=row["chunk_count"] or 0,
                         chunks_bytes=row["chunks_bytes"] or 0,
                         can_source=bool(row["can_source"]),
+                        storage_limit_gb=row["storage_limit_gb"] if "storage_limit_gb" in row.keys() else 0.0,
                         last_seen=row["last_seen"] or 0.0,
                     )
                     self._nodes_cache[node.node_id] = node
@@ -182,8 +184,8 @@ class BeaconRegistry:
                 conn.execute(
                     """INSERT OR REPLACE INTO nodes
                        (node_id, node_name, url, collections, item_count,
-                        chunk_count, chunks_bytes, can_source, last_seen)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        chunk_count, chunks_bytes, can_source, storage_limit_gb, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         node.node_id,
                         node.node_name,
@@ -193,6 +195,7 @@ class BeaconRegistry:
                         node.chunk_count,
                         node.chunks_bytes,
                         int(node.can_source),
+                        node.storage_limit_gb,
                         node.last_seen,
                     ),
                 )
@@ -535,6 +538,7 @@ async def node_heartbeat(
     item_count: int = Query(None),
     chunk_count: int = Query(None),
     chunks_bytes: int = Query(None),
+    storage_limit_gb: float = Query(None),
 ):
     """Heartbeat from a data node — keeps it alive in the registry."""
     updates = {}
@@ -546,6 +550,8 @@ async def node_heartbeat(
         updates["chunk_count"] = chunk_count
     if chunks_bytes is not None:
         updates["chunks_bytes"] = chunks_bytes
+    if storage_limit_gb is not None:
+        updates["storage_limit_gb"] = storage_limit_gb
 
     await registry.heartbeat(node_id, **updates)
     return {"status": "ok"}

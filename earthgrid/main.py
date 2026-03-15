@@ -308,6 +308,7 @@ async def _beacon_heartbeat_loop():
                         "item_count": summary["item_count"],
                         "chunk_count": chunk_store.chunk_count,
                         "chunks_bytes": chunk_store.total_bytes,
+                        "storage_limit_gb": settings.storage_limit_gb,
                     },
                 )
                 # Report items for replication tracking
