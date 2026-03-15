@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     admin_key: str = ""  # required for destructive operations (delete)
     require_auth_read: bool = False  # if True, reads also need api_key
 
+    # --- Replication Preferences ---
+    replication_factor: int = 2  # min copies in network (0=disabled)
+    preferred_collections: str = ""  # comma-separated (empty=all)
+    preferred_bbox: str = ""  # "west,south,east,north" (empty=global)
+
     # --- Node Identity ---
     identity_key_path: str = "./data/.node_key"
 

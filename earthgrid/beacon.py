@@ -23,6 +23,7 @@ from fastapi import Request,  APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from .smart_replication import ReplicationPlanner, NodePreferences
 from .config import settings
 
 logger = logging.getLogger("earthgrid.beacon")
@@ -419,6 +420,7 @@ beacon_app = FastAPI(
 )
 
 registry = BeaconRegistry(db_path=Path(settings.beacon_db))
+replication_planner = ReplicationPlanner()
 
 
 _beacon_started = time.time()
@@ -506,6 +508,20 @@ async def register_node(
         chunks_bytes=chunks_bytes,
         can_source=can_source,
     )
+    # Update replication planner with node preferences
+    pref_collections = request.query_params.get("preferred_collections", "")
+    pref_bbox = request.query_params.get("preferred_bbox", "")
+    rep_factor = int(request.query_params.get("replication_factor", "2"))
+    storage_limit = float(request.query_params.get("storage_limit_gb", "50"))
+    prefs = NodePreferences(
+        node_id=node_id,
+        collections=[c.strip() for c in pref_collections.split(",") if c.strip()] if pref_collections else [],
+        bbox=[float(x) for x in pref_bbox.split(",") if x.strip()] if pref_bbox else [],
+        storage_limit_gb=storage_limit,
+        storage_used_gb=chunks_bytes / (1024**3),
+        replication_factor=rep_factor,
+    )
+    replication_planner.set_preferences(node_id, prefs)
     return {"status": "registered", "node": node.to_dict()}
 
 
@@ -785,6 +801,29 @@ async def node_websocket(websocket: WebSocket, node_id: str):
 
 # --- Seed Endpoint ---
 
+@beacon_app.get("/replication/health")
+def replication_health():
+    """Get network replication health summary."""
+    return replication_planner.get_network_health()
+
+
+@beacon_app.get("/replication/tasks/{node_id}")
+def replication_tasks(node_id: str, max_tasks: int = Query(50)):
+    """Get replication tasks for a specific node."""
+    tasks = replication_planner.get_replication_tasks(node_id, max_tasks)
+    return {"node_id": node_id, "tasks": tasks, "count": len(tasks)}
+
+
+@beacon_app.post("/replication/report")
+async def report_items(data: dict):
+    """Node reports which items it has (for replication tracking)."""
+    node_id = data.get("node_id", "")
+    item_ids = data.get("item_ids", [])
+    if node_id and item_ids:
+        replication_planner.report_items(node_id, item_ids)
+    return {"status": "ok", "items_reported": len(item_ids)}
+
+
 @beacon_app.get("/seed/nodes")
 def seed_nodes():
     """List nodes that can serve as seed sources for new nodes."""
@@ -818,3 +857,6 @@ beacon_router.add_api_route("/beacon/peers", list_peer_beacons, methods=["GET"])
 beacon_router.add_api_route("/beacon/sync", sync_beacons, methods=["POST"])
 beacon_router.add_api_route("/beacon/exchange", exchange_nodes, methods=["POST"])
 beacon_router.add_api_route("/seed/nodes", seed_nodes, methods=["GET"])
+beacon_router.add_api_route("/replication/health", replication_health, methods=["GET"])
+beacon_router.add_api_route("/replication/tasks/{node_id}", replication_tasks, methods=["GET"])
+beacon_router.add_api_route("/replication/report", report_items, methods=["POST"])

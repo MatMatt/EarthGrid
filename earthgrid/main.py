@@ -280,6 +280,10 @@ async def _register_with_beacon():
                     "chunk_count": chunk_store.chunk_count,
                     "chunks_bytes": chunk_store.total_bytes,
                     "can_source": source_user_mgr.list_users() != [],
+                    "preferred_collections": settings.preferred_collections,
+                    "preferred_bbox": settings.preferred_bbox,
+                    "replication_factor": settings.replication_factor,
+                    "storage_limit_gb": settings.storage_limit_gb,
                 },
             )
     except Exception:
@@ -305,6 +309,17 @@ async def _beacon_heartbeat_loop():
                         "chunks_bytes": chunk_store.total_bytes,
                     },
                 )
+                # Report items for replication tracking
+                try:
+                    item_ids = [item.id for item in catalog.list_items(limit=10000)]
+                    if item_ids:
+                        await client.post(
+                            f"{settings.beacon_url.rstrip('/')}/replication/report",
+                            json={"node_id": settings.node_id, "item_ids": item_ids},
+                            timeout=10,
+                        )
+                except Exception:
+                    pass  # non-critical
         except Exception:
             pass
 
