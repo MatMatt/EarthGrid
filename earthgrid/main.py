@@ -309,10 +309,56 @@ async def _beacon_heartbeat_loop():
             pass
 
 
+async def _auto_replication_loop():
+    """Periodically sync catalog + chunks from peer nodes."""
+    if not settings.beacon_url:
+        return
+    await asyncio.sleep(30)  # wait for beacon registration
+    while True:
+        try:
+            # Get peer list from beacon
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{settings.beacon_url.rstrip('/')}/nodes")
+                if resp.status_code == 200:
+                    nodes = resp.json().get("nodes", [])
+                    for node in nodes:
+                        peer_url = node.get("url", "")
+                        peer_id = node.get("node_id", "")
+                        # Skip self
+                        if peer_id == settings.node_id or not peer_url:
+                            continue
+                        # Skip if peer is not reachable
+                        if not node.get("alive", False):
+                            continue
+                        # Check storage limit before syncing
+                        if chunk_store.total_bytes >= (settings.storage_limit_gb * 1024**3 * 0.9):
+                            logging.getLogger("earthgrid").info(
+                                "Storage >90% full, skipping auto-replication")
+                            break
+                        try:
+                            result = await replicator.sync_from_peer(
+                                peer_url=peer_url,
+                                max_items=50,  # batch: max 50 items per cycle
+                            )
+                            if result["items_synced"] > 0:
+                                logging.getLogger("earthgrid").info(
+                                    f"Replicated from {node.get('node_name','?')}: "
+                                    f"{result['items_synced']} items, "
+                                    f"{result['chunks_downloaded']} chunks, "
+                                    f"{result['bytes_downloaded'] / 1024**2:.1f} MB")
+                        except Exception as e:
+                            logging.getLogger("earthgrid").debug(
+                                f"Replication from {peer_url} failed: {e}")
+        except Exception:
+            pass
+        await asyncio.sleep(300)  # every 5 minutes
+
+
 @app.on_event("startup")
 async def startup():
     await _register_with_beacon()
     asyncio.create_task(_beacon_heartbeat_loop())
+    asyncio.create_task(_auto_replication_loop())
 
     # Mount beacon if enabled
     if settings.also_beacon:
