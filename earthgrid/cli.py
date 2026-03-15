@@ -113,7 +113,7 @@ def main():
     users_sub = p_users.add_subparsers(dest="users_action")
     users_sub.add_parser("list", help="List source users")
     p_users_add = users_sub.add_parser("add", help="Add a source user")
-    p_users_add.add_argument("--name", required=True, help="Display name")
+    p_users_add.add_argument("--name", default="", help="Display name (auto-generated if omitted)")
     p_users_add.add_argument("--provider", default="cdse", help="Provider (cdse, element84)")
     p_users_add.add_argument("--username", required=True, help="Login username/email")
     p_users_add.add_argument("--password", default="", help="Password (prompted if empty)")
@@ -494,7 +494,7 @@ def _cmd_users(args):
         users = mgr.list_users(include_disabled=True)
         if not users:
             print("No source users configured.")
-            print("Add one: earthgrid users add --name MyAccount --username me@example.com")
+            print("Add one: earthgrid users add --provider cdse --username me@example.com")
             return
         for u in users:
             status = "✓" if u["is_enabled"] and u["is_healthy"] else "✗"
@@ -507,11 +507,12 @@ def _cmd_users(args):
         if not password:
             import getpass
             password = getpass.getpass(f"Password for {args.username}: ")
+        name = args.name or f"{args.provider}-{args.username.split(chr(64))[0]}"
         uid = mgr.add_user(
-            name=args.name, provider=args.provider,
+            name=name, provider=args.provider,
             username=args.username, password=password,
         )
-        print(f"✓ Added source user '{args.name}' (id={uid})")
+        print(f"✓ Added source user '{name}' (id={uid})")
 
     elif args.users_action == "remove":
         ok = mgr.remove_user(args.user_id)
