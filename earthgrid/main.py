@@ -11,7 +11,7 @@ from fastapi.security import APIKeyHeader
 import logging
 import time
 import json as json_module
-from fastapi.responses import Response
+from fastapi.responses import Response, HTMLResponse
 
 from . import __version__
 from .config import settings
@@ -587,6 +587,15 @@ def _redundancy_index() -> float:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/ui", response_class=HTMLResponse)
+async def node_ui():
+    """Serve the EarthGrid Node management UI."""
+    ui_path = Path(__file__).parent / "static" / "ui.html"
+    if not ui_path.exists():
+        return HTMLResponse("<h1>UI not found</h1>", status_code=404)
+    return HTMLResponse(content=ui_path.read_text(encoding="utf-8"))
 
 
 @app.get("/stats/coverage")
