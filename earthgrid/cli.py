@@ -1100,7 +1100,7 @@ def _cmd_docker(args):
         if cmd_args and cmd_args[0] == '--':
             cmd_args = cmd_args[1:]
         result = _sp.run(
-            ["docker", "exec", "-it", "earthgrid", "earthgrid"] + cmd_args,
+            ["docker", "exec", "-i", "earthgrid", "earthgrid"] + cmd_args,
         )
         sys.exit(result.returncode)
 
