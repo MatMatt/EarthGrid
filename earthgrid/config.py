@@ -60,13 +60,22 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.node_id:
+            # Try store_path first, fall back to ~/.earthgrid/
             id_file = self.store_path.parent / ".node_id"
-            if id_file.exists():
-                self.node_id = id_file.read_text().strip()
+            fallback = Path.home() / ".earthgrid" / ".node_id"
+            for f in (id_file, fallback):
+                if f.exists():
+                    self.node_id = f.read_text().strip()
+                    break
             else:
                 self.node_id = uuid.uuid4().hex[:12]
-                id_file.parent.mkdir(parents=True, exist_ok=True)
-                id_file.write_text(self.node_id)
+                # Write to ~/.earthgrid/ (always writable)
+                fallback.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    id_file.parent.mkdir(parents=True, exist_ok=True)
+                    id_file.write_text(self.node_id)
+                except PermissionError:
+                    fallback.write_text(self.node_id)
 
     @property
     def base_url(self) -> str:
