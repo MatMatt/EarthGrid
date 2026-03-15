@@ -139,7 +139,7 @@ Node A                            Node B
 ```
 
 
-For users without their own node, admins can manually create accounts (see below).
+
 
 **Roles:**
 - **admin** — Can create/delete users + process data
@@ -148,15 +148,6 @@ For users without their own node, admins can manually create accounts (see below
 **How it works:**
 
 - **Node operators**: Authentication is automatic. When your node joins the network via federation, it exchanges Ed25519-signed keys with other nodes. No setup needed — start your node and you can process data on any peer.
-
-- **Users without a node** (e.g. researchers): A node admin can manually create an account:
-```bash
-curl -X POST http://localhost:8400/admin/users \
-  -H "X-API-Key: $ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "alice", "role": "member"}'
-# → Returns: {"user_id": "...", "username": "alice", "api_key": "YOUR_KEY", ...}
-```
 
 Connect to your own node — your API key is in `docker-compose.yml` (`EARTHGRID_API_KEY`):
 ```python
