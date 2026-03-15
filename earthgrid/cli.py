@@ -110,10 +110,8 @@ def main():
 
     # --- Users (local credential management) ---
     p_sources = sub.add_parser("sources", help="Manage data source credentials (CDSE, Element84, etc.)")
-    p_users = sub.add_parser("users", help="Alias for 'sources' (deprecated)")
     sources_sub = p_sources.add_subparsers(dest="users_action")
-    users_sub = p_users.add_subparsers(dest="users_action")
-    for _sub in (sources_sub, users_sub):
+    for _sub in (sources_sub,):
         _sub.add_parser("list", help="List data sources")
         _p_add = _sub.add_parser("add", help="Add a data source")
         _p_add.add_argument("--name", default="", help="Display name (auto-generated if omitted)")
@@ -194,7 +192,7 @@ def main():
         _cmd_fetch(args)
         return
 
-    if args.command in ("sources", "users"):
+    if args.command == "sources":
         _cmd_users(args)
         return
 
