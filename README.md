@@ -86,7 +86,7 @@ New nodes discover the network via a seed list hosted on GitHub Pages:
 | Action | Protection | Why |
 |---|---|---|
 | Ingest new data | API key | Prevents unauthorized writes |
-| Run processing (NDVI etc.) | Per-user API key | Only registered EarthGrid users can process |
+| Run processing (NDVI etc.) | Per-user API key | Only authenticated nodes/users can process |
 | Manage source accounts (CDSE etc.) | **CLI only** (no network access) | Provider credentials never leave the node |
 | EarthGrid user management | Admin API key | Only node admins can create/delete EarthGrid users |
 
@@ -112,6 +112,32 @@ earthgrid users remove 1
 > **Not to be confused with source accounts** (above). EarthGrid user accounts control **who can process data** on the network. Source accounts control **where data is downloaded from**.
 
 **Running a node = being authenticated.** When nodes discover each other via federation, they automatically exchange API keys. No manual user creation needed — your node's API key works on all peers in the network.
+
+#### How node authentication works
+
+Every node generates an **Ed25519 keypair** on first start:
+- Private key stays on the node (`/data/.node_key`, never transmitted)
+- Public key = node identity across the network
+
+When two nodes meet via federation:
+1. Node A signs a key exchange request with its private key
+2. Node B **verifies the signature** — proves Node A is who it claims to be
+3. Node B registers Node A as a user and returns its own signed response
+4. Node A verifies and registers Node B
+
+**No secrets to share. No keys to leak.** A fake node cannot forge a valid signature without the private key. Replay attacks are blocked by a 5-minute timestamp window.
+
+```
+Node A                            Node B
+  |                                 |
+  |--- signed(name+key+ts) ------->|
+  |                     verify sig  |
+  |                  register A  ✅ |
+  |<-- signed(name+key+ts) --------|
+  | verify sig                      |
+  | register B  ✅                  |
+```
+
 
 For users without their own node, admins can manually create accounts (see below).
 
