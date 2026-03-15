@@ -1,5 +1,14 @@
 {
-  "seeds": [],
-  "updated": "2026-03-15T03:50:01Z",
+  "seeds": [
+    {
+      "url": "http://0.0.0.0:8400",
+      "name": "node-alpha",
+      "collections": [
+        "sentinel-2-l2a"
+      ],
+      "items": 67
+    }
+  ],
+  "updated": "2026-03-15T04:00:01Z",
   "source": "https://mattiuzzi.zapto.org/earthgrid"
 }
