@@ -297,6 +297,8 @@ earthgrid docker status                          # Show status + config
 earthgrid docker logs                            # Tail logs
 earthgrid docker restart                         # Regenerate + restart
 earthgrid docker update                          # Pull + rebuild + restart
+earthgrid docker exec users list                 # Run commands inside container
+earthgrid docker exec admin show-key             # Show admin API key
 ```
 
 ### Data operations
@@ -319,6 +321,15 @@ earthgrid users add --provider cdse --username me@copernicus.eu
 earthgrid users add --provider wekeo --username me@wekeo.eu
 earthgrid users add --provider element84  # No auth needed (public)
 earthgrid users remove 1                 # Remove by ID
+```
+
+**Docker:** Use `earthgrid docker exec` to run these commands inside the container:
+
+```bash
+earthgrid docker exec users list
+earthgrid docker exec users add --provider cdse --username me@copernicus.eu
+earthgrid docker exec admin show-key
+earthgrid docker exec admin renew-key
 ```
 
 Supported providers: **CDSE** (Sentinel, Landsat), **WEkEO** (CLMS, C3S, CAMS), **Element84** (public S2/S1/Landsat mirror), **CMEMS** (marine data).
