@@ -111,6 +111,7 @@ def main():
     # --- Users (local credential management) ---
     p_sources = sub.add_parser("sources", help="Manage data source credentials (CDSE, Element84, etc.)")
     sources_sub = p_sources.add_subparsers(dest="users_action")
+    sources_sub.add_parser("providers", help="List available data providers")
     for _sub in (sources_sub,):
         _sub.add_parser("list", help="List data sources")
         _p_add = _sub.add_parser("add", help="Add a data source")
@@ -528,6 +529,23 @@ def _cmd_users(args):  # handles both "sources" and "users"
 
     from .source_users import SourceUserManager
     mgr = SourceUserManager(db_path, encryption_key=key)
+
+    if args.users_action == "providers":
+        print("Available data providers:\n")
+        providers = [
+            ("element84", "No",  "Sentinel-2 L2A, Sentinel-1 RTC, Landsat C2 L2", "Free, no account needed"),
+            ("cdse",      "Yes", "Sentinel-1/2/3/5P, full archive",                "Free registration at dataspace.copernicus.eu"),
+            ("wekeo",     "Yes", "CLMS, C3S, CAMS",                                "Free registration at wekeo.eu"),
+            ("cmems",     "Yes", "Marine/ocean products",                           "Free registration at marine.copernicus.eu"),
+        ]
+        for name, auth, data, note in providers:
+            print(f"  {name:12s}  Auth: {auth:3s}  {data}")
+            print(f"  {' '*12}  {note}")
+            print()
+        print("Add a provider:")
+        print("  earthgrid sources add --provider element84 --username public --password none")
+        print("  earthgrid sources add --provider cdse --username me@example.com")
+        return
 
     if args.users_action == "list":
         users = mgr.list_users(include_disabled=True)
