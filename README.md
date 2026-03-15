@@ -158,18 +158,23 @@ curl -X POST http://localhost:8400/admin/users \
 # → Returns: {"user_id": "...", "username": "alice", "api_key": "YOUR_KEY", ...}
 ```
 
-Then authenticate via openEO:
+Find available nodes on the [live dashboard](https://matmatt.github.io/EarthGrid/) or query the beacon:
+```bash
+curl -s https://mattiuzzi.zapto.org/earthgrid/nodes
+```
+
+Then connect to any node and authenticate:
 ```python
 # Python
 import openeo
-conn = openeo.connect("https://your-node.example.com")
+conn = openeo.connect("https://mattiuzzi.zapto.org/earthgrid")  # or any listed node
 conn.authenticate_basic("alice", "YOUR_KEY")
 ```
 
 ```r
 # R
 library(openeo)
-con <- connect("https://your-node.example.com")
+con <- connect("https://mattiuzzi.zapto.org/earthgrid")
 login(con, login_type = "basic", user = "alice", password = "YOUR_KEY")
 ```
 
