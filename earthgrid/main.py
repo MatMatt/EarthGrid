@@ -1073,7 +1073,7 @@ async def point_extract(
     Useful for building time series from multiple items.
     """
     import struct
-    from pyproj import Transformer
+    import math
 
     item = catalog.get_item(item_id)
     if not item:
@@ -1094,11 +1094,37 @@ async def point_extract(
         raise HTTPException(400, "Item has no spatial dimensions")
 
     # Transform lon/lat to item CRS if needed
-    if crs != "EPSG:4326":
-        transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
-        x, y = transformer.transform(lon, lat)
-    else:
+    if crs.startswith("EPSG:326"):
+        # UTM zone from EPSG code (e.g., EPSG:32633 → zone 33N)
+        zone = int(crs.split(":")[1]) - 32600
+        # Simple WGS84 → UTM conversion
+        lat_rad = math.radians(lat)
+        lon_rad = math.radians(lon)
+        lon0 = math.radians((zone - 1) * 6 - 180 + 3)
+        
+        a = 6378137.0
+        f_ellps = 1 / 298.257223563
+        e = math.sqrt(2 * f_ellps - f_ellps**2)
+        e2 = e**2
+        
+        N = a / math.sqrt(1 - e2 * math.sin(lat_rad)**2)
+        T = math.tan(lat_rad)**2
+        C = (e2 / (1 - e2)) * math.cos(lat_rad)**2
+        A_val = math.cos(lat_rad) * (lon_rad - lon0)
+        
+        M = a * ((1 - e2/4 - 3*e2**2/64 - 5*e2**3/256) * lat_rad
+                 - (3*e2/8 + 3*e2**2/32 + 45*e2**3/1024) * math.sin(2*lat_rad)
+                 + (15*e2**2/256 + 45*e2**3/1024) * math.sin(4*lat_rad)
+                 - (35*e2**3/3072) * math.sin(6*lat_rad))
+        
+        x = 500000 + 0.9996 * N * (A_val + (1-T+C)*A_val**3/6 + (5-18*T+T**2+72*C-58*(e2/(1-e2)))*A_val**5/120)
+        y = 0.9996 * (M + N * math.tan(lat_rad) * (A_val**2/2 + (5-T+9*C+4*C**2)*A_val**4/24 + (61-58*T+T**2+600*C-330*(e2/(1-e2)))*A_val**6/720))
+        if lat < 0:
+            y += 10000000
+    elif crs == "EPSG:4326":
         x, y = lon, lat
+    else:
+        raise HTTPException(400, f"Unsupported CRS: {crs}")
 
     # Geographic coordinates to pixel coordinates
     # bbox = [west, south, east, north]
