@@ -85,75 +85,268 @@ a:hover { text-decoration:underline; }
 <div class="section">
 <h2>📖 Usage Examples</h2>
 
-<h3 style="margin:1.5rem 0 0.5rem;font-size:1.1rem;">CLI — Fetch &amp; Manage Data</h3>
-<pre><code># Fetch latest Sentinel-2 scene for an area
+<style>
+.tabs { display:flex; gap:0; margin-bottom:0; border-bottom:2px solid var(--border); flex-wrap:wrap; }
+.tab-btn { padding:0.6rem 1.2rem; background:none; border:none; color:var(--dim); cursor:pointer; font-size:0.9rem; font-weight:600; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all 0.2s; font-family:inherit; }
+.tab-btn:hover { color:var(--text); background:rgba(88,166,255,0.05); }
+.tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+.tab-content { display:none; }
+.tab-content.active { display:block; }
+.tab-panel pre { margin-top:0; border-top-left-radius:0; border-top-right-radius:0; }
+.tab-panel h4 { font-size:0.95rem; margin:1rem 0 0.5rem; color:var(--dim); }
+</style>
+
+<div class="tabs" id="lang-tabs">
+  <button class="tab-btn active" onclick="switchTab('cli')">🐚 CLI</button>
+  <button class="tab-btn" onclick="switchTab('python')">🐍 Python</button>
+  <button class="tab-btn" onclick="switchTab('openeo-py')">🐍 openEO</button>
+  <button class="tab-btn" onclick="switchTab('r')">📊 R</button>
+  <button class="tab-btn" onclick="switchTab('openeo-r')">📊 R openEO</button>
+  <button class="tab-btn" onclick="switchTab('js')">🟨 JavaScript</button>
+  <button class="tab-btn" onclick="switchTab('rust')">🦀 Rust</button>
+  <button class="tab-btn" onclick="switchTab('julia')">🌍 Julia</button>
+  <button class="tab-btn" onclick="switchTab('curl')">📡 curl</button>
+</div>
+
+<div class="tab-panel">
+
+<div class="tab-content active" id="tab-cli">
+<pre><code># Fetch latest Sentinel-2 for an area (distributed across the grid)
 earthgrid fetch --bbox 12.4,55.6,12.6,55.7
 
-# Fetch with date range and multiple scenes
-earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --start 2026-03-01 --end 2026-03-12 --limit 5
+# Date range, multiple scenes
+earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --start 2025-06-01 --end 2025-06-30 --limit 10
 
-# Fetch specific bands only
+# Specific bands only
 earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --bands B04,B08,SCL
 
-# Use CDSE as source (default: Element84)
-earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --source cdse
+# Verify data integrity
+earthgrid verify
+earthgrid verify --heal    # auto-fix corrupted chunks
 
 # Check node status
-earthgrid status
+earthgrid status</code></pre>
+</div>
 
-# Search without downloading
-earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --search-only --limit 10</code></pre>
+<div class="tab-content" id="tab-python">
+<pre><code>import requests, numpy as np, matplotlib.pyplot as plt
+import rasterio, tempfile
 
-<h3 style="margin:1.5rem 0 0.5rem;font-size:1.1rem;">Python — openEO Client</h3>
+BASE = "http://localhost:8400"
+
+# Search Sentinel-2 over Copenhagen
+items = requests.get(f"{BASE}/stac/search", params={
+    "bbox": "12.4,55.6,12.7,55.75",
+    "collections": "sentinel-2-l2a", "limit": 100,
+}).json()["features"]
+
+# Download B04 (Red) and B08 (NIR)
+def download(band):
+    item = next(i for i in items if band in i["id"])
+    r = requests.get(f"{BASE}/download/{item['collection']}/{item['id']}")
+    f = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+    f.write(r.content); f.close()
+    return rasterio.open(f.name).read(1).astype(float)
+
+red, nir = download("B04"), download("B08")
+ndvi = np.where((nir + red) &gt; 0, (nir - red) / (nir + red), 0)
+
+plt.figure(figsize=(10, 10))
+plt.imshow(ndvi, cmap="RdYlGn", vmin=-0.2, vmax=0.8)
+plt.title("NDVI — Copenhagen (Sentinel-2)")
+plt.colorbar(shrink=0.6, label="NDVI"); plt.axis("off")
+plt.savefig("ndvi.png", dpi=150)</code></pre>
+</div>
+
+<div class="tab-content" id="tab-openeo-py">
 <pre><code>import openeo
 
 conn = openeo.connect("https://mattiuzzi.zapto.org/earthgrid")
 
-# Load a data cube
-cube = conn.load_collection(
-    "sentinel-2-l2a",
-    spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
-    temporal_extent=["2026-03-01", "2026-03-12"],
-    bands=["B04", "B08"]
-)
+cube = conn.load_collection("sentinel-2-l2a",
+    spatial_extent={"west": 12.4, "south": 55.6, "east": 12.7, "north": 55.75},
+    temporal_extent=["2025-06-01", "2025-06-30"],
+    bands=["B04", "B08"])
 
-# Compute NDVI
-ndvi = cube.ndvi(red="B04", nir="B08")
+cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")</code></pre>
+</div>
 
-# Download result
-ndvi.download("ndvi.tif")</code></pre>
+<div class="tab-content" id="tab-r">
+<pre><code>library(httr); library(terra); library(jsonlite)
 
-<h3 style="margin:1.5rem 0 0.5rem;font-size:1.1rem;">R — openEO Client</h3>
+base &lt;- "http://localhost:8400"
+
+# Search
+items &lt;- fromJSON(content(GET(paste0(base, "/stac/search"),
+  query = list(bbox = "12.4,55.6,12.7,55.75",
+               collections = "sentinel-2-l2a", limit = 100)
+), "text"))$features
+
+# Download helper
+dl &lt;- function(band) {
+  item &lt;- items[grepl(band, items$id), ][1, ]
+  url &lt;- paste0(base, "/download/", item$collection, "/", item$id)
+  tmp &lt;- tempfile(fileext = ".tif")
+  writeBin(content(GET(url), "raw"), tmp)
+  rast(tmp)
+}
+
+red &lt;- dl("B04"); nir &lt;- dl("B08")
+ndvi &lt;- (nir - red) / (nir + red)
+
+plot(ndvi, main = "NDVI — Copenhagen",
+     col = colorRampPalette(c("brown", "yellow", "darkgreen"))(100),
+     range = c(-0.2, 0.8))</code></pre>
+</div>
+
+<div class="tab-content" id="tab-openeo-r">
 <pre><code>library(openeo)
 
 con &lt;- connect("https://mattiuzzi.zapto.org/earthgrid")
 p &lt;- processes()
 
-# Load a data cube
-cube &lt;- p$load_collection(
-  "sentinel-2-l2a",
-  spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
-  temporal_extent = c("2026-03-01", "2026-03-12"),
-  bands = c("B04", "B08")
-)
+cube &lt;- p$load_collection("sentinel-2-l2a",
+    spatial_extent = list(west=12.4, south=55.6, east=12.7, north=55.75),
+    temporal_extent = c("2025-06-01", "2025-06-30"),
+    bands = c("B04", "B08"))
 
-# Compute NDVI and save
 result &lt;- p$save_result(p$ndvi(cube, red="B04", nir="B08"), format="GTiff")
 compute_result(result, "ndvi.tif")
 
-# Plot
 library(terra)
-plot(rast("ndvi.tif"), col=colorRampPalette(c("brown","yellow","darkgreen"))(100))</code></pre>
+plot(rast("ndvi.tif"),
+     col = colorRampPalette(c("brown","yellow","darkgreen"))(100))</code></pre>
+</div>
 
-<h3 style="margin:1.5rem 0 0.5rem;font-size:1.1rem;">STAC API — Direct Access</h3>
+<div class="tab-content" id="tab-js">
+<pre><code>const fs = require("fs");
+const { execSync } = require("child_process");
+const BASE = "http://localhost:8400";
+
+// Search
+const resp = await fetch(
+  `${BASE}/stac/search?bbox=12.4,55.6,12.7,55.75&amp;collections=sentinel-2-l2a&amp;limit=100`
+);
+const items = (await resp.json()).features;
+
+// Download B04 and B08
+async function download(band) {
+  const item = items.find(i =&gt; i.id.includes(band));
+  const r = await fetch(`${BASE}/download/${item.collection}/${item.id}`);
+  const path = `/tmp/${band}.tif`;
+  fs.writeFileSync(path, Buffer.from(await r.arrayBuffer()));
+  return path;
+}
+
+const b04 = await download("B04");
+const b08 = await download("B08");
+
+// Compute NDVI with GDAL
+execSync(`gdal_calc.py -A ${b08} -B ${b04} --outfile=ndvi.tif \
+  --calc="where((A+B)&gt;0, (A-B)/(A+B), 0)" --type=Float32`);
+console.log("Saved: ndvi.tif");</code></pre>
+</div>
+
+<div class="tab-content" id="tab-rust">
+<pre><code>use reqwest::blocking::Client;
+use std::fs;
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let base = "http://localhost:8400";
+    let client = Client::new();
+
+    // Search
+    let items: serde_json::Value = client
+        .get(format!("{base}/stac/search"))
+        .query(&amp;[("bbox", "12.4,55.6,12.7,55.75"),
+                  ("collections", "sentinel-2-l2a"),
+                  ("limit", "100")])
+        .send()?.json()?;
+
+    let features = items["features"].as_array().unwrap();
+
+    // Download bands
+    for band in &amp;["B04", "B08"] {
+        let item = features.iter()
+            .find(|i| i["id"].as_str().unwrap().contains(band))
+            .unwrap();
+        let col = item["collection"].as_str().unwrap();
+        let id = item["id"].as_str().unwrap();
+        let bytes = client
+            .get(format!("{base}/download/{col}/{id}"))
+            .send()?.bytes()?;
+        fs::write(format!("{band}.tif"), &amp;bytes)?;
+        println!("Downloaded {band}: {:.1} MB",
+                 bytes.len() as f64 / 1e6);
+    }
+
+    println!("Compute NDVI with gdal_calc.py or the gdal crate");
+    Ok(())
+}</code></pre>
+</div>
+
+<div class="tab-content" id="tab-julia">
+<pre><code>using HTTP, JSON3, ArchGDAL, Plots
+
+base = "http://localhost:8400"
+
+# Search
+resp = HTTP.get("$base/stac/search", query=Dict(
+    "bbox" =&gt; "12.4,55.6,12.7,55.75",
+    "collections" =&gt; "sentinel-2-l2a", "limit" =&gt; 100))
+items = JSON3.read(resp.body).features
+
+# Download helper
+function dl(band)
+    item = first(filter(i -&gt; contains(String(i.id), band), items))
+    r = HTTP.get("$base/download/$(item.collection)/$(item.id)")
+    path = tempname() * ".tif"
+    write(path, r.body)
+    ArchGDAL.read(path) do ds
+        Float64.(ArchGDAL.read(ds, 1))
+    end
+end
+
+red, nir = dl("B04"), dl("B08")
+ndvi = @. ifelse((nir + red) &gt; 0, (nir - red) / (nir + red), 0.0)
+
+heatmap(ndvi[end:-1:1, :], c=:RdYlGn, clims=(-0.2, 0.8),
+        title="NDVI — Copenhagen", size=(800, 800))
+savefig("ndvi.png")</code></pre>
+</div>
+
+<div class="tab-content" id="tab-curl">
 <pre><code># Search the STAC catalog
-curl "https://mattiuzzi.zapto.org/earthgrid/stac/search?bbox=12.4,55.6,12.6,55.7"
+curl -s "https://mattiuzzi.zapto.org/earthgrid/stac/search?bbox=12.4,55.6,12.7,55.75" | jq '.features[].id'
+
+# Download bands
+curl -o B04.tif "https://mattiuzzi.zapto.org/earthgrid/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B04"
+curl -o B08.tif "https://mattiuzzi.zapto.org/earthgrid/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B08"
+
+# Compute NDVI with GDAL
+gdal_calc.py -A B08.tif -B B04.tif --outfile=ndvi.tif \
+  --calc="where((A+B)>0, (A.astype(float)-B)/(A+B), 0)" --type=Float32
 
 # List collections
 curl "https://mattiuzzi.zapto.org/earthgrid/collections"
 
-# Get node status
+# Network status
 curl "https://mattiuzzi.zapto.org/earthgrid/nodes"</code></pre>
+</div>
+
+</div>
+
+<script>
+function switchTab(id) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
+</div>
+
 </div>
 
 <div class="section">
