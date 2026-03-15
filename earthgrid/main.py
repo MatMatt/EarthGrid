@@ -9,6 +9,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends, Re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 import logging
+logger = logging.getLogger("earthgrid")
 import time
 import json as json_module
 from fastapi.responses import Response, HTMLResponse
