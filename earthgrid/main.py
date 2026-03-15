@@ -338,9 +338,7 @@ async def _beacon_heartbeat_loop():
                             # Skip self
                             if peer_id == settings.node_id or not peer_url:
                                 continue
-                            # Skip beacon itself if it matches our beacon_url
-                            if peer_url.rstrip("/") == settings.beacon_url.rstrip("/"):
-                                continue
+                            # Beacon can also be a data node — include as peer
                             # Add/update peer in federation
                             peer = federation.add_peer(
                                 url=peer_url,
@@ -426,8 +424,7 @@ async def _discover_peers_from_beacon():
                     peer_name = node.get("node_name", "")
                     if peer_id == settings.node_id or not peer_url:
                         continue
-                    if peer_url.rstrip("/") == settings.beacon_url.rstrip("/"):
-                        continue
+                    # Beacon may also be a data node — included as peer
                     peer = federation.add_peer(
                         url=peer_url, node_id=peer_id, node_name=peer_name,
                     )
