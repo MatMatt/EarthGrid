@@ -1,3 +1,11 @@
+# Example docker-compose.yml — generated automatically by 'earthgrid docker start'
+# You normally don't need to edit this file manually.
+#
+# Quick start:
+#   earthgrid docker start --storage 100 --beacon --name my-node
+#
+# This will generate ~/.earthgrid/docker-compose.yml with your settings.
+
 services:
   earthgrid:
     build:
@@ -7,20 +15,20 @@ services:
     ports:
       - "8400:8400"
     volumes:
-      - /mnt/sda/earthgrid:/data
+      - ./data:/data
     environment:
-      - EARTHGRID_NODE_NAME=node-alpha
+      - EARTHGRID_NODE_NAME=my-node
       - EARTHGRID_PORT=8400
-      - EARTHGRID_ALSO_BEACON=true
-      - EARTHGRID_BEACON_URL=https://mattiuzzi.zapto.org/earthgrid
-      - EARTHGRID_PUBLIC_URL=https://mattiuzzi.zapto.org/earthgrid
-      - EARTHGRID_STORAGE_LIMIT_GB=3000
+      - EARTHGRID_STORAGE_LIMIT_GB=100
+      - EARTHGRID_STORE_PATH=/data/store
+      - EARTHGRID_CATALOG_PATH=/data/catalog.db
       - EARTHGRID_SOURCE_USERS_DB=/data/source_users.db
       - EARTHGRID_STATS_DB=/data/stats.db
       - EARTHGRID_IDENTITY_KEY_PATH=/data/.node_key
       - EARTHGRID_USERS_DB=/data/users.db
-      - EARTHGRID_STORE_PATH=/data/store
-      - EARTHGRID_CATALOG_PATH=/data/catalog.db
+      # Uncomment to also run as beacon:
+      # - EARTHGRID_ALSO_BEACON=true
+      # - EARTHGRID_PUBLIC_URL=https://your-domain.com/earthgrid
     env_file:
       - .env
     restart: unless-stopped
