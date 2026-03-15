@@ -50,9 +50,9 @@ class SourceUserManager:
 
     MAX_CONSECUTIVE_FAILS = 5
 
-    def __init__(self, db_path: Path, encryption_key: str = ""):
-        self.db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db_path, encryption_key: str = ""):
+        self.db_path = Path(db_path) if not isinstance(db_path, Path) else db_path
+        self.self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Encryption key from param or env (no external deps)
         raw_key = encryption_key or os.environ.get("EARTHGRID_SOURCE_KEY", "")

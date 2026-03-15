@@ -292,8 +292,9 @@ async def _register_with_beacon():
                     "storage_limit_gb": settings.storage_limit_gb,
                 },
             )
-    except Exception:
-        pass  # beacon offline — retry on next heartbeat
+    except Exception as e:
+        import logging
+        logging.getLogger("earthgrid").warning(f"Failed to register with beacon: {e}")
 
 
 async def _beacon_heartbeat_loop():
