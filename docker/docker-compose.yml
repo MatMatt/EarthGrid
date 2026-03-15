@@ -1,0 +1,29 @@
+services:
+  earthgrid:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: earthgrid
+    ports:
+      - "8400:8400"
+    volumes:
+      - /mnt/sda/earthgrid:/data
+    environment:
+      - EARTHGRID_NODE_NAME=node-alpha
+      - EARTHGRID_PORT=8400
+      - EARTHGRID_ALSO_BEACON=true
+      - EARTHGRID_BEACON_URL=https://mattiuzzi.zapto.org/earthgrid
+      - EARTHGRID_PUBLIC_URL=https://mattiuzzi.zapto.org/earthgrid
+      - EARTHGRID_STORAGE_LIMIT_GB=1000
+      - EARTHGRID_SOURCE_USERS_DB=/data/source_users.db
+      - EARTHGRID_STATS_DB=/data/stats.db
+      - EARTHGRID_IDENTITY_KEY_PATH=/data/.node_key
+      - EARTHGRID_USERS_DB=/data/users.db
+      - EARTHGRID_STORE_PATH=/data/store
+      - EARTHGRID_CATALOG_PATH=/data/catalog.db
+    env_file:
+      - .env
+    restart: unless-stopped
+    cpu_shares: 128
+    mem_limit: 2g
+    oom_score_adj: 500
