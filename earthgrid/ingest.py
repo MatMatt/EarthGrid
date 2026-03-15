@@ -77,8 +77,16 @@ def ingest_cog(
 
     with rasterio.open(file_path) as src:
         bounds = src.bounds
-        bbox = [bounds.left, bounds.bottom, bounds.right, bounds.top]
         crs = str(src.crs)
+        # Reproject bbox to WGS84 (STAC requires EPSG:4326)
+        if src.crs and not src.crs.is_geographic:
+            from rasterio.warp import transform_bounds
+            w, s, e, n = transform_bounds(src.crs, "EPSG:4326",
+                                          bounds.left, bounds.bottom,
+                                          bounds.right, bounds.top)
+            bbox = [round(w, 6), round(s, 6), round(e, 6), round(n, 6)]
+        else:
+            bbox = [bounds.left, bounds.bottom, bounds.right, bounds.top]
         width, height = src.width, src.height
         n_bands = src.count
         dtype = str(src.dtypes[0])
