@@ -41,6 +41,7 @@ class RegisteredNode:
     chunk_count: int = 0
     chunks_bytes: int = 0
     can_source: bool = False  # can fetch from official sources (CDSE etc.)
+    storage_limit_gb: float = 0.0
     last_seen: float = 0.0
     bbox_index: list[list[float]] = field(default_factory=list)  # per-collection bboxes
 
@@ -62,6 +63,7 @@ class RegisteredNode:
             "chunk_count": self.chunk_count,
             "chunks_bytes": self.chunks_bytes,
             "can_source": self.can_source,
+            "storage_limit_gb": self.storage_limit_gb,
             "alive": self.alive,
             "reachable": self.url is not None or self.reachable_via_ws,
             "last_seen": self.last_seen,
@@ -522,6 +524,7 @@ async def register_node(
         replication_factor=rep_factor,
     )
     replication_planner.set_preferences(node_id, prefs)
+    node.storage_limit_gb = storage_limit
     return {"status": "registered", "node": node.to_dict()}
 
 

@@ -211,7 +211,7 @@ async function load() {
     } catch(e) {
       document.getElementById('vRedundancy').textContent = (d.redundancy_index || 1.0) + 'x';
     }
-    document.getElementById('vStorage').textContent = (totalBytes / 1e9).toFixed(1) + ' GB';
+    document.getElementById('vStorage').textContent = totalBytes >= 1e12 ? (totalBytes / 1e12).toFixed(1) + ' TB' : (totalBytes / 1e9).toFixed(1) + ' GB';
     if (d.version) document.getElementById('ver').textContent = d.version;
     document.querySelectorAll('.stat.loading').forEach(s => s.classList.remove('loading'));
 
@@ -225,31 +225,13 @@ async function load() {
       document.getElementById('vRequested').textContent = '0';
     }
 
-    // Coverage per sensor — aggregate from all reachable nodes
+    // Coverage per sensor — from beacon (aggregates all nodes server-side)
     let sensors = {};
-    // Start with beacon's own coverage
     try {
       const cr = await fetch(BEACON + '/stats/coverage');
       const cd = await cr.json();
       sensors = cd.sensors || {};
     } catch(e) {}
-    // Merge coverage from peer nodes (if reachable)
-    for (const node of allN) {
-      if (!node.alive || !node.url || node.url === BEACON) continue;
-      try {
-        const pcr = await fetch(node.url + '/stats/coverage');
-        const pcd = await pcr.json();
-        for (const [col, s] of Object.entries(pcd.sensors || {})) {
-          if (!sensors[col]) {
-            sensors[col] = {area_km2: 0, tiles: 0, items: 0};
-          }
-          // Items and tiles might overlap — take max for conservative estimate
-          sensors[col].area_km2 = Math.max(sensors[col].area_km2, s.area_km2);
-          sensors[col].tiles = Math.max(sensors[col].tiles, s.tiles);
-          sensors[col].items = Math.max(sensors[col].items, s.items);
-        }
-      } catch(e) {} // peer unreachable — skip
-    }
 
     let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">km²</th><th class="num">Tiles</th><th class="num">Items</th></tr></thead><tbody>';
     for (const [col, s] of Object.entries(sensors).sort((a,b) => b[1].area_km2 - a[1].area_km2)) {
@@ -263,8 +245,8 @@ async function load() {
     html += '</tbody></table>';
     document.getElementById('coverageTable').innerHTML = html;
 
-    // Nodes (reuse allN from earlier fetch)
-    document.getElementById('vNodes').textContent = allN.length;
+    // Nodes (from beacon — counts all alive nodes including LAN-only)
+    document.getElementById('vNodes').textContent = allN.filter(n => n.alive).length;
     document.getElementById('sNodes').classList.remove('loading');
 
     // Operations
