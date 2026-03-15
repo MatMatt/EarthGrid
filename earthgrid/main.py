@@ -610,7 +610,7 @@ async def node_ui(request: Request):
     ui_path = Path(__file__).parent / "static" / "ui.html"
     if not ui_path.exists():
         return HTMLResponse("<h1>UI not found</h1>", status_code=404)
-    return HTMLResponse(content=ui_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content=ui_path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/stats/coverage")
