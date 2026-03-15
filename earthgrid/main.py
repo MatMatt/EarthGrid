@@ -323,6 +323,18 @@ async def _beacon_heartbeat_loop():
         try:
             summary = catalog.summary()
             async with httpx.AsyncClient(timeout=10) as client:
+                # Get uptime
+                _uptime_s = 0
+                try:
+                    with open("/proc/uptime") as _f:
+                        _uptime_s = int(float(_f.read().split()[0]))
+                except Exception:
+                    pass
+
+                # Get cached speed (measured periodically)
+                _dl_mbps = getattr(app.state, '_download_mbps', 0.0)
+                _ul_mbps = getattr(app.state, '_upload_mbps', 0.0)
+
                 await client.post(
                     f"{beacon.rstrip('/')}/heartbeat",
                     params={
@@ -332,6 +344,9 @@ async def _beacon_heartbeat_loop():
                         "chunk_count": chunk_store.chunk_count,
                         "chunks_bytes": chunk_store.total_bytes,
                         "storage_limit_gb": settings.storage_limit_gb,
+                        "uptime_seconds": _uptime_s,
+                        "download_mbps": _dl_mbps,
+                        "upload_mbps": _ul_mbps,
                     },
                 )
                 # Report items for replication tracking
@@ -475,10 +490,38 @@ async def _discover_peers_from_beacon():
 
 
 @app.on_event("startup")
+
+async def _speed_measure_loop():
+    """Measure internet speed periodically (every 6h) using a lightweight test."""
+    import time as _time
+    log = logging.getLogger("earthgrid")
+    await asyncio.sleep(30)  # wait for startup
+    while True:
+        try:
+            # Lightweight speed test: download a ~10MB file and measure throughput
+            test_url = "https://speed.hetzner.de/10MB.bin"
+            start = _time.monotonic()
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.get(test_url)
+                elapsed = _time.monotonic() - start
+                if resp.status_code == 200 and elapsed > 0:
+                    size_mb = len(resp.content) / 1024 / 1024
+                    dl_mbps = round((size_mb * 8) / elapsed, 1)
+                    app.state._download_mbps = dl_mbps
+                    log.info(f"Speed test: {dl_mbps} Mbps download ({size_mb:.1f} MB in {elapsed:.1f}s)")
+
+                # Upload test: POST ~1MB to httpbin (or just estimate from download)
+                # For now, estimate upload as ~30% of download (typical asymmetric)
+                app.state._upload_mbps = round(dl_mbps * 0.3, 1)
+        except Exception as e:
+            log.debug(f"Speed test failed: {e}")
+        await asyncio.sleep(6 * 3600)  # every 6 hours
+
 async def startup():
     await _register_with_beacon()
     await _discover_peers_from_beacon()
     asyncio.create_task(_beacon_heartbeat_loop())
+    asyncio.create_task(_speed_measure_loop())
     asyncio.create_task(_auto_replication_loop())
 
     # Mount beacon if enabled
@@ -601,6 +644,8 @@ def node_info_detail():
         "beacon": settings.also_beacon,
         "openeo": True,
         "bandwidth": bandwidth_mgr.status(),
+        "download_mbps": getattr(app.state, '_download_mbps', 0.0),
+        "upload_mbps": getattr(app.state, '_upload_mbps', 0.0),
         "max_download_volume_gb": settings.max_download_volume_gb,
         "system": _system_info(),
     }

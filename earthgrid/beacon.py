@@ -42,6 +42,9 @@ class RegisteredNode:
     chunks_bytes: int = 0
     can_source: bool = False  # can fetch from official sources (CDSE etc.)
     storage_limit_gb: float = 0.0
+    uptime_seconds: int = 0
+    download_mbps: float = 0.0
+    upload_mbps: float = 0.0
     last_seen: float = 0.0
     bbox_index: list[list[float]] = field(default_factory=list)  # per-collection bboxes
 
@@ -64,6 +67,10 @@ class RegisteredNode:
             "chunks_bytes": self.chunks_bytes,
             "can_source": self.can_source,
             "storage_limit_gb": self.storage_limit_gb,
+            "uptime_seconds": self.uptime_seconds,
+            "uptime_hours": round(self.uptime_seconds / 3600, 1),
+            "download_mbps": self.download_mbps,
+            "upload_mbps": self.upload_mbps,
             "alive": self.alive,
             "reachable": self.url is not None or self.reachable_via_ws,
             "last_seen": self.last_seen,
@@ -313,6 +320,11 @@ class BeaconRegistry:
             total_items += n.item_count
             total_chunks += n.chunk_count
             total_bytes += n.chunks_bytes
+        # Aggregated speed/uptime
+        speeds_down = [n.download_mbps for n in alive if n.download_mbps > 0]
+        speeds_up = [n.upload_mbps for n in alive if n.upload_mbps > 0]
+        uptimes = [n.uptime_seconds for n in alive if n.uptime_seconds > 0]
+
         return {
             "nodes_alive": len(alive),
             "nodes_total": len(self._nodes_cache),
@@ -322,6 +334,12 @@ class BeaconRegistry:
             "total_bytes": total_bytes,
             "peer_beacons": len(self._peers_cache),
             "peer_beacons_alive": len([b for b in self._peers_cache.values() if b.alive]),
+            "network_download_mbps": round(sum(speeds_down), 1) if speeds_down else 0,
+            "network_upload_mbps": round(sum(speeds_up), 1) if speeds_up else 0,
+            "avg_download_mbps": round(sum(speeds_down) / len(speeds_down), 1) if speeds_down else 0,
+            "avg_upload_mbps": round(sum(speeds_up) / len(speeds_up), 1) if speeds_up else 0,
+            "avg_uptime_hours": round(sum(uptimes) / len(uptimes) / 3600, 1) if uptimes else 0,
+            "total_uptime_hours": round(sum(uptimes) / 3600, 1) if uptimes else 0,
         }
 
     # --- Beacon Federation ---
@@ -540,6 +558,9 @@ async def node_heartbeat(
     chunk_count: int = Query(None),
     chunks_bytes: int = Query(None),
     storage_limit_gb: float = Query(None),
+    uptime_seconds: int = Query(None),
+    download_mbps: float = Query(None),
+    upload_mbps: float = Query(None),
 ):
     """Heartbeat from a data node — keeps it alive in the registry."""
     updates = {}
@@ -553,6 +574,12 @@ async def node_heartbeat(
         updates["chunks_bytes"] = chunks_bytes
     if storage_limit_gb is not None:
         updates["storage_limit_gb"] = storage_limit_gb
+    if uptime_seconds is not None:
+        updates["uptime_seconds"] = uptime_seconds
+    if download_mbps is not None:
+        updates["download_mbps"] = download_mbps
+    if upload_mbps is not None:
+        updates["upload_mbps"] = upload_mbps
 
     await registry.heartbeat(node_id, **updates)
     return {"status": "ok"}
