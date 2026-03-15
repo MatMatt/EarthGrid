@@ -979,16 +979,29 @@ def _cmd_docker(args):
         print("📥 Pulling latest code...")
         _sp.run(["git", "pull"], cwd=str(project_root))
         print()
-        # Rebuild + restart
-        args.docker_action = "start"
-        if not hasattr(args, 'no_build'):
+        # Stop any existing earthgrid container (from any compose location)
+        _sp.run(["docker", "rm", "-f", "earthgrid"], capture_output=True)
+        # If existing compose file, just rebuild in place
+        if compose_file.exists():
+            print("🔄 Rebuilding from existing config...")
+            result = _sp.run(
+                ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build"],
+                cwd=str(compose_dir),
+            )
+            if result.returncode == 0:
+                print("\n✅ Updated and running!")
+            else:
+                print(f"\n⚠ Docker failed (exit {result.returncode})")
+                sys.exit(1)
+        else:
+            # No existing compose — fall through to start with defaults
+            args.docker_action = "start"
+            for attr in ('storage', 'name', 'port', 'beacon', 'public_url', 'beacon_url', 'data_dir', 'no_build'):
+                if not hasattr(args, attr):
+                    setattr(args, attr, None)
             args.no_build = False
-        args.no_build = False  # force rebuild
-        # Load defaults for start params
-        for attr in ('storage', 'name', 'port', 'beacon', 'public_url', 'beacon_url', 'data_dir'):
-            if not hasattr(args, attr):
-                setattr(args, attr, None)
-        return _cmd_docker(args)
+            return _cmd_docker(args)
+        return
 
     # No subcommand
     print("Usage: earthgrid docker [start|stop|status|logs|restart|update]")
