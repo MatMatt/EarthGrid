@@ -144,6 +144,7 @@ def main():
     docker_sub.add_parser("status", help="Show Docker container status")
     docker_sub.add_parser("logs", help="Show container logs")
     docker_sub.add_parser("restart", help="Restart Docker container")
+    docker_sub.add_parser("update", help="Pull latest code, rebuild and restart")
 
     args = parser.parse_args()
 
@@ -972,14 +973,32 @@ def _cmd_docker(args):
             sys.exit(1)
         return
 
+    if args.docker_action == "update":
+        import subprocess as _sp
+        # Pull latest code
+        print("📥 Pulling latest code...")
+        _sp.run(["git", "pull"], cwd=str(project_root))
+        print()
+        # Rebuild + restart
+        args.docker_action = "start"
+        if not hasattr(args, 'no_build'):
+            args.no_build = False
+        args.no_build = False  # force rebuild
+        # Load defaults for start params
+        for attr in ('storage', 'name', 'port', 'beacon', 'public_url', 'beacon_url', 'data_dir'):
+            if not hasattr(args, attr):
+                setattr(args, attr, None)
+        return _cmd_docker(args)
+
     # No subcommand
-    print("Usage: earthgrid docker [start|stop|status|logs|restart]")
+    print("Usage: earthgrid docker [start|stop|status|logs|restart|update]")
     print()
     print("  start    Build and start Docker container")
     print("  stop     Stop Docker container")
     print("  status   Show container status")
     print("  logs     Show container logs")
     print("  restart  Restart container (regenerates compose)")
+    print("  update   Pull latest code, rebuild and restart")
 
 
 def _interactive_setup(args):
