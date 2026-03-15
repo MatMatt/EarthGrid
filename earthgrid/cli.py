@@ -145,6 +145,8 @@ def main():
     docker_sub.add_parser("logs", help="Show container logs")
     docker_sub.add_parser("restart", help="Restart Docker container")
     docker_sub.add_parser("update", help="Pull latest code, rebuild and restart")
+    p_dexec = docker_sub.add_parser("exec", help="Run earthgrid command inside container")
+    p_dexec.add_argument("cmd_args", nargs=argparse.REMAINDER, help="Command to run (e.g. users list)")
 
 
     # --- Admin ---
@@ -1072,8 +1074,19 @@ def _cmd_docker(args):
             return _cmd_docker(args)
         return
 
+    if args.docker_action == "exec":
+        import subprocess as _sp
+        cmd_args = args.cmd_args if hasattr(args, 'cmd_args') else []
+        # Strip leading '--' if present (argparse REMAINDER quirk)
+        if cmd_args and cmd_args[0] == '--':
+            cmd_args = cmd_args[1:]
+        result = _sp.run(
+            ["docker", "exec", "-it", "earthgrid", "earthgrid"] + cmd_args,
+        )
+        sys.exit(result.returncode)
+
     # No subcommand
-    print("Usage: earthgrid docker [start|stop|status|logs|restart|update]")
+    print("Usage: earthgrid docker [start|stop|status|logs|restart|update|exec]")
     print()
     print("  start    Build and start Docker container")
     print("  stop     Stop Docker container")
@@ -1081,6 +1094,7 @@ def _cmd_docker(args):
     print("  logs     Show container logs")
     print("  restart  Restart container (regenerates compose)")
     print("  update   Pull latest code, rebuild and restart")
+    print("  exec     Run earthgrid command inside container")
 
 
 def _interactive_setup(args):
