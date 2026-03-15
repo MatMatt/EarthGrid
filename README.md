@@ -488,79 +488,241 @@ Your other workloads always come first.
 
 ---
 
-## Example: Plot NDVI for Copenhagen
+## Example: Compute NDVI for Copenhagen
 
-This example downloads Sentinel-2 B04 (Red) and B08 (NIR) bands from EarthGrid, computes NDVI, and plots the result.
+Download Sentinel-2 bands from EarthGrid, compute NDVI, and plot the result — in your language of choice.
 
-### Python (requests + matplotlib)
+> All examples connect to a local EarthGrid node. Replace `localhost:8400` with any node URL.
+
+<details open>
+<summary><b>🐍 Python</b></summary>
 
 ```python
-import requests
-import numpy as np
-import matplotlib.pyplot as plt
+import requests, numpy as np, matplotlib.pyplot as plt, rasterio, tempfile
 
-# Connect to any EarthGrid node
 BASE = "http://localhost:8400"
 
-# Search for Sentinel-2 data over Copenhagen
-resp = requests.get(f"{BASE}/stac/search", params={
-    "bbox": "12.4,55.6,12.7,55.75",
-    "collections": "sentinel-2-l2a",
-    "limit": 100,
-})
-items = resp.json()["features"]
-print(f"Found {len(items)} items")
+# Search Sentinel-2 over Copenhagen
+items = requests.get(f"{BASE}/stac/search", params={
+    "bbox": "12.4,55.6,12.7,55.75", "collections": "sentinel-2-l2a", "limit": 100,
+}).json()["features"]
 
-# Find B04 and B08 for the same date
-b04_item = next((i for i in items if "B04" in i["id"]), None)
-b08_item = next((i for i in items if "B08" in i["id"]), None)
-
-if not b04_item or not b08_item:
-    print("B04 or B08 not found — fetch data first:")
-    print("  earthgrid fetch --bbox 12.4,55.6,12.7,55.75 --bands B04,B08")
-    exit(1)
-
-# Download as GeoTIFF
-for name, item in [("B04", b04_item), ("B08", b08_item)]:
+# Download B04 (Red) and B08 (NIR)
+def download(band):
+    item = next(i for i in items if band in i["id"])
     r = requests.get(f"{BASE}/download/{item['collection']}/{item['id']}")
-    with open(f"{name}.tif", "wb") as f:
-        f.write(r.content)
-    print(f"Downloaded {name}: {len(r.content) / 1024 / 1024:.1f} MB")
+    f = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+    f.write(r.content); f.close()
+    return rasterio.open(f.name).read(1).astype(float)
 
-# Compute NDVI
-import rasterio
-with rasterio.open("B04.tif") as src:
-    red = src.read(1).astype(float)
-with rasterio.open("B08.tif") as src:
-    nir = src.read(1).astype(float)
-
+red, nir = download("B04"), download("B08")
 ndvi = np.where((nir + red) > 0, (nir - red) / (nir + red), 0)
 
-# Plot
-fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-im = ax.imshow(ndvi, cmap="RdYlGn", vmin=-0.2, vmax=0.8)
-ax.set_title("NDVI — Copenhagen (Sentinel-2)")
-ax.axis("off")
-plt.colorbar(im, ax=ax, shrink=0.6, label="NDVI")
-plt.tight_layout()
-plt.savefig("ndvi_copenhagen.png", dpi=150)
-plt.show()
-print("Saved: ndvi_copenhagen.png")
+plt.figure(figsize=(10, 10))
+plt.imshow(ndvi, cmap="RdYlGn", vmin=-0.2, vmax=0.8)
+plt.title("NDVI — Copenhagen (Sentinel-2)")
+plt.colorbar(shrink=0.6, label="NDVI"); plt.axis("off")
+plt.savefig("ndvi.png", dpi=150)
 ```
 
-### openEO (one-liner)
+</details>
+
+<details>
+<summary><b>🐍 Python (openEO — 3 lines)</b></summary>
 
 ```python
 import openeo
 conn = openeo.connect("http://localhost:8400")
 cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.7, "north": 55.75},
-    temporal_extent=["2026-03-01", "2026-03-15"],
+    temporal_extent=["2025-06-01", "2025-06-30"],
     bands=["B04", "B08"])
 cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")
 ```
 
-> **Note:** Make sure data is available locally first. Use `earthgrid fetch` to download, or let auto-replication fill your node.
+</details>
+
+<details>
+<summary><b>📊 R</b></summary>
+
+```r
+library(httr); library(terra); library(jsonlite)
+
+base <- "http://localhost:8400"
+
+# Search
+items <- fromJSON(content(GET(paste0(base, "/stac/search"),
+  query = list(bbox = "12.4,55.6,12.7,55.75", collections = "sentinel-2-l2a", limit = 100)
+), "text"))$features
+
+# Download helper
+dl <- function(band) {
+  item <- items[grepl(band, items$id), ][1, ]
+  url <- paste0(base, "/download/", item$collection, "/", item$id)
+  tmp <- tempfile(fileext = ".tif")
+  writeBin(content(GET(url), "raw"), tmp)
+  rast(tmp)
+}
+
+red <- dl("B04"); nir <- dl("B08")
+ndvi <- (nir - red) / (nir + red)
+
+png("ndvi.png", width = 1200, height = 1200)
+plot(ndvi, main = "NDVI — Copenhagen (Sentinel-2)",
+     col = colorRampPalette(c("brown", "yellow", "darkgreen"))(100),
+     range = c(-0.2, 0.8))
+dev.off()
+```
+
+</details>
+
+<details>
+<summary><b>📊 R (openEO)</b></summary>
+
+```r
+library(openeo)
+con <- connect("http://localhost:8400")
+p <- processes()
+cube <- p$load_collection("sentinel-2-l2a",
+    spatial_extent = list(west=12.4, south=55.6, east=12.7, north=55.75),
+    temporal_extent = c("2025-06-01", "2025-06-30"),
+    bands = c("B04", "B08"))
+ndvi <- p$ndvi(cube, red="B04", nir="B08")
+result <- p$save_result(ndvi, format="GTiff")
+compute_result(result, "ndvi.tif")
+```
+
+</details>
+
+<details>
+<summary><b>🟨 JavaScript / Node.js</b></summary>
+
+```javascript
+const fs = require("fs");
+const { execSync } = require("child_process");
+
+const BASE = "http://localhost:8400";
+
+// Search
+const resp = await fetch(`${BASE}/stac/search?bbox=12.4,55.6,12.7,55.75&collections=sentinel-2-l2a&limit=100`);
+const items = (await resp.json()).features;
+
+// Download B04 and B08
+async function download(band) {
+  const item = items.find(i => i.id.includes(band));
+  const r = await fetch(`${BASE}/download/${item.collection}/${item.id}`);
+  const path = `/tmp/${band}.tif`;
+  fs.writeFileSync(path, Buffer.from(await r.arrayBuffer()));
+  return path;
+}
+
+const b04 = await download("B04");
+const b08 = await download("B08");
+
+// Compute NDVI with GDAL
+execSync(`gdal_calc.py -A ${b08} -B ${b04} --outfile=ndvi.tif \
+  --calc="where((A+B)>0, (A-B)/(A+B), 0)" --type=Float32`);
+console.log("Saved: ndvi.tif");
+```
+
+</details>
+
+<details>
+<summary><b>🦀 Rust</b></summary>
+
+```rust
+use reqwest::blocking::Client;
+use std::fs;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let base = "http://localhost:8400";
+    let client = Client::new();
+
+    // Search
+    let items: serde_json::Value = client
+        .get(format!("{base}/stac/search"))
+        .query(&[("bbox", "12.4,55.6,12.7,55.75"),
+                  ("collections", "sentinel-2-l2a"), ("limit", "100")])
+        .send()?.json()?;
+
+    let features = items["features"].as_array().unwrap();
+
+    // Download bands
+    for band in &["B04", "B08"] {
+        let item = features.iter()
+            .find(|i| i["id"].as_str().unwrap().contains(band)).unwrap();
+        let col = item["collection"].as_str().unwrap();
+        let id = item["id"].as_str().unwrap();
+        let bytes = client.get(format!("{base}/download/{col}/{id}"))
+            .send()?.bytes()?;
+        fs::write(format!("{band}.tif"), &bytes)?;
+        println!("Downloaded {band}: {:.1} MB", bytes.len() as f64 / 1e6);
+    }
+
+    println!("Compute NDVI: gdal_calc.py -A B08.tif -B B04.tif ...");
+    Ok(())
+}
+```
+
+</details>
+
+<details>
+<summary><b>🐚 Shell (curl + GDAL)</b></summary>
+
+```bash
+BASE="http://localhost:8400"
+
+# Search
+curl -s "$BASE/stac/search?bbox=12.4,55.6,12.7,55.75&collections=sentinel-2-l2a&limit=20" | \
+  jq -r '.features[].id' | head -10
+
+# Download
+curl -o B04.tif "$BASE/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B04"
+curl -o B08.tif "$BASE/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B08"
+
+# Compute NDVI
+gdal_calc.py -A B08.tif -B B04.tif --outfile=ndvi.tif \
+  --calc="where((A+B)>0, (A.astype(float)-B)/(A+B), 0)" --type=Float32
+```
+
+</details>
+
+<details>
+<summary><b>🌍 Julia</b></summary>
+
+```julia
+using HTTP, JSON3, ArchGDAL, Plots
+
+base = "http://localhost:8400"
+
+# Search
+resp = HTTP.get("$base/stac/search", query=Dict(
+    "bbox" => "12.4,55.6,12.7,55.75",
+    "collections" => "sentinel-2-l2a", "limit" => 100))
+items = JSON3.read(resp.body).features
+
+# Download helper
+function dl(band)
+    item = first(filter(i -> contains(String(i.id), band), items))
+    r = HTTP.get("$base/download/$(item.collection)/$(item.id)")
+    path = tempname() * ".tif"
+    write(path, r.body)
+    ArchGDAL.read(path) do ds
+        Float64.(ArchGDAL.read(ds, 1))
+    end
+end
+
+red, nir = dl("B04"), dl("B08")
+ndvi = @. ifelse((nir + red) > 0, (nir - red) / (nir + red), 0.0)
+
+heatmap(ndvi[end:-1:1, :], c=:RdYlGn, clims=(-0.2, 0.8),
+        title="NDVI — Copenhagen", size=(800, 800))
+savefig("ndvi.png")
+```
+
+</details>
+
+> **Tip:** Make sure data is available first. Use `earthgrid fetch --bbox 12.4,55.6,12.7,55.75` to download, or let auto-replication fill your node.
 
 ## Disclaimer
 
