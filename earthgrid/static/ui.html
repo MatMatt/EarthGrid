@@ -485,7 +485,7 @@ async function loadStatus() {
     renderStorageInfo(info);
 
     // Collections
-    renderCollections(info.collections);
+    await renderCollections(info.collections);
 
   } catch(e) {
     console.error('Status load error:', e);
@@ -547,20 +547,41 @@ function renderStorageInfo(info) {
   setHtml('storage-info', html);
 }
 
-function renderCollections(collections) {
-  if (!collections || !Object.keys(collections).length) {
+async function renderCollections(collections) {
+  if (!collections || (Array.isArray(collections) && !collections.length) || (!Array.isArray(collections) && !Object.keys(collections).length)) {
     setHtml('collections-list', '<div class="empty"><div class="empty-icon">📭</div>No collections yet</div>');
     return;
   }
-  const entries = Object.entries(collections).sort((a,b) => (b[1].items||0) - (a[1].items||0));
+
+  // Normalize: if array of strings, fetch details from STAC API
+  let entries;
+  if (Array.isArray(collections) && typeof collections[0] === 'string') {
+    try {
+      const stac = await apiFetch('/stac/collections');
+      const colMap = {};
+      for (const c of (stac.collections || [])) {
+        colMap[c.id] = { items: c.numberMatched || c.item_count || 0 };
+      }
+      entries = collections.map(name => [name, colMap[name] || {}]);
+    } catch(e) {
+      entries = collections.map(name => [name, {}]);
+    }
+  } else if (Array.isArray(collections)) {
+    entries = collections.map(c => [c.id || c.name || '?', c]);
+  } else {
+    entries = Object.entries(collections);
+  }
+
+  entries.sort((a,b) => (b[1].items||0) - (a[1].items||0));
+
   let html = '<div class="collection-list">';
   for (const [name, info] of entries) {
     html += `<div class="collection-item">
       <div>
         <div class="collection-name">${name}</div>
-        ${info.tiles ? `<div style="font-size:11px;color:var(--muted)">${info.tiles} tiles · ${info.area_km2 ? Math.round(info.area_km2).toLocaleString() + ' km²' : ''}</div>` : ''}
+        ${info.tiles ? `<div style="font-size:11px;color:var(--muted)">${info.tiles} tiles · ${info.area_km2 ? Math.round(info.area_km2).toLocaleString() + ' km\u00b2' : ''}</div>` : ''}
       </div>
-      <div class="collection-count">${fmt_num(info.items)} items</div>
+      <div class="collection-count">${info.items ? fmt_num(info.items) + ' items' : ''}</div>
     </div>`;
   }
   html += '</div>';

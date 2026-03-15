@@ -180,7 +180,9 @@ class Catalog:
         rows = self.db.execute(query, params).fetchall()
         return [self._row_to_item(r) for r in rows]
 
-    def item_count(self) -> int:
+    def item_count(self, collection: str | None = None) -> int:
+        if collection:
+            return self.db.execute("SELECT COUNT(*) FROM items WHERE collection=?", (collection,)).fetchone()[0]
         return self.db.execute("SELECT COUNT(*) FROM items").fetchone()[0]
 
     def coverage_by_collection(self) -> dict[str, dict]:

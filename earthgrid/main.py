@@ -538,7 +538,7 @@ def node_info_detail():
         "storage_used_pct": round(chunk_store.total_bytes / (settings.storage_limit_gb * 1024**3) * 100, 1) if settings.storage_limit_gb > 0 else 0,
         "item_count": summary["item_count"],
         "total_area_km2": summary["total_area_km2"],
-        "collections": summary["collections"],
+        "collections": {c: {"items": catalog.item_count(c)} for c in summary["collections"]},
         "peers": len(federation.peers),
         "redundancy_index": _redundancy_index(),
         "beacon": settings.also_beacon,
