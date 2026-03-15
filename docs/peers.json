@@ -6,9 +6,9 @@
       "collections": [
         "sentinel-2-l2a"
       ],
-      "items": 289
+      "items": 300
     }
   ],
-  "updated": "2026-03-15T17:30:01Z",
+  "updated": "2026-03-15T17:40:01Z",
   "source": "https://mattiuzzi.zapto.org/earthgrid"
 }
