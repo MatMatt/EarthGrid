@@ -591,15 +591,26 @@ def health():
 
 @app.get("/stats/coverage")
 def stats_coverage():
-    """Spatial coverage in km² per sensor collection."""
+    """Spatial coverage per sensor collection (network-wide if beacon)."""
     cov = catalog.coverage_by_collection()
-    # Only original sensor data — derived collections are excluded
     sensors = {col: info for col, info in cov["collections"].items() if "_derived" not in col}
+    # If beacon, add items from other nodes
+    if settings.also_beacon:
+        try:
+            from .beacon import registry
+            for node in registry.get_alive_nodes():
+                if node.node_id == settings.node_id:
+                    continue
+                for col in node.collections:
+                    if col not in sensors:
+                        sensors[col] = {"items": 0, "tiles": 0, "area_km2": 0}
+                    sensors[col]["items"] += node.item_count
+        except Exception:
+            pass
     return {
-        "total_area_km2": sum(s["area_km2"] for s in sensors.values()),
+        "total_area_km2": sum(s.get("area_km2", 0) for s in sensors.values()),
         "sensors": sensors,
     }
-
 
 @app.get("/stats/requests")
 def stats_requests():
