@@ -484,6 +484,84 @@ Your other workloads always come first.
 
 ---
 
+
+
+---
+
+## Example: Plot NDVI for Copenhagen
+
+This example downloads Sentinel-2 B04 (Red) and B08 (NIR) bands from EarthGrid, computes NDVI, and plots the result.
+
+### Python (requests + matplotlib)
+
+```python
+import requests
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Connect to any EarthGrid node
+BASE = "http://localhost:8400"
+
+# Search for Sentinel-2 data over Copenhagen
+resp = requests.get(f"{BASE}/stac/search", params={
+    "bbox": "12.4,55.6,12.7,55.75",
+    "collections": "sentinel-2-l2a",
+    "limit": 100,
+})
+items = resp.json()["features"]
+print(f"Found {len(items)} items")
+
+# Find B04 and B08 for the same date
+b04_item = next((i for i in items if "B04" in i["id"]), None)
+b08_item = next((i for i in items if "B08" in i["id"]), None)
+
+if not b04_item or not b08_item:
+    print("B04 or B08 not found — fetch data first:")
+    print("  earthgrid fetch --bbox 12.4,55.6,12.7,55.75 --bands B04,B08")
+    exit(1)
+
+# Download as GeoTIFF
+for name, item in [("B04", b04_item), ("B08", b08_item)]:
+    r = requests.get(f"{BASE}/download/{item['collection']}/{item['id']}")
+    with open(f"{name}.tif", "wb") as f:
+        f.write(r.content)
+    print(f"Downloaded {name}: {len(r.content) / 1024 / 1024:.1f} MB")
+
+# Compute NDVI
+import rasterio
+with rasterio.open("B04.tif") as src:
+    red = src.read(1).astype(float)
+with rasterio.open("B08.tif") as src:
+    nir = src.read(1).astype(float)
+
+ndvi = np.where((nir + red) > 0, (nir - red) / (nir + red), 0)
+
+# Plot
+fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+im = ax.imshow(ndvi, cmap="RdYlGn", vmin=-0.2, vmax=0.8)
+ax.set_title("NDVI — Copenhagen (Sentinel-2)")
+ax.axis("off")
+plt.colorbar(im, ax=ax, shrink=0.6, label="NDVI")
+plt.tight_layout()
+plt.savefig("ndvi_copenhagen.png", dpi=150)
+plt.show()
+print("Saved: ndvi_copenhagen.png")
+```
+
+### openEO (one-liner)
+
+```python
+import openeo
+conn = openeo.connect("http://localhost:8400")
+cube = conn.load_collection("sentinel-2-l2a",
+    spatial_extent={"west": 12.4, "south": 55.6, "east": 12.7, "north": 55.75},
+    temporal_extent=["2026-03-01", "2026-03-15"],
+    bands=["B04", "B08"])
+cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")
+```
+
+> **Note:** Make sure data is available locally first. Use `earthgrid fetch` to download, or let auto-replication fill your node.
+
 ## Disclaimer
 
 EarthGrid is provided **"as is"**, without warranty of any kind, express or implied. The authors and contributors accept no liability for any loss, damage, or consequence arising from the use of this software or data obtained through it.
