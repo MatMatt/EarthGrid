@@ -544,7 +544,28 @@ function renderStorageInfo(info) {
     html += `<div class="kv" style="margin-top:8px"><span class="kv-key">Max Download</span><span class="kv-val">${info.max_download_volume_gb} GB</span></div>`;
   }
 
+  html += `
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <input type="number" id="resize-input" value="${limitGb}" min="1" step="10"
+        style="width:80px;padding:6px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+      <span style="color:var(--muted);font-size:12px">GB</span>
+      <button class="btn secondary small" onclick="resizeStorage()" style="margin-left:4px">Resize</button>
+    </div>
+    <div id="resize-result" style="margin-top:6px"></div>`;
+
   setHtml('storage-info', html);
+}
+
+async function resizeStorage() {
+  const gb = parseFloat(document.getElementById('resize-input').value);
+  if (!gb || gb < 1) { showAlert('resize-result', 'Min 1 GB', 'error'); return; }
+  try {
+    const data = await apiFetch('/resize?size_gb=' + gb, {method: 'POST'});
+    showAlert('resize-result', '\u2713 Resized: ' + data.old_gb + ' \u2192 ' + data.new_gb + ' GB', 'success');
+    setTimeout(() => loadStatus(), 1000);
+  } catch(e) {
+    showAlert('resize-result', 'Error: ' + e.message, 'error');
+  }
 }
 
 async function renderCollections(collections) {

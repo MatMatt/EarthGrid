@@ -549,6 +549,23 @@ def node_info_detail():
     }
 
 
+
+
+@app.post("/resize", dependencies=[Depends(_require_admin_auth)])
+async def resize_storage(size_gb: float = Query(..., gt=0)):
+    """Resize storage limit."""
+    old = settings.storage_limit_gb
+    settings.storage_limit_gb = size_gb
+    chunk_store.limit_gb = size_gb
+    # Update config.json if it exists
+    config_file = Path.home() / ".earthgrid" / "config.json"
+    if config_file.exists():
+        import json as _json
+        cfg = _json.loads(config_file.read_text())
+        cfg["storage_limit_gb"] = size_gb
+        config_file.write_text(_json.dumps(cfg, indent=2) + "\n")
+    return {"old_gb": old, "new_gb": size_gb, "status": "resized"}
+
 @app.get("/")
 def node_info(request: Request):
     """Root endpoint — openEO capabilities merged with EarthGrid node info.
