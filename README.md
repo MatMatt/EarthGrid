@@ -215,18 +215,40 @@ EarthGrid **redistributes** official data as-is (content-addressed, integrity-ve
 
 ## Quick Start
 
-### Docker *(coming soon)*
+### Docker
 
 ```bash
-docker run -d --name earthgrid \
-  -v ./earthgrid-data:/data \
-  -p 8400:8400 \
-  matmatt/earthgrid
+git clone https://github.com/MatMatt/EarthGrid.git
+cd EarthGrid
+pip install -e .
+earthgrid docker start --storage 100 --beacon --name my-node
 ```
 
-> ⚠️ Docker Hub image not yet published. For now, build from source (see below) or use `pip install`.
+The CLI generates `docker-compose.yml` automatically — no manual config needed. All data paths (`/data/`) are set correctly by default.
 
-No Python needed. No dependencies. Just Docker.
+```bash
+earthgrid docker start     # Build and start container
+earthgrid docker stop      # Stop container
+earthgrid docker status    # Show container status + config
+earthgrid docker logs      # Tail container logs
+earthgrid docker restart   # Regenerate compose + restart
+earthgrid docker update    # git pull + rebuild + restart
+```
+
+**Options:**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--storage <GB>` | Storage limit | 50 GB |
+| `--name <name>` | Node name | from config |
+| `--beacon` | Also act as beacon | no |
+| `--port <port>` | Port | 8400 |
+| `--public-url <url>` | Public URL (for beacon registration) | — |
+| `--beacon-url <url>` | Beacon to join | auto-discover |
+| `--data-dir <path>` | Host data directory | ~/.earthgrid/data |
+| `--no-build` | Skip docker build | — |
+
+Config is stored in `~/.earthgrid/docker-compose.yml`. Subsequent `docker update` reuses the existing config.
 
 ### pip *(coming soon)*
 
@@ -264,6 +286,17 @@ earthgrid start --beacon <url>           # Join specific beacon
 earthgrid status                         # Show storage usage
 earthgrid resize 100                     # Change storage limit to 100 GB
 earthgrid info                           # Show config
+```
+
+### Docker management
+
+```bash
+earthgrid docker start --storage 100 --beacon   # Build + start container
+earthgrid docker stop                            # Stop container
+earthgrid docker status                          # Show status + config
+earthgrid docker logs                            # Tail logs
+earthgrid docker restart                         # Regenerate + restart
+earthgrid docker update                          # Pull + rebuild + restart
 ```
 
 ### Data operations
