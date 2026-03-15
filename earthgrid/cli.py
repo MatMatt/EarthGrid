@@ -743,7 +743,7 @@ def _cmd_fetch(args):
         username = cfg.get("cdse_username", os.environ.get("EARTHGRID_CDSE_USERNAME", ""))
         password = cfg.get("cdse_password", os.environ.get("EARTHGRID_CDSE_PASSWORD", ""))
 
-    if not username or not password:
+    if (not username or not password) and getattr(args, 'source', 'cdse') != 'element84':
         print("⚠ CDSE credentials required for direct fetch from Copernicus.")
         print("  Register free at: https://dataspace.copernicus.eu")
         print("\n  Then add credentials:")
