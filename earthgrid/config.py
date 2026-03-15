@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     admin_key: str = ""  # required for destructive operations (delete)
     require_auth_read: bool = False  # if True, reads also need api_key
 
+    # --- Node Identity ---
+    identity_key_path: str = "./data/.node_key"
+
     # --- User Auth ---
     users_db: str = "./data/users.db"
 
