@@ -349,7 +349,7 @@ cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
     temporal_extent=["2026-03-01", "2026-03-12"],
     bands=["B04", "B08"])
-cube.ndvi(red="B04", nir="B08").download("ndvi.tif")
+cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")
 ```
 
 ```r
@@ -361,7 +361,8 @@ cube <- p$load_collection("sentinel-2-l2a",
     spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
     temporal_extent = c("2026-03-01", "2026-03-12"),
     bands = c("B04", "B08"))
-result <- p$ndvi(cube, red="B04", nir="B08")
+ndvi <- p$ndvi(cube, red="B04", nir="B08")
+result <- p$save_result(ndvi, format="GTiff")
 compute_result(result, "ndvi.tif")
 ```
 
