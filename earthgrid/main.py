@@ -127,6 +127,49 @@ set_gateway(openeo_gw)
 # Include openEO routers
 
 
+# --- Federation Key Exchange (auto-auth) ---
+@app.post("/federation/exchange-key")
+def federation_exchange_key(
+    request: Request,
+    body: dict = None,
+):
+    """Exchange API keys between nodes for automatic mutual authentication.
+
+    When a peer node calls this, it sends its node_name, node_id, and api_key.
+    We register it as a user and return our own key so the peer can do the same.
+    No admin key required — nodes authenticate each other directly.
+    """
+    if not body or "node_name" not in body or "api_key" not in body:
+        raise HTTPException(400, "Missing node_name or api_key")
+    peer_name = body["node_name"]
+    peer_id = body.get("node_id", "")
+    peer_key = body["api_key"]
+    # Register peer as a user (idempotent — skip if username exists)
+    try:
+        user_auth.create_user(
+            username=f"node:{peer_name}",
+            role="member",
+            node_origin=peer_name,
+        )
+    except ValueError:
+        pass  # already registered
+    # Update the key if it changed (peer may have rotated)
+    import sqlite3
+    with sqlite3.connect(user_auth.db_path) as conn:
+        conn.execute(
+            "UPDATE users SET api_key = ?, updated_at = ? WHERE username = ?",
+            (peer_key, __import__('time').time(), f"node:{peer_name}")
+        )
+    _audit("node_key_exchange", f"peer={peer_name} node_id={peer_id}",
+           ip=request.client.host if request.client else "")
+    # Return our key so the peer registers us too
+    return {
+        "node_name": settings.node_name,
+        "node_id": settings.node_id if hasattr(settings, 'node_id') else "",
+        "api_key": settings.api_key,
+    }
+
+
 # --- User Admin Endpoints ---
 @app.post("/admin/users")
 def admin_create_user(
@@ -785,7 +828,12 @@ def register_peer(url: str = Query(...), node_id: str = Query(""), node_name: st
 @app.post("/federation/sync")
 async def federation_sync():
     """Sync with all known peers."""
-    synced = await federation.sync_all()
+    synced = await federation.sync_all(
+        local_node_name=settings.node_name,
+        local_node_id=getattr(settings, 'node_id', ''),
+        local_api_key=settings.api_key,
+        user_auth=user_auth,
+    )
     return {
         "synced": len(synced),
         "peers": [{"url": p.url, "node_id": p.node_id, "alive": p.alive} for p in synced],
