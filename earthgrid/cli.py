@@ -127,7 +127,30 @@ def main():
     p_sync.add_argument("--max-items", type=int, default=0, help="Limit items to sync (0=all)")
     p_sync.add_argument("--dry-run", action="store_true", help="Only report what would be synced")
 
+
+    # --- Docker ---
+    p_docker = sub.add_parser("docker", help="Manage Docker deployment")
+    docker_sub = p_docker.add_subparsers(dest="docker_action")
+    p_dstart = docker_sub.add_parser("start", help="Build and start Docker container")
+    p_dstart.add_argument("--storage", type=float, default=None, help="Storage limit in GB")
+    p_dstart.add_argument("--name", default=None, help="Node name")
+    p_dstart.add_argument("--port", type=int, default=None, help="Port (default: 8400)")
+    p_dstart.add_argument("--beacon", action="store_true", default=None, help="Also act as beacon")
+    p_dstart.add_argument("--public-url", default=None, help="Public URL")
+    p_dstart.add_argument("--beacon-url", default=None, help="Beacon URL to join")
+    p_dstart.add_argument("--data-dir", default=None, help="Host data directory (default: ~/.earthgrid/data)")
+    p_dstart.add_argument("--no-build", action="store_true", help="Skip docker build")
+    docker_sub.add_parser("stop", help="Stop Docker container")
+    docker_sub.add_parser("status", help="Show Docker container status")
+    docker_sub.add_parser("logs", help="Show container logs")
+    docker_sub.add_parser("restart", help="Restart Docker container")
+
     args = parser.parse_args()
+
+
+    if args.command == "docker":
+        _cmd_docker(args)
+        return
 
     if args.command == "setup":
         _interactive_setup(args)
@@ -803,6 +826,160 @@ def _cmd_sync(args):
 
     if not args.dry_run and result['items_synced']:
         print(f"\n✅ Data replicated from {peer}")
+
+
+
+def _cmd_docker(args):
+    """Manage EarthGrid Docker deployment."""
+    import subprocess
+
+    compose_dir = Path.home() / ".earthgrid"
+    compose_file = compose_dir / "docker-compose.yml"
+    env_file = compose_dir / ".env"
+    project_root = Path(__file__).resolve().parent.parent
+
+    if args.docker_action in ("stop", "status", "logs", "restart"):
+        if not compose_file.exists():
+            print("No Docker deployment found. Run 'earthgrid docker start' first.")
+            sys.exit(1)
+
+    if args.docker_action == "stop":
+        subprocess.run(["docker", "compose", "-f", str(compose_file), "down"])
+        return
+
+    if args.docker_action == "status":
+        subprocess.run(["docker", "compose", "-f", str(compose_file), "ps"])
+        print()
+        # Show key config
+        if compose_file.exists():
+            import yaml
+            try:
+                import yaml as _y
+            except ImportError:
+                print(f"  Compose file: {compose_file}")
+                return
+            with open(compose_file) as f:
+                cfg = _y.safe_load(f)
+            env = cfg.get("services", {}).get("earthgrid", {}).get("environment", {})
+            if isinstance(env, list):
+                env = dict(e.split("=", 1) for e in env if "=" in e)
+            print(f"  Name:     {env.get('EARTHGRID_NODE_NAME', '?')}")
+            print(f"  Storage:  {env.get('EARTHGRID_STORAGE_LIMIT_GB', '?')} GB")
+            print(f"  Beacon:   {env.get('EARTHGRID_ALSO_BEACON', 'false')}")
+            print(f"  Compose:  {compose_file}")
+        return
+
+    if args.docker_action == "logs":
+        subprocess.run(["docker", "compose", "-f", str(compose_file), "logs", "-f", "--tail", "100"])
+        return
+
+    if args.docker_action in ("start", "restart"):
+        # Load existing config as defaults
+        cfg = _load_config()
+
+        # Resolve values: CLI flag > config.json > defaults
+        storage = args.storage if hasattr(args, 'storage') and args.storage is not None else cfg.get("storage_limit_gb", 50.0)
+        node_name = args.name if hasattr(args, 'name') and args.name is not None else cfg.get("node_name", "earthgrid-node")
+        port = args.port if hasattr(args, 'port') and args.port is not None else cfg.get("port", 8400)
+        also_beacon = args.beacon if hasattr(args, 'beacon') and args.beacon is not None else cfg.get("also_beacon", False)
+        public_url = args.public_url if hasattr(args, 'public_url') and args.public_url is not None else cfg.get("public_url", "")
+        beacon_url_val = args.beacon_url if hasattr(args, 'beacon_url') and args.beacon_url is not None else cfg.get("beacon_url", "")
+        data_dir = args.data_dir if hasattr(args, 'data_dir') and args.data_dir is not None else str(Path(cfg.get("store_path", str(Path.home() / ".earthgrid" / "data" / "store"))).parent)
+
+        # Ensure data_dir is absolute
+        data_dir = str(Path(data_dir).expanduser().resolve())
+
+        # Find Dockerfile — prefer project source tree, then installed package
+        dockerfile_dir = project_root / "docker"
+        if not (dockerfile_dir / "Dockerfile").exists():
+            dockerfile_dir = Path(__file__).resolve().parent.parent / "docker"
+        if not (dockerfile_dir / "Dockerfile").exists():
+            print("⚠ Cannot find Dockerfile. Ensure EarthGrid source is available.")
+            print(f"  Searched: {project_root / 'docker'}")
+            sys.exit(1)
+
+        # Generate docker-compose.yml
+        compose_dir.mkdir(parents=True, exist_ok=True)
+
+        environment = {
+            "EARTHGRID_NODE_NAME": node_name,
+            "EARTHGRID_PORT": str(port),
+            "EARTHGRID_STORAGE_LIMIT_GB": str(storage),
+            "EARTHGRID_ALSO_BEACON": str(also_beacon).lower(),
+            "EARTHGRID_STORE_PATH": "/data/store",
+            "EARTHGRID_CATALOG_PATH": "/data/catalog.db",
+            "EARTHGRID_SOURCE_USERS_DB": "/data/source_users.db",
+            "EARTHGRID_STATS_DB": "/data/stats.db",
+            "EARTHGRID_IDENTITY_KEY_PATH": "/data/.node_key",
+            "EARTHGRID_USERS_DB": "/data/users.db",
+        }
+        if also_beacon:
+            environment["EARTHGRID_BEACON_DB"] = "/data/beacon.db"
+        if public_url:
+            environment["EARTHGRID_PUBLIC_URL"] = public_url
+        if beacon_url_val:
+            environment["EARTHGRID_BEACON_URL"] = beacon_url_val
+
+        env_lines = [f"      - {k}={v}" for k, v in environment.items()]
+        env_block = "\n".join(env_lines)
+
+        compose_content = f"""services:
+  earthgrid:
+    build:
+      context: {project_root}
+      dockerfile: docker/Dockerfile
+    container_name: earthgrid
+    ports:
+      - "{port}:{port}"
+    volumes:
+      - {data_dir}:/data
+    environment:
+{env_block}
+    env_file:
+      - .env
+    restart: unless-stopped
+    cpu_shares: 128
+    mem_limit: 2g
+    oom_score_adj: 500
+"""
+
+        compose_file.write_text(compose_content)
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
+
+        print(f"🐳 EarthGrid Docker")
+        print(f"   Name:     {node_name}")
+        print(f"   Storage:  {storage} GB")
+        print(f"   Port:     {port}")
+        print(f"   Beacon:   {'yes' if also_beacon else 'no'}")
+        print(f"   Data:     {data_dir}")
+        if public_url:
+            print(f"   URL:      {public_url}")
+        print(f"   Compose:  {compose_file}")
+        print()
+
+        build_flag = [] if (hasattr(args, 'no_build') and args.no_build) else ["--build"]
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(compose_file), "up", "-d"] + build_flag,
+            cwd=str(compose_dir),
+        )
+        if result.returncode == 0:
+            print(f"\n✅ EarthGrid running in Docker")
+            print(f"   Stop:     earthgrid docker stop")
+            print(f"   Logs:     earthgrid docker logs")
+            print(f"   Status:   earthgrid docker status")
+        else:
+            print(f"\n⚠ Docker failed (exit {result.returncode})")
+            sys.exit(1)
+        return
+
+    # No subcommand
+    print("Usage: earthgrid docker [start|stop|status|logs|restart]")
+    print()
+    print("  start    Build and start Docker container")
+    print("  stop     Stop Docker container")
+    print("  status   Show container status")
+    print("  logs     Show container logs")
+    print("  restart  Restart container (regenerates compose)")
 
 
 def _interactive_setup(args):
