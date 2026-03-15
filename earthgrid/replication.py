@@ -123,7 +123,7 @@ class Replicator:
                     item_id = item_data["id"]
                     # Support both band-level (dict) and legacy (list) chunk formats
                     raw_hashes = item_data.get("earthgrid:chunk_hashes",
-                                   feat.get("properties", {}).get("earthgrid:chunk_hashes", {}))
+                                   item_data.get("properties", {}).get("earthgrid:chunk_hashes", {}))
                     if isinstance(raw_hashes, dict):
                         chunk_hashes = [h for band_h in raw_hashes.values() for h in band_h]
                     else:
