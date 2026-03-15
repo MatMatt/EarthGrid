@@ -46,7 +46,11 @@ class Settings(BaseSettings):
     # --- Beacon ---
     beacon_db: str = "./data/beacon.db"
 
-    model_config = {"env_prefix": "EARTHGRID_", "env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_prefix": "EARTHGRID_",
+        "env_file": [".env", str(Path.home() / ".earthgrid" / ".env")],
+        "env_file_encoding": "utf-8",
+    }
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
