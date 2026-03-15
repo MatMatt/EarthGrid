@@ -147,7 +147,9 @@ For users without their own node, admins can manually create accounts (see below
 
 **How it works:**
 
-1. Node admin creates a user:
+- **Node operators**: Authentication is automatic. When your node joins the network via federation, it exchanges Ed25519-signed keys with other nodes. No setup needed — start your node and you can process data on any peer.
+
+- **Users without a node** (e.g. researchers): A node admin can manually create an account:
 ```bash
 curl -X POST http://localhost:8400/admin/users \
   -H "X-API-Key: $ADMIN_KEY" \
@@ -156,7 +158,7 @@ curl -X POST http://localhost:8400/admin/users \
 # → Returns: {"user_id": "...", "username": "alice", "api_key": "YOUR_KEY", ...}
 ```
 
-2. User authenticates via openEO clients:
+Then authenticate via openEO:
 ```python
 # Python
 import openeo
@@ -170,8 +172,6 @@ library(openeo)
 con <- connect("https://your-node.example.com/earthgrid")
 login(con, login_type = "basic", user = "alice", password = "YOUR_KEY")
 ```
-
-3. User keys sync automatically between federated nodes — register once, use everywhere.
 
 **Admin endpoints:**
 
