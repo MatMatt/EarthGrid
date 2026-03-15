@@ -83,6 +83,90 @@ async def search_element84(
     return results
 
 
+
+
+async def _delegate_fetch_to_grid(
+    bbox: tuple[float, float, float, float],
+    start_date: str | None,
+    end_date: str | None,
+    cloud_cover: float,
+    bands: list[str] | None,
+    limit: int,
+    collection: str,
+    exclude_node: str | None = None,
+) -> list[dict]:
+    """When local storage is full, ask beacon for nodes with space and delegate."""
+    from . import _FALLBACK_BEACON
+    import json
+    
+    beacon_url = _FALLBACK_BEACON
+    
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Ask beacon for nodes with available storage
+        try:
+            resp = await client.get(f"{beacon_url}/nodes")
+            nodes = resp.json().get("nodes", [])
+        except Exception as e:
+            logger.error(f"Cannot reach beacon for delegation: {e}")
+            return [{"error": f"Grid delegation failed: {e}"}]
+        
+        # Find nodes with storage headroom (< 80% used)
+        candidates = []
+        for n in nodes:
+            if n.get("node_id") == exclude_node:
+                continue
+            used_pct = n.get("storage_used_pct", 100)
+            if used_pct < 80:
+                candidates.append(n)
+        
+        if not candidates:
+            logger.warning("No nodes with available storage in the grid")
+            return [{"error": "No nodes with available storage — grid is full"}]
+        
+        # Sort by most free space
+        candidates.sort(key=lambda n: n.get("storage_used_pct", 100))
+        target = candidates[0]
+        target_url = target.get("url", "")
+        
+        logger.info(f"Delegating fetch to {target.get('node_name', target_url)} ({target.get('storage_used_pct', '?')}% used)")
+        print(f"  \U0001f4e1 Local storage full — delegating to {target.get('node_name', target_url)}...")
+        
+        # Send fetch request to remote node
+        try:
+            bbox_str = ",".join(str(x) for x in bbox)
+            params = {
+                "bbox": bbox_str,
+                "cloud": cloud_cover,
+                "limit": limit,
+                "source": "element84",
+                "collection": collection,
+            }
+            if start_date:
+                params["start"] = start_date
+            if end_date:
+                params["end"] = end_date
+            if bands:
+                params["bands"] = ",".join(bands)
+            
+            # Use admin key if available
+            headers = {}
+            admin_key = target.get("admin_key", "")
+            if admin_key:
+                headers["Authorization"] = f"Bearer {admin_key}"
+            
+            resp = await client.post(
+                f"{target_url}/fetch",
+                params=params,
+                headers=headers,
+                timeout=300,
+            )
+            result = resp.json()
+            print(f"  \u2705 Remote node ingested {result.get('ingested', 0)} bands")
+            return result.get("details", [{"status": "delegated", "node": target_url}])
+        except Exception as e:
+            logger.error(f"Delegation to {target_url} failed: {e}")
+            return [{"error": f"Delegation failed: {e}", "node": target_url}]
+
 async def fetch_and_ingest_element84(
     chunk_store,
     catalog,
@@ -157,6 +241,20 @@ async def fetch_and_ingest_element84(
                     finally:
                         tmp_path.unlink(missing_ok=True)
                 except Exception as e:
+                    if "Storage limit" in str(e):
+                        print(f"  \u26a0 Storage full — delegating remaining items to grid...")
+                        # Delegate the rest to another node
+                        delegated = await _delegate_fetch_to_grid(
+                            bbox=bbox,
+                            start_date=start_date,
+                            end_date=end_date,
+                            cloud_cover=cloud_cover,
+                            bands=bands,
+                            limit=limit,
+                            collection=earthgrid_collection,
+                        )
+                        results.extend(delegated)
+                        return results  # Stop local fetching
                     logger.error(f"Failed {band_name} from {item['id']}: {e}")
                     results.append({"error": str(e), "product": item["id"], "band": band_name})
 

@@ -666,6 +666,45 @@ def _redundancy_index() -> float:
         return 1.0
 
 
+
+@app.post("/fetch", dependencies=[Depends(_require_admin_auth)])
+async def remote_fetch(
+    bbox: str = Query(...),
+    start: str = Query(None),
+    end: str = Query(None),
+    cloud: float = Query(30.0),
+    bands: str = Query(None),
+    limit: int = Query(5),
+    source: str = Query("element84"),
+    collection: str = Query("sentinel-2-l2a"),
+):
+    """Accept a fetch request from a remote node (grid delegation)."""
+    from .element84 import fetch_and_ingest_element84
+    
+    bbox_list = [float(x) for x in bbox.split(",")]
+    band_list = [b.strip() for b in bands.split(",")] if bands else None
+    
+    results = await fetch_and_ingest_element84(
+        chunk_store=app.state.chunk_store,
+        catalog=app.state.catalog,
+        bbox=bbox_list,
+        start_date=start,
+        end_date=end,
+        cloud_cover=cloud,
+        bands=band_list,
+        limit=limit,
+        earthgrid_collection=collection,
+    )
+    
+    ingested = [r for r in results if r.get("item_id") and not r.get("skipped")]
+    errors = [r for r in results if r.get("error")]
+    return {
+        "status": "ok",
+        "ingested": len(ingested),
+        "errors": len(errors),
+        "details": results,
+    }
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
