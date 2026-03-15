@@ -66,6 +66,12 @@ def _audit(action: str, detail: str = "", ip: str = "", success: bool = True):
     except Exception:
         pass
 
+
+def _is_local_ip(ip: str) -> bool:
+    """Check if IP is localhost or Docker bridge."""
+    return ip in ("127.0.0.1", "::1", "localhost") or ip.startswith("172.")
+
+
 def _require_write_auth(request: Request, x_api_key: str = Depends(_api_key_header)):
     """Require API key for write operations. Localhost is always allowed."""
     if request.client and _is_local_ip(request.client.host):

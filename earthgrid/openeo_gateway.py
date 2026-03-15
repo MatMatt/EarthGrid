@@ -31,6 +31,12 @@ router = APIRouter(prefix="/openeo", tags=["openeo-legacy"])
 # New root-level router — openEO API v1.2.0
 
 # --- Auth: API key for processing endpoints ---
+
+def _is_local(ip: str) -> bool:
+    """Check if IP is localhost or Docker bridge."""
+    return ip in ("127.0.0.1", "::1", "localhost") or ip.startswith("172.")
+
+
 async def _require_api_key(
     request: Request = None,
     authorization: str | None = Header(None),
