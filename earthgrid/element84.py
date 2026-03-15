@@ -30,10 +30,12 @@ async def search_element84(
     collection: str = "sentinel-2-l2a",
 ) -> list[dict]:
     """Search Element84 STAC for items."""
+    max_per_page = 100
+    target = limit if limit > 0 else 10000  # 0 = fetch all (up to 10k)
     body = {
         "collections": [collection],
         "bbox": list(bbox),
-        "limit": min(limit, 100),
+        "limit": min(target, max_per_page),
         "query": {"eo:cloud_cover": {"lte": cloud_cover}},
         "sortby": [{"field": "properties.datetime", "direction": "desc"}],
     }
@@ -42,12 +44,30 @@ async def search_element84(
         end = end_date or "2099-12-31"
         body["datetime"] = f"{start}T00:00:00Z/{end}T23:59:59Z"
 
+    items = []
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(f"{STAC_API}/search", json=body)
-        resp.raise_for_status()
-        data = resp.json()
-
-    items = data.get("features", [])
+        while len(items) < target:
+            body["limit"] = min(target - len(items), max_per_page)
+            resp = await client.post(f"{STAC_API}/search", json=body)
+            resp.raise_for_status()
+            data = resp.json()
+            page = data.get("features", [])
+            if not page:
+                break
+            items.extend(page)
+            # Check for next page link
+            next_link = None
+            for link in data.get("links", []):
+                if link.get("rel") == "next":
+                    next_link = link.get("body") or link.get("href")
+                    break
+            if not next_link or len(page) < body["limit"]:
+                break
+            # For POST-based pagination, merge next token
+            if isinstance(next_link, dict):
+                body.update(next_link)
+            else:
+                break
     results = []
     for item in items:
         props = item.get("properties", {})
