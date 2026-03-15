@@ -208,6 +208,10 @@ async def _ingest_item_locally(
                 finally:
                     tmp_path.unlink(missing_ok=True)
             except Exception as e:
+                if "Storage limit" in str(e):
+                    logger.warning(f"Storage full during {item['id']}/{band_name}")
+                    results.append({"error": str(e), "product": item["id"], "band": band_name, "storage_full": True})
+                    return results  # Stop — no point trying more bands
                 logger.error(f"Failed {band_name} from {item['id']}: {e}")
                 results.append({"error": str(e), "product": item["id"], "band": band_name})
 
@@ -265,6 +269,13 @@ async def fetch_and_ingest_element84(
 
         nodes = await _get_grid_nodes(beacon_url, node_id)
 
+    # Filter out full nodes (< 0.5 GB free)
+    if nodes:
+        full = [n for n in nodes if n["free_gb"] < 0.5]
+        nodes = [n for n in nodes if n["free_gb"] >= 0.5]
+        if full:
+            print(f"  \u26a0\ufe0f  Skipping {len(full)} full node(s): {', '.join(n['node_name'] for n in full)}")
+
     # If we have multiple nodes, distribute items across them
     if len(nodes) > 1 and distribute:
         total_free = sum(n["free_gb"] for n in nodes)
@@ -294,11 +305,26 @@ async def fetch_and_ingest_element84(
             node_results = []
             if node["is_local"]:
                 print(f"\n\U0001f4e6 Local ({node['node_name']}): {len(node_items)} items")
-                for item in node_items:
+                remaining = list(node_items)
+                while remaining:
+                    item = remaining.pop(0)
                     date_str = item["date"][:10] if item["date"] else "?"
                     cc = item["cloud_cover"]
                     print(f"  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
                     r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
+                    if any(x.get("storage_full") for x in r if isinstance(x, dict)):
+                        # Re-delegate this + remaining items to remote nodes
+                        overflow = [item] + remaining
+                        remote_nodes = [n for n in nodes if not n["is_local"] and n["free_gb"] >= 0.5]
+                        if remote_nodes:
+                            print(f"  \u26a0\ufe0f  Local storage full — re-delegating {len(overflow)} items to {remote_nodes[0]['node_name']}")
+                            for ov_item in overflow:
+                                ov_r = await _delegate_item_to_node(remote_nodes[0], ov_item, target_bands, earthgrid_collection, cloud_cover)
+                                node_results.extend(ov_r)
+                        else:
+                            print(f"  \u274c No remote nodes available for overflow!")
+                            node_results.extend(r)
+                        break
                     node_results.extend(r)
             else:
                 print(f"\n\U0001f4e1 Remote ({node['node_name']}): {len(node_items)} items")
