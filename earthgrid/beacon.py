@@ -249,6 +249,7 @@ class BeaconRegistry:
                     self._websockets[node_id] = websocket
                     existing.websocket = websocket
                 existing.last_seen = time.time()
+                existing.node_name = node_name
                 if url:
                     existing.url = url
                 if collections is not None:
