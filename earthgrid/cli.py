@@ -931,6 +931,124 @@ def _cmd_admin(args):
     db.close()
 
 
+
+def _cmd_verify(args):
+    """Verify chunk integrity — detect and optionally heal corrupted data."""
+    import hashlib
+    import asyncio
+    from .chunk_store import ChunkStore
+    from .catalog import Catalog
+
+    cfg = _load_config()
+    store_path = Path(cfg.get("store_path", "./data/store"))
+    catalog_path = Path(cfg.get("catalog_path", "./data/catalog.db"))
+
+    cs = ChunkStore(store_path, limit_gb=cfg.get("storage_limit_gb", 50.0))
+    cat = Catalog(catalog_path)
+
+    print("\U0001f50d Verifying chunk integrity...\n")
+
+    items = cat.list_items(collection=args.collection if args.collection else None)
+    if not items:
+        print("No items in catalog.")
+        return
+
+    total_chunks = 0
+    corrupt_chunks = 0
+    missing_chunks = 0
+    corrupt_items = {}
+
+    for item in items:
+        hashes = item.chunk_hashes
+        if isinstance(hashes, dict):
+            all_shas = []
+            for band_shas in hashes.values():
+                all_shas.extend(band_shas)
+        elif isinstance(hashes, list):
+            all_shas = hashes
+        else:
+            continue
+
+        item_bad = []
+        for sha in all_shas:
+            total_chunks += 1
+            data = cs.get(sha)
+            if data is None:
+                missing_chunks += 1
+                item_bad.append(sha)
+                if args.verbose:
+                    print(f"  \u274c MISSING  {sha[:16]}... ({item.id})")
+            else:
+                actual = hashlib.sha256(data).hexdigest()
+                if actual != sha:
+                    corrupt_chunks += 1
+                    item_bad.append(sha)
+                    if args.verbose:
+                        print(f"  \u26a0\ufe0f  CORRUPT {sha[:16]}... ({item.id})")
+                elif args.verbose:
+                    print(f"  \u2705 OK      {sha[:16]}...")
+
+        if item_bad:
+            corrupt_items[item.id] = {
+                "bad_chunks": item_bad,
+                "collection": item.collection,
+                "bbox": item.bbox,
+                "properties": item.properties,
+            }
+
+    ok = total_chunks - corrupt_chunks - missing_chunks
+    print(f"\n\U0001f4ca Results:")
+    print(f"  Total chunks:   {total_chunks}")
+    print(f"  \u2705 OK:           {ok}")
+    print(f"  \u26a0\ufe0f  Corrupt:      {corrupt_chunks}")
+    print(f"  \u274c Missing:      {missing_chunks}")
+    print(f"  Items affected: {len(corrupt_items)}")
+
+    if not corrupt_items:
+        print("\n\u2705 All chunks verified — no corruption detected!")
+        return
+
+    if args.delete_corrupt or args.heal:
+        print(f"\n\U0001f5d1\ufe0f  Deleting {corrupt_chunks + missing_chunks} bad chunks...")
+        for item_id, info in corrupt_items.items():
+            for sha in info["bad_chunks"]:
+                cs.delete(sha)
+            cat.delete_item(item_id)
+            print(f"  Removed: {item_id}")
+
+    if args.heal:
+        print(f"\n\U0001f504 Healing — re-downloading {len(corrupt_items)} items...")
+        from .element84 import fetch_and_ingest_element84
+
+        for item_id, info in corrupt_items.items():
+            bbox = tuple(info["bbox"])
+            dt = info["properties"].get("datetime", "")[:10]
+            collection = info["collection"]
+
+            print(f"\n  \U0001f4e1 Re-fetching {item_id} ({dt})...")
+            try:
+                results = asyncio.run(fetch_and_ingest_element84(
+                    chunk_store=cs,
+                    catalog=cat,
+                    bbox=bbox,
+                    start_date=dt,
+                    end_date=dt,
+                    limit=1,
+                    earthgrid_collection=collection,
+                ))
+                ingested = [r for r in results if r.get("item_id") and not r.get("skipped")]
+                if ingested:
+                    print(f"  \u2705 Healed {len(ingested)} bands")
+                else:
+                    print(f"  \u26a0\ufe0f  Could not re-download {item_id}")
+            except Exception as e:
+                print(f"  \u274c Heal failed for {item_id}: {e}")
+
+        print(f"\n\u2705 Heal complete!")
+    elif corrupt_items and not args.delete_corrupt:
+        print(f"\n\U0001f4a1 Run with --heal to re-download, or --delete-corrupt to just remove bad data")
+
+
 def _cmd_docker(args):
     """Manage EarthGrid Docker deployment."""
     import subprocess
