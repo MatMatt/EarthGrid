@@ -88,7 +88,6 @@ New nodes discover the network via a seed list hosted on GitHub Pages:
 | Ingest new data | API key | Prevents unauthorized writes |
 | Run processing (NDVI etc.) | Per-user API key | Only authenticated nodes/users can process |
 | Manage source accounts (CDSE etc.) | **CLI only** (no network access) | Provider credentials never leave the node |
-| EarthGrid user management | Admin API key | Only node admins can create/delete EarthGrid users |
 
 ### Source Account Credentials (CDSE, WEkEO, etc.)
 
@@ -141,9 +140,7 @@ Node A                            Node B
 
 
 
-**Roles:**
-- **admin** — Can create/delete users + process data
-- **member** — Can process data
+
 
 **How it works:**
 
@@ -154,27 +151,15 @@ Connect to your own node — your API key is in `docker-compose.yml` (`EARTHGRID
 # Python
 import openeo
 conn = openeo.connect("http://localhost:8400")
-conn.authenticate_basic("me", "YOUR_API_KEY")
+conn.authenticate_basic("me", "YOUR_API_KEY")  # EARTHGRID_API_KEY from docker-compose.yml
 ```
 
 ```r
 # R
 library(openeo)
 con <- connect("http://localhost:8400")
-login(con, login_type = "basic", user = "me", password = "YOUR_API_KEY")
+login(con, login_type = "basic", user = "me", password = "YOUR_API_KEY")  # from docker-compose.yml
 ```
-
-**Admin endpoints:**
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/admin/users` | POST | Create user (requires admin key) |
-| `/admin/users` | GET | List all users (requires admin key) |
-| `/admin/users/{id}` | DELETE | Deactivate user (requires admin key) |
-| `/federation/users` | GET | Export users for federation sync |
-| `/federation/users` | POST | Import users from another node |
-
-An **admin user is auto-created** on first start — the API key is printed to the container logs once. Save it!
 
 ### Built-in protections
 
@@ -432,15 +417,7 @@ Processing results are **ephemeral** — computed on-the-fly and returned direct
 | `GET /credentials/basic` | Basic auth | Validate user, get bearer token |
 | `GET /me` | Bearer token | Current user info |
 
-### Admin endpoints (admin key required)
 
-| Endpoint | Auth | Description |
-|---|---|---|
-| `POST /admin/users` | Admin key | Create user |
-| `GET /admin/users` | Admin key | List users |
-| `DELETE /admin/users/{id}` | Admin key | Deactivate user |
-| `GET /federation/users` | Write key | Export users for sync |
-| `POST /federation/users` | Write key | Import users from peer |
 
 ### Beacon endpoints
 
