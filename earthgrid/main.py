@@ -291,9 +291,10 @@ async def _register_with_beacon():
 
 
 async def _beacon_heartbeat_loop():
-    """Send periodic heartbeats to the beacon."""
+    """Send periodic heartbeats to the beacon and discover peers."""
     if not settings.beacon_url:
         return
+    log = logging.getLogger("earthgrid")
     while True:
         await asyncio.sleep(60)  # every 60s
         try:
@@ -320,6 +321,39 @@ async def _beacon_heartbeat_loop():
                         )
                 except Exception:
                     pass  # non-critical
+
+                # --- Auto Peer Discovery from Beacon ---
+                try:
+                    resp = await client.get(
+                        f"{settings.beacon_url.rstrip('/')}/nodes",
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        nodes = resp.json().get("nodes", [])
+                        discovered = 0
+                        for node in nodes:
+                            peer_url = node.get("url", "")
+                            peer_id = node.get("node_id", "")
+                            peer_name = node.get("node_name", "")
+                            # Skip self
+                            if peer_id == settings.node_id or not peer_url:
+                                continue
+                            # Skip beacon itself if it matches our beacon_url
+                            if peer_url.rstrip("/") == settings.beacon_url.rstrip("/"):
+                                continue
+                            # Add/update peer in federation
+                            peer = federation.add_peer(
+                                url=peer_url,
+                                node_id=peer_id,
+                                node_name=peer_name,
+                            )
+                            peer.collections = node.get("collections", [])
+                            peer.item_count = node.get("item_count", 0)
+                            discovered += 1
+                        if discovered > 0:
+                            log.info(f"Peer discovery: {discovered} peers from beacon")
+                except Exception:
+                    pass  # beacon may not support /nodes yet
         except Exception:
             pass
 
@@ -372,9 +406,44 @@ async def _beacon_heartbeat_loop():
 # 
 # 
 
+async def _discover_peers_from_beacon():
+    """Query beacon for other nodes and add them as peers."""
+    if not settings.beacon_url:
+        return
+    log = logging.getLogger("earthgrid")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{settings.beacon_url.rstrip('/')}/nodes",
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                nodes = resp.json().get("nodes", [])
+                discovered = 0
+                for node in nodes:
+                    peer_url = node.get("url", "")
+                    peer_id = node.get("node_id", "")
+                    peer_name = node.get("node_name", "")
+                    if peer_id == settings.node_id or not peer_url:
+                        continue
+                    if peer_url.rstrip("/") == settings.beacon_url.rstrip("/"):
+                        continue
+                    peer = federation.add_peer(
+                        url=peer_url, node_id=peer_id, node_name=peer_name,
+                    )
+                    peer.collections = node.get("collections", [])
+                    peer.item_count = node.get("item_count", 0)
+                    discovered += 1
+                if discovered > 0:
+                    log.info(f"Startup peer discovery: {discovered} peers from beacon")
+    except Exception as e:
+        log.debug(f"Peer discovery failed: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     await _register_with_beacon()
+    await _discover_peers_from_beacon()
     asyncio.create_task(_beacon_heartbeat_loop())
     # Auto-replication disabled — manual sync via CLI until network grows
 
