@@ -107,6 +107,7 @@ def main():
     p_fetch.add_argument("--collection", default="sentinel-2-l2a", help="EarthGrid collection name")
     p_fetch.add_argument("--search-only", action="store_true", help="Only search, don't download")
     p_fetch.add_argument("--source", default="element84", choices=["cdse", "element84"], help="Data source (default: cdse)")
+    p_fetch.add_argument("--no-distribute", action="store_true", help="Ingest locally only, don't distribute across grid")
 
     # --- Users (local credential management) ---
     p_sources = sub.add_parser("sources", help="Manage data source credentials (CDSE, Element84, etc.)")
@@ -789,6 +790,7 @@ def _cmd_fetch(args):
             print(f"  Tip: use --limit 0 for all available products")
         else:
             print(f"Fetching from Element84 (bbox={args.bbox}, cloud2264{args.cloud}%, no limit)...")
+        distribute = not getattr(args, 'no_distribute', False)
         results = asyncio.run(fetch_and_ingest_element84(
             chunk_store=cs,
             catalog=cat,
@@ -799,6 +801,7 @@ def _cmd_fetch(args):
             bands=band_list,
             limit=args.limit,
             earthgrid_collection=args.collection,
+            distribute=distribute,
         ))
     else:
         print(f"Fetching from CDSE (bbox={args.bbox}, cloud≤{args.cloud}%)...")
