@@ -8,3 +8,5 @@ build/
 
 .env
 earthgrid-core/target/
+
+docker/.env
