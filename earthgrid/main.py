@@ -469,6 +469,9 @@ async def startup():
                 chunks_bytes=chunk_store.total_bytes,
                 can_source=source_user_mgr.list_users() != [],
             )
+            _self_node = registry.nodes.get(settings.node_id)
+            if _self_node:
+                _self_node.storage_limit_gb = settings.storage_limit_gb
         except Exception as e:
             logger.warning(f"Self-registration with local beacon failed: {e}")
         if settings.beacon_peers:
