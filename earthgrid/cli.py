@@ -146,8 +146,20 @@ def main():
     docker_sub.add_parser("restart", help="Restart Docker container")
     docker_sub.add_parser("update", help="Pull latest code, rebuild and restart")
 
+
+    # --- Admin ---
+    p_admin = sub.add_parser("admin", help="Admin key management")
+    admin_sub = p_admin.add_subparsers(dest="admin_action")
+    admin_sub.add_parser("show-key", help="Show current admin API key")
+    admin_sub.add_parser("renew-key", help="Generate a new admin API key")
+
     args = parser.parse_args()
 
+
+
+    if args.command == "admin":
+        _cmd_admin(args)
+        return
 
     if args.command == "docker":
         _cmd_docker(args)
@@ -828,6 +840,59 @@ def _cmd_sync(args):
     if not args.dry_run and result['items_synced']:
         print(f"\n✅ Data replicated from {peer}")
 
+
+
+
+def _cmd_admin(args):
+    """Manage admin credentials."""
+    import sqlite3, secrets, hashlib
+
+    cfg = _load_config()
+    # Find users.db
+    db_path = cfg.get("users_db", None)
+    if not db_path:
+        # Try common locations
+        for p in [
+            Path.home() / ".earthgrid" / "data" / "users.db",
+            Path("./data/users.db"),
+            Path.home() / "EarthGrid" / "data" / "users.db",
+        ]:
+            if p.exists():
+                db_path = str(p)
+                break
+    if not db_path or not Path(db_path).exists():
+        print("No users.db found. Is EarthGrid set up?")
+        sys.exit(1)
+
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+
+    if args.admin_action == "show-key":
+        row = db.execute("SELECT api_key, username FROM users WHERE role='admin' LIMIT 1").fetchone()
+        if not row:
+            print("No admin user found.")
+            sys.exit(1)
+        print(f"Admin user: {row['username']}")
+        print(f"API key:    {row['api_key']}")
+
+    elif args.admin_action == "renew-key":
+        import base64
+        new_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+        row = db.execute("SELECT user_id, username FROM users WHERE role='admin' LIMIT 1").fetchone()
+        if not row:
+            print("No admin user found.")
+            sys.exit(1)
+        db.execute("UPDATE users SET api_key=?, updated_at=? WHERE user_id=?",
+                   (new_key, __import__('time').time(), row['user_id']))
+        db.commit()
+        print(f"Admin user: {row['username']}")
+        print(f"New API key: {new_key}")
+        print("\n⚠ Old key is now invalid. Update your .env if needed.")
+
+    else:
+        print("Usage: earthgrid admin [show-key|renew-key]")
+
+    db.close()
 
 
 def _cmd_docker(args):
