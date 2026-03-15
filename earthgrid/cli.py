@@ -215,10 +215,14 @@ def main():
             if not args.beacon_peers:
                 settings.beacon_peers = cfg.get("beacon_peers", [])
 
-        settings.node_name = args.name
-        settings.beacon_url = args.beacon
-        settings.public_url = args.public_url
-        settings.also_beacon = args.also_beacon
+        if args.name and args.name != "earthgrid-node":
+            settings.node_name = args.name
+        if args.beacon:
+            settings.beacon_url = args.beacon
+        if args.public_url:
+            settings.public_url = args.public_url
+        if args.also_beacon:
+            settings.also_beacon = args.also_beacon
         if args.peers:
             settings.peers = args.peers
         if args.beacon_peers:
