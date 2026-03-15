@@ -28,6 +28,9 @@ S2_BANDS_20M = ["B05", "B06", "B07", "B8A", "B11", "B12", "SCL"]
 S2_BANDS_60M = ["B01", "B09"]
 S2_ALL_BANDS = S2_BANDS_10M + S2_BANDS_20M + S2_BANDS_60M
 
+# Files to skip during ingest (preview images, quality masks with odd dimensions)
+S2_SKIP_FILES = {"PVI", "preview", "qi"}  # Preview Vegetation Index, preview images, quality indicators
+
 
 class CDSEClient:
     """Client for CDSE OData API."""
@@ -233,6 +236,20 @@ class CDSEClient:
         # Try band-level download via Nodes API
         try:
             all_nodes = await self._list_product_nodes(product_id)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                # Token may have expired — force refresh and retry once
+                logger.info("CDSE token expired, refreshing...")
+                self._token = ""
+                self._token_expires = 0
+                try:
+                    all_nodes = await self._list_product_nodes(product_id)
+                except Exception as e2:
+                    logger.warning(f"Nodes API failed after token refresh ({e2}), falling back to ZIP")
+                    all_nodes = []
+            else:
+                logger.warning(f"Nodes API failed ({e}), falling back to full ZIP download")
+                all_nodes = []
         except Exception as e:
             logger.warning(f"Nodes API failed ({e}), falling back to full ZIP download")
             all_nodes = []
@@ -253,6 +270,12 @@ class CDSEClient:
                 ]
             if not matching:
                 matching = all_nodes  # download all if no match
+
+            # Filter out preview/quality files that cause ingest errors
+            matching = [
+                n for n in matching
+                if not any(skip in Path(n["name"]).stem.upper() for skip in {"PVI", "PREVIEW"})
+            ]
 
             logger.info(f"Downloading {len(matching)} band files for {product_id} "
                         f"(of {len(all_nodes)} total files)")
@@ -309,6 +332,9 @@ class CDSEClient:
                 if not name.endswith((".jp2", ".tif", ".tiff")):
                     continue
                 fname_upper = Path(name).stem.upper()
+                # Skip preview/quality files that cause ingest errors
+                if any(skip in fname_upper for skip in ("PVI", "PREVIEW")):
+                    continue
                 if bands:
                     if not any(b.upper() in fname_upper for b in bands):
                         continue
@@ -377,7 +403,23 @@ async def fetch_and_ingest(
                         import rasterio
                         with rasterio.open(fpath) as src:
                             profile = src.profile.copy()
-                            profile.update(driver="GTiff", compress="lzw", tiled=True)
+                            # COG requires block sizes that are multiples of 16
+                            w, h = src.width, src.height
+                            blockxsize = min(512, w) if w >= 16 else w
+                            blockysize = min(512, h) if h >= 16 else h
+                            # Round down to multiple of 16 for tiled mode
+                            if blockxsize >= 16 and blockysize >= 16:
+                                blockxsize = (blockxsize // 16) * 16
+                                blockysize = (blockysize // 16) * 16
+                                profile.update(driver="GTiff", compress="lzw",
+                                               tiled=True, blockxsize=blockxsize,
+                                               blockysize=blockysize)
+                            else:
+                                # Too small for tiling — use stripped GeoTIFF
+                                profile.update(driver="GTiff", compress="lzw",
+                                               tiled=False)
+                                profile.pop("blockxsize", None)
+                                profile.pop("blockysize", None)
                             with rasterio.open(tif_path, "w", **profile) as dst:
                                 for band_i in range(1, src.count + 1):
                                     dst.write(src.read(band_i), band_i)
