@@ -483,6 +483,7 @@ async function loadStatus() {
 
     // Storage
     renderStorageInfo(info);
+    renderSystemInfo(info.system);
 
     // Collections
     await renderCollections(info.collections);
@@ -566,6 +567,33 @@ async function resizeStorage() {
   } catch(e) {
     showAlert('resize-result', 'Error: ' + e.message, 'error');
   }
+}
+
+function renderSystemInfo(sys) {
+  if (!sys) { setHtml('system-info', ''); return; }
+  const cpuPct = sys.cpu_pct || 0;
+  const cpuClass = cpuPct > 90 ? 'danger' : cpuPct > 70 ? 'warn' : '';
+  const memPct = sys.mem_pct || 0;
+  const memClass = memPct > 90 ? 'danger' : memPct > 70 ? 'warn' : '';
+  const upH = sys.uptime_seconds ? Math.floor(sys.uptime_seconds / 3600) : 0;
+  const upD = Math.floor(upH / 24);
+  const upStr = upD > 0 ? upD + 'd ' + (upH % 24) + 'h' : upH + 'h';
+
+  let html = `
+    <div class="kv"><span class="kv-key">CPU</span><span class="kv-val">${cpuPct}% (${sys.cpu_count || '?'} cores)</span></div>
+    <div class="progress-wrap" style="margin:6px 0 10px">
+      <div class="progress-bar"><div class="progress-fill ${cpuClass}" style="width:${Math.min(cpuPct,100)}%"></div></div>
+    </div>
+    <div class="kv"><span class="kv-key">Load</span><span class="kv-val">${(sys.load_avg || []).join(' / ')}</span></div>`;
+  if (sys.mem_total) {
+    html += `
+    <div class="kv" style="margin-top:8px"><span class="kv-key">Memory</span><span class="kv-val">${fmt_bytes(sys.mem_used || 0)} / ${fmt_bytes(sys.mem_total)} (${memPct}%)</span></div>
+    <div class="progress-wrap" style="margin:6px 0 10px">
+      <div class="progress-bar"><div class="progress-fill ${memClass}" style="width:${Math.min(memPct,100)}%"></div></div>
+    </div>`;
+  }
+  html += `<div class="kv"><span class="kv-key">Uptime</span><span class="kv-val">${upStr}</span></div>`;
+  setHtml('system-info', html);
 }
 
 async function renderCollections(collections) {

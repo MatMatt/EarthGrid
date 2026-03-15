@@ -538,6 +538,41 @@ async def stats_middleware(request: Request, call_next):
 
 # --- Node Info ---
 
+
+def _system_info() -> dict:
+    """CPU, memory, uptime for dashboard."""
+    import os
+    info = {}
+    try:
+        load1, load5, load15 = os.getloadavg()
+        info["load_avg"] = [round(load1, 2), round(load5, 2), round(load15, 2)]
+        info["cpu_count"] = os.cpu_count() or 1
+        info["cpu_pct"] = round(load1 / (os.cpu_count() or 1) * 100, 1)
+    except Exception:
+        info["load_avg"] = [0, 0, 0]
+        info["cpu_count"] = os.cpu_count() or 1
+        info["cpu_pct"] = 0
+    try:
+        with open("/proc/meminfo") as f:
+            mem = {}
+            for line in f:
+                parts = line.split()
+                if parts[0] in ("MemTotal:", "MemAvailable:"):
+                    mem[parts[0].rstrip(":")] = int(parts[1]) * 1024
+            info["mem_total"] = mem.get("MemTotal", 0)
+            info["mem_available"] = mem.get("MemAvailable", 0)
+            info["mem_used"] = info["mem_total"] - info["mem_available"]
+            info["mem_pct"] = round(info["mem_used"] / info["mem_total"] * 100, 1) if info["mem_total"] > 0 else 0
+    except Exception:
+        pass
+    try:
+        with open("/proc/uptime") as f:
+            info["uptime_seconds"] = int(float(f.read().split()[0]))
+    except Exception:
+        pass
+    return info
+
+
 @app.get("/node-info")
 def node_info_detail():
     """EarthGrid node identity and status (full detail endpoint)."""
@@ -560,6 +595,7 @@ def node_info_detail():
         "openeo": True,
         "bandwidth": bandwidth_mgr.status(),
         "max_download_volume_gb": settings.max_download_volume_gb,
+        "system": _system_info(),
     }
 
 
