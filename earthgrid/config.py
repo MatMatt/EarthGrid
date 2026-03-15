@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     admin_key: str = ""  # required for destructive operations (delete)
     require_auth_read: bool = False  # if True, reads also need api_key
 
+    # --- User Auth ---
+    users_db: str = "./data/users.db"
+
     # --- Source Users ---
     source_key: str = ""  # Fernet encryption key for source user credentials
     source_users_db: str = "./data/source_users.db"

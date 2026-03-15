@@ -26,6 +26,7 @@ from .source_users import SourceUserManager
 from .bandwidth import BandwidthManager
 from .ratelimit import RateLimitMiddleware
 from .openeo_gateway import router as openeo_router, root_router, OpenEOGateway, set_gateway, _capabilities, API_VERSION, BACKEND_VERSION
+from .user_auth import UserAuth
 
 app = FastAPI(
     title="EarthGrid Node",
@@ -98,6 +99,13 @@ replicator = Replicator(chunk_store, catalog)
 
 # New architecture components
 stats_engine = StatsEngine(Path(settings.stats_db))
+
+# User authentication (network-wide)
+user_auth = UserAuth(Path(settings.users_db))
+_bootstrap = user_auth.ensure_admin(settings.node_name)
+if _bootstrap:
+    logging.getLogger("earthgrid").warning(
+        f"Admin API key: {_bootstrap['api_key']} -- save this!")
 source_user_mgr = SourceUserManager(
     Path(settings.source_users_db),
     encryption_key=settings.source_key,
@@ -111,11 +119,84 @@ openeo_gw = OpenEOGateway(
     chunk_store=chunk_store,
     source_user_manager=source_user_mgr,
     stats_engine=stats_engine,
+    user_auth=user_auth,
     bandwidth_manager=bandwidth_mgr,
 )
 set_gateway(openeo_gw)
 
 # Include openEO routers
+
+
+# --- User Admin Endpoints ---
+@app.post("/admin/users")
+def admin_create_user(
+    request: Request,
+    body: dict = None,
+    _: None = Depends(_require_admin_auth),
+):
+    """Create a new EarthGrid user. Requires admin key."""
+    if not body or "username" not in body:
+        raise HTTPException(400, "Missing 'username' in request body")
+    try:
+        user = user_auth.create_user(
+            username=body["username"],
+            role=body.get("role", "member"),
+            node_origin=settings.node_name,
+        )
+        _audit("user_create", f"username={body['username']}",
+               ip=request.client.host if request.client else "")
+        return user
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/admin/users")
+def admin_list_users(
+    request: Request,
+    _: None = Depends(_require_admin_auth),
+):
+    """List all EarthGrid users. Requires admin key."""
+    return {"users": user_auth.list_users(include_inactive=True)}
+
+
+@app.delete("/admin/users/{user_id}")
+def admin_delete_user(
+    user_id: str,
+    request: Request,
+    _: None = Depends(_require_admin_auth),
+):
+    """Deactivate an EarthGrid user. Requires admin key."""
+    if user_auth.delete_user(user_id):
+        _audit("user_delete", f"user_id={user_id}",
+               ip=request.client.host if request.client else "")
+        return {"status": "deactivated", "user_id": user_id}
+    raise HTTPException(404, "User not found")
+
+
+# --- Federation User Sync ---
+@app.get("/federation/users")
+def federation_export_users(
+    request: Request,
+    _: None = Depends(_require_write_auth),
+):
+    """Export user list for federation sync. Requires API key."""
+    return {"users": user_auth.export_users()}
+
+
+@app.post("/federation/users")
+def federation_import_users(
+    request: Request,
+    body: dict = None,
+    _: None = Depends(_require_write_auth),
+):
+    """Import users from another node. Requires API key."""
+    if not body or "users" not in body:
+        raise HTTPException(400, "Missing 'users' in request body")
+    result = user_auth.import_users(body["users"])
+    _audit("user_sync", f"added={result['added']} updated={result['updated']}",
+           ip=request.client.host if request.client else "")
+    return result
+
 app.include_router(openeo_router)   # legacy /openeo/* routes
 app.include_router(root_router)     # openEO API v1.2.0 root-level routes
 

@@ -35,17 +35,32 @@ async def _require_api_key(
     authorization: str | None = Header(None),
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
-    """Require API key for processing endpoints. Skip if no key configured."""
+    """Require API key for processing endpoints.
+
+    Accepts both the legacy single API key (EARTHGRID_API_KEY) and
+    per-user keys from the network-wide user registry.
+    """
     from .config import settings as _s
-    if not _s.api_key:
-        return  # No key configured = open access
-    if x_api_key and x_api_key == _s.api_key:
-        return
-    if authorization:
+    # Extract token from either header
+    token = x_api_key
+    if not token and authorization:
         parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1] == _s.api_key:
-            return
-    raise HTTPException(403, "Invalid or missing API key. Use X-API-Key header or Bearer token.")
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if not token:
+        if not _s.api_key:
+            return  # No auth configured at all = open access
+        raise HTTPException(403, "Missing API key. Use X-API-Key header or Bearer token.")
+    # Check legacy single key first
+    if _s.api_key and token == _s.api_key:
+        return
+    # Check per-user keys
+    gw = _get_gateway()
+    if gw and gw.user_auth:
+        user = gw.user_auth.validate_key(token)
+        if user:
+            return  # Valid user key
+    raise HTTPException(403, "Invalid API key. Use X-API-Key header or Bearer token.")
 
 
 root_router = APIRouter(tags=["openeo"])
@@ -282,11 +297,12 @@ class OpenEOGateway:
     """Parse and execute openEO process graphs against EarthGrid data."""
 
     def __init__(self, catalog=None, chunk_store=None,
-                 source_user_manager=None, stats_engine=None,
+                 source_user_manager=None, stats_engine=None, user_auth=None,
                  bandwidth_manager=None):
         self.catalog = catalog
         self.chunk_store = chunk_store
         self.source_users = source_user_manager
+        self.user_auth = user_auth
         self.stats = stats_engine
         self.bandwidth = bandwidth_manager
         self._jobs: dict[str, JobResult] = {}
@@ -1038,18 +1054,58 @@ def openeo_well_known(request: Request):
 
 
 @root_router.get("/credentials/basic")
-def openeo_credentials_basic():
-    """GET /credentials/basic — returns bearer token for API access."""
-    token = _auth_settings.api_key or "earthgrid-open-access"
-    return {
-        "access_token": token,
-        "token_type": "Bearer",
-    }
+def openeo_credentials_basic(authorization: str | None = Header(None)):
+    """GET /credentials/basic — validate Basic auth, return bearer token.
+
+    openEO clients send Basic auth (username:password where password=api_key).
+    Returns the API key as bearer token for subsequent requests.
+    """
+    from .config import settings as _cs
+    import base64 as _b64
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "basic":
+            try:
+                decoded = _b64.b64decode(parts[1]).decode()
+                _, password = decoded.split(":", 1)
+                # Check legacy key
+                if _cs.api_key and password == _cs.api_key:
+                    return {"access_token": password, "token_type": "Bearer"}
+                # Check per-user key
+                gw = _get_gateway()
+                if gw and gw.user_auth:
+                    user = gw.user_auth.validate_key(password)
+                    if user:
+                        return {"access_token": password, "token_type": "Bearer"}
+                raise HTTPException(401, "Invalid credentials")
+            except (ValueError, Exception) as e:
+                if isinstance(e, HTTPException):
+                    raise
+    # Fallback: return legacy key or open access token
+    token = _cs.api_key or "earthgrid-open-access"
+    return {"access_token": token, "token_type": "Bearer"}
 
 
 @root_router.get("/me")
-def openeo_me():
-    """GET /me — current user info."""
+def openeo_me(authorization: str | None = Header(None),
+              x_api_key: str | None = Header(None, alias="X-API-Key")):
+    """GET /me — current user info based on bearer token."""
+    token = x_api_key
+    if not token and authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if token:
+        gw = _get_gateway()
+        if gw and gw.user_auth:
+            user = gw.user_auth.validate_key(token)
+            if user:
+                return {
+                    "user_id": user["user_id"],
+                    "name": user["username"],
+                    "roles": [user["role"]],
+                    "links": [],
+                }
     return {
         "user_id": "anonymous",
         "name": "Anonymous User",
