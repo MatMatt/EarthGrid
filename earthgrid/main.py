@@ -380,42 +380,54 @@ async def _auto_replication_loop():
         log.info("No beacon configured, auto-replication disabled")
         return
     await asyncio.sleep(30)  # wait for beacon registration
+    log.info("Auto-replication started (every 5 min)")
     while True:
         try:
-            # Get peer list from beacon
-            beacon = settings.beacon_url or f"http://localhost:{settings.port}"
-            async with httpx.AsyncClient(timeout=10) as client:
+            # For beacon+node combos, query ourselves locally
+            if settings.also_beacon:
+                beacon = f"http://localhost:{settings.port}"
+            else:
+                beacon = settings.beacon_url
+            async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(f"{beacon.rstrip('/')}/nodes")
-                if resp.status_code == 200:
-                    nodes = resp.json().get("nodes", [])
-                    for node in nodes:
-                        peer_url = node.get("url", "")
-                        peer_id = node.get("node_id", "")
-                        # Skip self
-                        if peer_id == settings.node_id or not peer_url:
-                            continue
-                        # Skip unreachable
-                        if not node.get("alive", False):
-                            continue
-                        # Check storage limit (stop at 90%)
-                        if settings.storage_limit_gb > 0 and chunk_store.total_bytes >= (settings.storage_limit_gb * 1024**3 * 0.9):
-                            log.info("Storage >90% full, skipping auto-replication")
-                            break
-                        try:
-                            result = await replicator.sync_from_peer(
-                                peer_url=peer_url,
-                                max_items=50,  # batch: max 50 items per cycle
-                            )
-                            if result["items_synced"] > 0:
-                                log.info(
-                                    f"Replicated from {node.get('node_name','?')}: "
-                                    f"{result['items_synced']} items, "
-                                    f"{result['chunks_downloaded']} chunks, "
-                                    f"{result['bytes_downloaded'] / 1024**2:.1f} MB")
-                        except Exception as e:
-                            log.debug(f"Replication from {peer_url} failed: {e}")
+                if resp.status_code != 200:
+                    log.warning(f"Auto-replication: beacon returned {resp.status_code}")
+                    await asyncio.sleep(300)
+                    continue
+                nodes = resp.json().get("nodes", [])
+                peers = [n for n in nodes
+                         if n.get("node_id") != settings.node_id
+                         and n.get("url") and n.get("alive")]
+                if not peers:
+                    log.info(f"Auto-replication: no peers found ({len(nodes)} nodes, none eligible)")
+                    await asyncio.sleep(300)
+                    continue
+                for node in peers:
+                    peer_url = node["url"]
+                    # Check storage limit (stop at 90%)
+                    if settings.storage_limit_gb > 0 and chunk_store.total_bytes >= (settings.storage_limit_gb * 1024**3 * 0.9):
+                        log.info("Storage >90% full, skipping auto-replication")
+                        break
+                    try:
+                        log.info(f"Auto-replication: syncing from {node.get('node_name','?')} ({peer_url})")
+                        result = await replicator.sync_from_peer(
+                            peer_url=peer_url,
+                            max_items=50,
+                        )
+                        if result["items_synced"] > 0:
+                            log.info(
+                                f"Replicated from {node.get('node_name','?')}: "
+                                f"{result['items_synced']} items, "
+                                f"{result['chunks_downloaded']} chunks, "
+                                f"{result['bytes_downloaded'] / 1024**2:.1f} MB")
+                        elif result["errors"]:
+                            log.warning(f"Replication errors from {node.get('node_name','?')}: {result['errors'][:3]}")
+                        else:
+                            log.info(f"Auto-replication from {node.get('node_name','?')}: already in sync")
+                    except Exception as e:
+                        log.warning(f"Replication from {peer_url} failed: {e}")
         except Exception as e:
-            log.debug(f"Auto-replication cycle failed: {e}")
+            log.warning(f"Auto-replication cycle failed: {e}")
         await asyncio.sleep(300)  # every 5 minutes
 
 
