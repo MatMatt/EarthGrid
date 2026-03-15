@@ -357,11 +357,11 @@ cube.ndvi(red="B04", nir="B08").download("ndvi.tif")
 library(openeo)
 con <- connect("http://localhost:8400")
 p <- processes()
-cube <- p\$load_collection("sentinel-2-l2a",
+cube <- p$load_collection("sentinel-2-l2a",
     spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
     temporal_extent = c("2026-03-01", "2026-03-12"),
     bands = c("B04", "B08"))
-result <- p\$ndvi(cube, red="B04", nir="B08")
+result <- p$ndvi(cube, red="B04", nir="B08")
 compute_result(result, "ndvi.tif")
 ```
 
