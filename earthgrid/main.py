@@ -72,6 +72,13 @@ def _is_local_ip(ip: str) -> bool:
     return ip in ("127.0.0.1", "::1", "localhost") or ip.startswith("172.")
 
 
+def _is_lan_ip(ip: str) -> bool:
+    """Check if IP is localhost, Docker bridge, or private LAN."""
+    if _is_local_ip(ip):
+        return True
+    return ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("fd")
+
+
 def _require_write_auth(request: Request, x_api_key: str = Depends(_api_key_header)):
     """Require API key for write operations. Localhost is always allowed."""
     if request.client and _is_local_ip(request.client.host):
@@ -592,9 +599,12 @@ def health():
 @app.get("/ui", response_class=HTMLResponse)
 async def node_ui(request: Request):
     """Serve the EarthGrid Node management UI."""
-    # Only allow localhost access (beacons/headless remain public)
-    if not settings.also_beacon:
-        client_ip = request.client.host if request.client else ""
+    # Restrict UI: localhost for regular nodes, LAN for beacons
+    client_ip = request.client.host if request.client else ""
+    if settings.also_beacon:
+        if not _is_lan_ip(client_ip):
+            raise HTTPException(403, "Node UI is only accessible from LAN")
+    else:
         if not _is_local_ip(client_ip):
             raise HTTPException(403, "Node UI is only accessible from localhost")
     ui_path = Path(__file__).parent / "static" / "ui.html"
