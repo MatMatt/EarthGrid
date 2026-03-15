@@ -948,7 +948,13 @@ function toggleLogRefresh() {
 // Init & auto-refresh
 // ============================================================
 async function init() {
-  await loadStatus();
+  try {
+    await loadStatus();
+  } catch(e) {
+    document.body.insertAdjacentHTML('afterbegin',
+      '<div style="background:red;color:white;padding:20px;font-family:monospace;white-space:pre-wrap">INIT ERROR: ' + e.message + '\n\nStack: ' + e.stack + '</div>');
+    console.error('Init failed:', e);
+  }
   document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
   // Auto-refresh status every 30s
   statusRefreshTimer = setInterval(() => {
