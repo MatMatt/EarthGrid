@@ -87,24 +87,29 @@ New nodes discover the network via a seed list hosted on GitHub Pages:
 |---|---|---|
 | Ingest new data | API key | Prevents unauthorized writes |
 | Run processing (NDVI etc.) | Per-user API key | Only registered EarthGrid users can process |
-| Manage credentials | **CLI only** (no network access) | Credentials never leave the node |
+| Manage source accounts (CDSE etc.) | **CLI only** (no network access) | Provider credentials never leave the node |
 | User management | Admin API key | Only node admins can create/delete users |
 
-### Credentials are local
+### Source Account Credentials (CDSE, WEkEO, etc.)
 
-Source user credentials (CDSE login etc.) are:
-- Stored **encrypted** on the local node
-- Managed **only via CLI** — no API endpoint exists
+> **Not to be confused with EarthGrid user accounts** (see below). Source accounts are login credentials for upstream data providers like CDSE or WEkEO. They allow your node to download satellite data on behalf of the network.
+
+Source account credentials are:
+- Stored **encrypted** on the local node (AES + HMAC)
+- Managed **only via CLI** — no API endpoint to read them exists
 - **Never transmitted** over the network
 - The network only knows: "this node can source data" (boolean flag)
 
 ```bash
-earthgrid users add --name MyAccount --username me@copernicus.eu
+# These manage data provider logins (CDSE, WEkEO, etc.), NOT EarthGrid user accounts
+earthgrid users add --name MyAccount --provider cdse --username me@copernicus.eu
 earthgrid users list
 earthgrid users remove 1
 ```
 
-### User Authentication
+### User Authentication (EarthGrid accounts)
+
+> **Not to be confused with source accounts** (above). EarthGrid user accounts control **who can process data** on the network. Source accounts control **where data is downloaded from**.
 
 EarthGrid uses **per-user API keys** that work across the entire network. Users registered on any node can process data on all nodes.
 
@@ -282,10 +287,12 @@ earthgrid sync <peer_url>                      # Pull data from a peer
 earthgrid ops                                  # List processing operations
 ```
 
-### Credential management (local only)
+### Source account management (data provider logins)
+
+These commands manage credentials for upstream data providers (CDSE, WEkEO, etc.) — the accounts your node uses to **download satellite data**. This is separate from EarthGrid user accounts (see API endpoints below).
 
 ```bash
-earthgrid users list                     # List all source accounts
+earthgrid users list                     # List source accounts (CDSE, WEkEO, etc.)
 earthgrid users add --provider cdse --username me@copernicus.eu
 earthgrid users add --provider wekeo --username me@wekeo.eu
 earthgrid users add --provider element84  # No auth needed (public)
