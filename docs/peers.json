@@ -1,22 +1,22 @@
 {
   "seeds": [
     {
-      "url": "https://mattiuzzi.zapto.org/earthgrid",
-      "name": "node-alpha",
-      "collections": [
-        "sentinel-2-l2a"
-      ],
-      "items": 200
-    },
-    {
       "url": "http://192.168.188.219:8400",
       "name": "Ma2o",
       "collections": [
         "sentinel-2-l2a"
       ],
-      "items": 345
+      "items": 397
+    },
+    {
+      "url": "https://mattiuzzi.zapto.org/earthgrid",
+      "name": "node-alpha",
+      "collections": [
+        "sentinel-2-l2a"
+      ],
+      "items": 245
     }
   ],
-  "updated": "2026-03-15T16:40:01Z",
+  "updated": "2026-03-15T17:00:01Z",
   "source": "https://mattiuzzi.zapto.org/earthgrid"
 }
