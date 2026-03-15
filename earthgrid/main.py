@@ -278,14 +278,18 @@ app.include_router(root_router)     # openEO API v1.2.0 root-level routes
 # --- Beacon Registration ---
 
 async def _register_with_beacon():
-    """Register this node with the configured beacon."""
-    if not settings.beacon_url:
+    """Register this node with the configured beacon (or local beacon if also_beacon)."""
+    beacon = settings.beacon_url
+    # If we ARE a beacon, register with ourselves locally
+    if settings.also_beacon:
+        beacon = f"http://localhost:{settings.port}"
+    if not beacon:
         return
     try:
         summary = catalog.summary()
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(
-                f"{settings.beacon_url.rstrip('/')}/register",
+                f"{beacon.rstrip('/')}/register",
                 params={
                     "node_id": settings.node_id,
                     "node_name": settings.node_name,
@@ -308,7 +312,10 @@ async def _register_with_beacon():
 
 async def _beacon_heartbeat_loop():
     """Send periodic heartbeats to the beacon and discover peers."""
-    if not settings.beacon_url:
+    beacon = settings.beacon_url
+    if settings.also_beacon:
+        beacon = f"http://localhost:{settings.port}"
+    if not beacon:
         return
     log = logging.getLogger("earthgrid")
     while True:
@@ -317,7 +324,7 @@ async def _beacon_heartbeat_loop():
             summary = catalog.summary()
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
-                    f"{settings.beacon_url.rstrip('/')}/heartbeat",
+                    f"{beacon.rstrip('/')}/heartbeat",
                     params={
                         "node_id": settings.node_id,
                         "collections": ",".join(summary["collections"]),
