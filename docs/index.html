@@ -50,8 +50,8 @@ a:hover { text-decoration:underline; }
 <p class="subtitle">Distributed storage and processing for Earth observation data. No vendor lock-in. Community-driven.</p>
 
 <div class="stats">
-  <div class="stat loading" id="sNodes"><div class="value" id="vNodes">—</div><div class="label">Network Nodes</div></div>
-  <div class="stat loading" id="sArea"><div class="value" id="vArea">—</div><div class="label">km² Data</div></div>
+  <div class="stat loading" id="sNodes"><div class="value" id="vNodes">—</div><div class="label">Active Network Nodes</div></div>
+  <div class="stat loading" id="sAvailStorage"><div class="value" id="vAvailStorage">—</div><div class="label">Available Storage</div></div>
   <div class="stat loading" id="sRedundancy"><div class="value" id="vRedundancy">—</div><div class="label">Redundancy Index</div></div>
   <div class="stat loading" id="sRequested"><div class="value" id="vRequested">—</div><div class="label">km² Requested</div></div>
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Total Storage</div></div>
@@ -196,18 +196,13 @@ async function load() {
     // Fallback: if no nodes registered, use beacon's own stats
     if (totalBytes === 0) totalBytes = d.chunks_bytes || d.earthgrid?.chunks_bytes || 0;
 
-    // Get km² from coverage stats
-    try {
-      const covR = await fetch(BEACON + '/stats/coverage');
-      const covD = await covR.json();
-      let totalKm2 = 0;
-      for (const [, s] of Object.entries(covD.sensors || {})) {
-        totalKm2 += s.area_km2 || 0;
-      }
-      document.getElementById('vArea').textContent = totalKm2.toLocaleString();
-    } catch(e) {
-      document.getElementById('vArea').textContent = (d.total_area_km2 || 0).toLocaleString();
+    // Available storage: sum of storage_limit_gb from all nodes
+    let totalAvailGB = 0;
+    for (const n of allN) {
+      totalAvailGB += n.storage_limit_gb || 0;
     }
+    document.getElementById('vAvailStorage').textContent = totalAvailGB >= 1000 ? (totalAvailGB / 1000).toFixed(1) + ' TB' : totalAvailGB.toFixed(0) + ' GB';
+    document.getElementById('sAvailStorage').classList.remove('loading');
     // Compute network-wide redundancy from beacon
     try {
       const repR = await fetch(BEACON + '/replication/health');
