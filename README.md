@@ -158,24 +158,19 @@ curl -X POST http://localhost:8400/admin/users \
 # → Returns: {"user_id": "...", "username": "alice", "api_key": "YOUR_KEY", ...}
 ```
 
-Find available nodes on the [live dashboard](https://matmatt.github.io/EarthGrid/) or query the beacon:
-```bash
-curl -s https://mattiuzzi.zapto.org/earthgrid/nodes
-```
-
-Then connect to any node and authenticate:
+Connect to your own node — your API key is in `docker-compose.yml` (`EARTHGRID_API_KEY`):
 ```python
 # Python
 import openeo
-conn = openeo.connect("https://mattiuzzi.zapto.org/earthgrid")  # or any listed node
-conn.authenticate_basic("alice", "YOUR_KEY")
+conn = openeo.connect("http://localhost:8400")
+conn.authenticate_basic("me", "YOUR_API_KEY")
 ```
 
 ```r
 # R
 library(openeo)
-con <- connect("https://mattiuzzi.zapto.org/earthgrid")
-login(con, login_type = "basic", user = "alice", password = "YOUR_KEY")
+con <- connect("http://localhost:8400")
+login(con, login_type = "basic", user = "me", password = "YOUR_API_KEY")
 ```
 
 **Admin endpoints:**
