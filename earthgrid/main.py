@@ -311,7 +311,7 @@ async def _beacon_heartbeat_loop():
                 )
                 # Report items for replication tracking
                 try:
-                    item_ids = [item.id for item in catalog.list_items(limit=10000)]
+                    item_ids = [item.id for item in catalog.search(limit=10000)]
                     if item_ids:
                         await client.post(
                             f"{settings.beacon_url.rstrip('/')}/replication/report",
