@@ -162,14 +162,14 @@ Then authenticate via openEO:
 ```python
 # Python
 import openeo
-conn = openeo.connect("https://your-node.example.com/earthgrid")
+conn = openeo.connect("https://your-node.example.com")
 conn.authenticate_basic("alice", "YOUR_KEY")
 ```
 
 ```r
 # R
 library(openeo)
-con <- connect("https://your-node.example.com/earthgrid")
+con <- connect("https://your-node.example.com")
 login(con, login_type = "basic", user = "alice", password = "YOUR_KEY")
 ```
 
