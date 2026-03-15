@@ -1057,6 +1057,125 @@ def stac_search(
     }
 
 
+
+# --- Point Extraction ---
+
+@app.get("/point/{collection_id}/{item_id}")
+async def point_extract(
+    collection_id: str,
+    item_id: str,
+    lon: float = Query(...),
+    lat: float = Query(...),
+):
+    """Extract pixel value at a geographic point (lon/lat).
+    
+    Returns the raw pixel value at the nearest pixel to the given coordinate.
+    Useful for building time series from multiple items.
+    """
+    import struct
+    from pyproj import Transformer
+
+    item = catalog.get_item(item_id)
+    if not item:
+        raise HTTPException(404, f"Item {item_id} not found")
+
+    props = item.properties
+    bbox = item.bbox  # [west, south, east, north]
+    width = props.get("earthgrid:width", 0)
+    height = props.get("earthgrid:height", 0)
+    tile_size = props.get("earthgrid:tile_size", 512)
+    tile_cols = props.get("earthgrid:tile_cols", 0)
+    tile_rows = props.get("earthgrid:tile_rows", 0)
+    crs = props.get("earthgrid:crs", "EPSG:4326")
+    dtype = props.get("earthgrid:dtype", "uint16")
+    n_bands = props.get("earthgrid:bands", 1)
+
+    if not width or not height:
+        raise HTTPException(400, "Item has no spatial dimensions")
+
+    # Transform lon/lat to item CRS if needed
+    if crs != "EPSG:4326":
+        transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
+    else:
+        x, y = lon, lat
+
+    # Geographic coordinates to pixel coordinates
+    # bbox = [west, south, east, north]
+    res_x = (bbox[2] - bbox[0]) / width
+    res_y = (bbox[3] - bbox[1]) / height
+
+    col = int((x - bbox[0]) / res_x)
+    row = int((bbox[3] - y) / res_y)  # y-axis is inverted (north=0)
+
+    if col < 0 or col >= width or row < 0 or row >= height:
+        raise HTTPException(400, f"Point ({lon}, {lat}) is outside item extent")
+
+    # Find which tile contains this pixel
+    tile_col = col // tile_size
+    tile_row = row // tile_size
+    tile_idx = tile_row * tile_cols + tile_col
+
+    # Get the chunk
+    hashes = item.chunk_hashes
+    if isinstance(hashes, dict):
+        # band-level — take first band
+        first_band = list(hashes.values())[0]
+        if tile_idx >= len(first_band):
+            raise HTTPException(500, f"Tile index {tile_idx} out of range")
+        sha = first_band[tile_idx]
+    elif isinstance(hashes, list):
+        if tile_idx >= len(hashes):
+            raise HTTPException(500, f"Tile index {tile_idx} out of range")
+        sha = hashes[tile_idx]
+    else:
+        raise HTTPException(500, "Unknown chunk_hashes format")
+
+    chunk_data = chunk_store.get(sha)
+    if chunk_data is None:
+        raise HTTPException(404, f"Chunk {sha[:12]}... not found")
+
+    # Pixel position within tile
+    local_col = col % tile_size
+    local_row = row % tile_size
+
+    # Tile dimensions (handle edge tiles)
+    tile_w = min(tile_size, width - tile_col * tile_size)
+    tile_h = min(tile_size, height - tile_row * tile_size)
+
+    # Decode pixel value based on dtype
+    dtype_map = {
+        "uint8": ("B", 1), "int8": ("b", 1),
+        "uint16": ("H", 2), "int16": ("h", 2),
+        "uint32": ("I", 4), "int32": ("i", 4),
+        "float32": ("f", 4), "float64": ("d", 8),
+    }
+
+    fmt, bpp = dtype_map.get(dtype, ("H", 2))
+
+    # Pixel offset: (band * tile_h * tile_w + row * tile_w + col) * bpp
+    # For spatial tiles with n_bands interleaved per pixel:
+    # offset = (local_row * tile_w * n_bands + local_col * n_bands) * bpp
+    # For band-sequential (BSQ) tiles:
+    pixel_offset = (local_row * tile_w + local_col) * bpp
+
+    if pixel_offset + bpp > len(chunk_data):
+        raise HTTPException(500, f"Pixel offset {pixel_offset} exceeds chunk size {len(chunk_data)}")
+
+    value = struct.unpack(fmt, chunk_data[pixel_offset:pixel_offset + bpp])[0]
+
+    return {
+        "value": value,
+        "lon": lon,
+        "lat": lat,
+        "pixel": [col, row],
+        "tile": [tile_col, tile_row],
+        "item_id": item_id,
+        "collection": collection_id,
+        "dtype": dtype,
+        "crs": crs,
+    }
+
 # --- Download / File Access ---
 
 

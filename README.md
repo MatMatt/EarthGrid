@@ -488,56 +488,90 @@ Your other workloads always come first.
 
 ---
 
-## Example: Compute NDVI for Copenhagen
+## Example: NDVI Time Series for Copenhagen
 
-Download Sentinel-2 bands from EarthGrid, compute NDVI, and plot the result — in your language of choice.
+Extract an NDVI time series at a single point — shows seasonal vegetation dynamics from a full year of Sentinel-2 data.
 
-> All examples connect to a local EarthGrid node. Replace `localhost:8400` with any node URL.
+> All examples connect to any EarthGrid node. Replace `localhost:8400` with your node URL.
 
 <details open>
 <summary><b>🐍 Python</b></summary>
 
 ```python
-import requests, numpy as np, matplotlib.pyplot as plt, rasterio, tempfile
+import requests
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
 
 BASE = "http://localhost:8400"
+LON, LAT = 12.57, 55.68  # Copenhagen — Frederiksberg Gardens
 
-# Search Sentinel-2 over Copenhagen
+# Search all Sentinel-2 scenes covering this point
 items = requests.get(f"{BASE}/stac/search", params={
-    "bbox": "12.4,55.6,12.7,55.75", "collections": "sentinel-2-l2a", "limit": 100,
+    "bbox": f"{LON-0.01},{LAT-0.01},{LON+0.01},{LAT+0.01}",
+    "collections": "sentinel-2-l2a",
+    "limit": 500,
 }).json()["features"]
 
-# Download B04 (Red) and B08 (NIR)
-def download(band):
-    item = next(i for i in items if band in i["id"])
-    r = requests.get(f"{BASE}/download/{item['collection']}/{item['id']}")
-    f = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
-    f.write(r.content); f.close()
-    return rasterio.open(f.name).read(1).astype(float)
+# Group by date (B04 + B08 pairs)
+from collections import defaultdict
+dates = defaultdict(dict)
+for item in items:
+    band = item["id"].rsplit("_", 1)[-1]
+    base_id = item["id"].rsplit("_", 1)[0]
+    dt = item["properties"]["datetime"][:10]
+    dates[dt][band] = item
 
-red, nir = download("B04"), download("B08")
-ndvi = np.where((nir + red) > 0, (nir - red) / (nir + red), 0)
+# Extract NDVI at the point for each date
+ndvi_ts = []
+for dt in sorted(dates):
+    if "B04" not in dates[dt] or "B08" not in dates[dt]:
+        continue
+    try:
+        for band, name in [("B04", "red"), ("B08", "nir")]:
+            item = dates[dt][band]
+            r = requests.get(f"{BASE}/point/{item['collection']}/{item['id']}",
+                             params={"lon": LON, "lat": LAT}, timeout=30)
+            if r.status_code == 200:
+                locals()[name] = r.json()["value"]
+        if red and nir and (nir + red) > 0:
+            ndvi_ts.append((datetime.strptime(dt, "%Y-%m-%d"), (nir - red) / (nir + red)))
+    except Exception:
+        continue
 
-plt.figure(figsize=(10, 10))
-plt.imshow(ndvi, cmap="RdYlGn", vmin=-0.2, vmax=0.8)
-plt.title("NDVI — Copenhagen (Sentinel-2)")
-plt.colorbar(shrink=0.6, label="NDVI"); plt.axis("off")
-plt.savefig("ndvi.png", dpi=150)
+# Plot
+dates_plot, values = zip(*ndvi_ts)
+plt.figure(figsize=(14, 5))
+plt.fill_between(dates_plot, values, alpha=0.3, color="#3fb950")
+plt.plot(dates_plot, values, "o-", color="#3fb950", markersize=4, linewidth=1.5)
+plt.axhline(y=0, color="#555", linewidth=0.5, linestyle="--")
+plt.ylabel("NDVI")
+plt.title(f"NDVI Time Series — Copenhagen ({LAT}°N, {LON}°E)\nSentinel-2 via EarthGrid")
+plt.grid(True, alpha=0.2)
+plt.tight_layout()
+plt.savefig("ndvi_timeseries.png", dpi=150)
 ```
 
 </details>
 
 <details>
-<summary><b>🐍 Python (openEO — 3 lines)</b></summary>
+<summary><b>🐍 Python (openEO)</b></summary>
 
 ```python
 import openeo
+
 conn = openeo.connect("http://localhost:8400")
 cube = conn.load_collection("sentinel-2-l2a",
-    spatial_extent={"west": 12.4, "south": 55.6, "east": 12.7, "north": 55.75},
-    temporal_extent=["2025-06-01", "2025-06-30"],
+    spatial_extent={"west": 12.56, "south": 55.67, "east": 12.58, "north": 55.69},
+    temporal_extent=["2025-01-01", "2025-12-31"],
     bands=["B04", "B08"])
-cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")
+
+ndvi = cube.ndvi(red="B04", nir="B08")
+# Aggregate to point → time series
+ts = ndvi.aggregate_spatial(
+    geometries={"type": "Point", "coordinates": [12.57, 55.68]},
+    reducer="mean")
+ts.download("ndvi_timeseries.json")
 ```
 
 </details>
@@ -546,143 +580,101 @@ cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")
 <summary><b>📊 R</b></summary>
 
 ```r
-library(httr); library(terra); library(jsonlite)
+library(httr); library(jsonlite); library(ggplot2)
 
 base <- "http://localhost:8400"
+lon <- 12.57; lat <- 55.68
 
-# Search
+# Search all scenes
 items <- fromJSON(content(GET(paste0(base, "/stac/search"),
-  query = list(bbox = "12.4,55.6,12.7,55.75", collections = "sentinel-2-l2a", limit = 100)
+  query = list(bbox = paste(lon-0.01, lat-0.01, lon+0.01, lat+0.01, sep=","),
+               collections = "sentinel-2-l2a", limit = 500)
 ), "text"))$features
 
-# Download helper
-dl <- function(band) {
-  item <- items[grepl(band, items$id), ][1, ]
-  url <- paste0(base, "/download/", item$collection, "/", item$id)
-  tmp <- tempfile(fileext = ".tif")
-  writeBin(content(GET(url), "raw"), tmp)
-  rast(tmp)
+# Extract point values per date
+ndvi_df <- data.frame(date = as.Date(character()), ndvi = numeric())
+dates <- unique(substr(items$properties$datetime, 1, 10))
+
+for (dt in sort(dates)) {
+  b04 <- items[grepl("B04", items$id) & grepl(gsub("-","",dt), items$id), ]
+  b08 <- items[grepl("B08", items$id) & grepl(gsub("-","",dt), items$id), ]
+  if (nrow(b04) == 0 || nrow(b08) == 0) next
+  tryCatch({
+    red <- fromJSON(content(GET(paste0(base, "/point/", b04$collection[1], "/", b04$id[1]),
+                    query = list(lon=lon, lat=lat)), "text"))$value
+    nir <- fromJSON(content(GET(paste0(base, "/point/", b08$collection[1], "/", b08$id[1]),
+                    query = list(lon=lon, lat=lat)), "text"))$value
+    if (!is.null(red) && !is.null(nir) && (nir + red) > 0)
+      ndvi_df <- rbind(ndvi_df, data.frame(date=as.Date(dt), ndvi=(nir-red)/(nir+red)))
+  }, error = function(e) NULL)
 }
 
-red <- dl("B04"); nir <- dl("B08")
-ndvi <- (nir - red) / (nir + red)
-
-png("ndvi.png", width = 1200, height = 1200)
-plot(ndvi, main = "NDVI — Copenhagen (Sentinel-2)",
-     col = colorRampPalette(c("brown", "yellow", "darkgreen"))(100),
-     range = c(-0.2, 0.8))
-dev.off()
+ggplot(ndvi_df, aes(date, ndvi)) +
+  geom_area(alpha=0.3, fill="#3fb950") +
+  geom_point(color="#3fb950", size=2) + geom_line(color="#3fb950") +
+  labs(title="NDVI Time Series — Copenhagen", y="NDVI") +
+  theme_minimal()
+ggsave("ndvi_timeseries.png", width=14, height=5)
 ```
 
 </details>
 
 <details>
-<summary><b>📊 R (openEO)</b></summary>
-
-```r
-library(openeo)
-con <- connect("http://localhost:8400")
-p <- processes()
-cube <- p$load_collection("sentinel-2-l2a",
-    spatial_extent = list(west=12.4, south=55.6, east=12.7, north=55.75),
-    temporal_extent = c("2025-06-01", "2025-06-30"),
-    bands = c("B04", "B08"))
-ndvi <- p$ndvi(cube, red="B04", nir="B08")
-result <- p$save_result(ndvi, format="GTiff")
-compute_result(result, "ndvi.tif")
-```
-
-</details>
-
-<details>
-<summary><b>🟨 JavaScript / Node.js</b></summary>
+<summary><b>🟨 JavaScript</b></summary>
 
 ```javascript
-const fs = require("fs");
-const { execSync } = require("child_process");
-
 const BASE = "http://localhost:8400";
+const [LON, LAT] = [12.57, 55.68];
 
-// Search
-const resp = await fetch(`${BASE}/stac/search?bbox=12.4,55.6,12.7,55.75&collections=sentinel-2-l2a&limit=100`);
+const resp = await fetch(
+  `${BASE}/stac/search?bbox=${LON-0.01},${LAT-0.01},${LON+0.01},${LAT+0.01}&collections=sentinel-2-l2a&limit=500`
+);
 const items = (await resp.json()).features;
 
-// Download B04 and B08
-async function download(band) {
-  const item = items.find(i => i.id.includes(band));
-  const r = await fetch(`${BASE}/download/${item.collection}/${item.id}`);
-  const path = `/tmp/${band}.tif`;
-  fs.writeFileSync(path, Buffer.from(await r.arrayBuffer()));
-  return path;
+// Group by date
+const dates = {};
+for (const item of items) {
+  const band = item.id.split("_").pop();
+  const dt = item.properties.datetime.slice(0, 10);
+  if (!dates[dt]) dates[dt] = {};
+  dates[dt][band] = item;
 }
 
-const b04 = await download("B04");
-const b08 = await download("B08");
+// Extract NDVI at point
+const ndvi = [];
+for (const [dt, bands] of Object.entries(dates).sort()) {
+  if (!bands.B04 || !bands.B08) continue;
+  try {
+    const r = await fetch(`${BASE}/point/${bands.B04.collection}/${bands.B04.id}?lon=${LON}&lat=${LAT}`);
+    const red = (await r.json()).value;
+    const n = await fetch(`${BASE}/point/${bands.B08.collection}/${bands.B08.id}?lon=${LON}&lat=${LAT}`);
+    const nir = (await n.json()).value;
+    if (nir + red > 0) ndvi.push({ date: dt, ndvi: (nir - red) / (nir + red) });
+  } catch {}
+}
 
-// Compute NDVI with GDAL
-execSync(`gdal_calc.py -A ${b08} -B ${b04} --outfile=ndvi.tif \
-  --calc="where((A+B)>0, (A-B)/(A+B), 0)" --type=Float32`);
-console.log("Saved: ndvi.tif");
+console.table(ndvi);  // Plot with Chart.js, D3, or export as CSV
 ```
 
 </details>
 
 <details>
-<summary><b>🦀 Rust</b></summary>
-
-```rust
-use reqwest::blocking::Client;
-use std::fs;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let base = "http://localhost:8400";
-    let client = Client::new();
-
-    // Search
-    let items: serde_json::Value = client
-        .get(format!("{base}/stac/search"))
-        .query(&[("bbox", "12.4,55.6,12.7,55.75"),
-                  ("collections", "sentinel-2-l2a"), ("limit", "100")])
-        .send()?.json()?;
-
-    let features = items["features"].as_array().unwrap();
-
-    // Download bands
-    for band in &["B04", "B08"] {
-        let item = features.iter()
-            .find(|i| i["id"].as_str().unwrap().contains(band)).unwrap();
-        let col = item["collection"].as_str().unwrap();
-        let id = item["id"].as_str().unwrap();
-        let bytes = client.get(format!("{base}/download/{col}/{id}"))
-            .send()?.bytes()?;
-        fs::write(format!("{band}.tif"), &bytes)?;
-        println!("Downloaded {band}: {:.1} MB", bytes.len() as f64 / 1e6);
-    }
-
-    println!("Compute NDVI: gdal_calc.py -A B08.tif -B B04.tif ...");
-    Ok(())
-}
-```
-
-</details>
-
-<details>
-<summary><b>🐚 Shell (curl + GDAL)</b></summary>
+<summary><b>🐚 Shell (curl + jq)</b></summary>
 
 ```bash
 BASE="http://localhost:8400"
+LON=12.57; LAT=55.68
 
-# Search
-curl -s "$BASE/stac/search?bbox=12.4,55.6,12.7,55.75&collections=sentinel-2-l2a&limit=20" | \
-  jq -r '.features[].id' | head -10
-
-# Download
-curl -o B04.tif "$BASE/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B04"
-curl -o B08.tif "$BASE/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B08"
-
-# Compute NDVI
-gdal_calc.py -A B08.tif -B B04.tif --outfile=ndvi.tif \
-  --calc="where((A+B)>0, (A.astype(float)-B)/(A+B), 0)" --type=Float32
+# Search all scenes at point
+curl -s "$BASE/stac/search?bbox=$((LON-1))e-2,$((LAT-1))e-2,$((LON+1))e-2,$((LAT+1))e-2&collections=sentinel-2-l2a&limit=100" | \
+  jq -r '.features[] | select(.id | contains("B04")) | .id' | while read ID; do
+    DT=$(echo "$ID" | grep -oP '\d{8}')
+    NIR_ID=$(echo "$ID" | sed 's/B04/B08/')
+    RED=$(curl -s "$BASE/point/sentinel-2-l2a/$ID?lon=$LON&lat=$LAT" | jq '.value')
+    NIR=$(curl -s "$BASE/point/sentinel-2-l2a/$NIR_ID?lon=$LON&lat=$LAT" | jq '.value')
+    NDVI=$(echo "scale=4; ($NIR - $RED) / ($NIR + $RED)" | bc 2>/dev/null)
+    echo "$DT,$NDVI"
+done > ndvi_timeseries.csv
 ```
 
 </details>
@@ -691,38 +683,51 @@ gdal_calc.py -A B08.tif -B B04.tif --outfile=ndvi.tif \
 <summary><b>🌍 Julia</b></summary>
 
 ```julia
-using HTTP, JSON3, ArchGDAL, Plots
+using HTTP, JSON3, Plots, Dates
 
 base = "http://localhost:8400"
+lon, lat = 12.57, 55.68
 
 # Search
 resp = HTTP.get("$base/stac/search", query=Dict(
-    "bbox" => "12.4,55.6,12.7,55.75",
-    "collections" => "sentinel-2-l2a", "limit" => 100))
+    "bbox" => "$(lon-0.01),$(lat-0.01),$(lon+0.01),$(lat+0.01)",
+    "collections" => "sentinel-2-l2a", "limit" => 500))
 items = JSON3.read(resp.body).features
 
-# Download helper
-function dl(band)
-    item = first(filter(i -> contains(String(i.id), band), items))
-    r = HTTP.get("$base/download/$(item.collection)/$(item.id)")
-    path = tempname() * ".tif"
-    write(path, r.body)
-    ArchGDAL.read(path) do ds
-        Float64.(ArchGDAL.read(ds, 1))
-    end
+# Group by date
+dates = Dict{String, Dict{String, Any}}()
+for item in items
+    band = split(String(item.id), "_")[end]
+    dt = String(item.properties.datetime)[1:10]
+    get!(dates, dt, Dict())[band] = item
 end
 
-red, nir = dl("B04"), dl("B08")
-ndvi = @. ifelse((nir + red) > 0, (nir - red) / (nir + red), 0.0)
+# Extract NDVI
+ndvi_dates, ndvi_vals = Date[], Float64[]
+for dt in sort(collect(keys(dates)))
+    haskey(dates[dt], "B04") && haskey(dates[dt], "B08") || continue
+    try
+        r = HTTP.get("$base/point/sentinel-2-l2a/$(dates[dt]["B04"].id)?lon=$lon&lat=$lat")
+        red = JSON3.read(r.body).value
+        n = HTTP.get("$base/point/sentinel-2-l2a/$(dates[dt]["B08"].id)?lon=$lon&lat=$lat")
+        nir = JSON3.read(n.body).value
+        if nir + red > 0
+            push!(ndvi_dates, Date(dt))
+            push!(ndvi_vals, (nir - red) / (nir + red))
+        end
+    catch end
+end
 
-heatmap(ndvi[end:-1:1, :], c=:RdYlGn, clims=(-0.2, 0.8),
-        title="NDVI — Copenhagen", size=(800, 800))
-savefig("ndvi.png")
+plot(ndvi_dates, ndvi_vals, fill=0, alpha=0.3, lw=2, marker=:circle, ms=3,
+     title="NDVI Time Series — Copenhagen", ylabel="NDVI",
+     color="#3fb950", legend=false, size=(900, 300))
+savefig("ndvi_timeseries.png")
 ```
 
 </details>
 
-> **Tip:** Make sure data is available first. Use `earthgrid fetch --bbox 12.4,55.6,12.7,55.75` to download, or let auto-replication fill your node.
+> **Tip:** Make sure data is available first. Use `earthgrid fetch --bbox 12.4,55.6,12.7,55.75 --limit 0` to download all available scenes, or let auto-replication fill your node.
+
 
 ## Disclaimer
 

@@ -129,33 +129,48 @@ earthgrid status</code></pre>
 </div>
 
 <div class="tab-content" id="tab-python">
-<pre><code>import requests, numpy as np, matplotlib.pyplot as plt
-import rasterio, tempfile
+<pre><code>import requests, matplotlib.pyplot as plt
+from collections import defaultdict
+from datetime import datetime
 
 BASE = "http://localhost:8400"
+LON, LAT = 12.57, 55.68  # Frederiksberg Gardens
 
-# Search Sentinel-2 over Copenhagen
+# Search all scenes at this point
 items = requests.get(f"{BASE}/stac/search", params={
-    "bbox": "12.4,55.6,12.7,55.75",
-    "collections": "sentinel-2-l2a", "limit": 100,
+    "bbox": f"{LON-0.01},{LAT-0.01},{LON+0.01},{LAT+0.01}",
+    "collections": "sentinel-2-l2a", "limit": 500,
 }).json()["features"]
 
-# Download B04 (Red) and B08 (NIR)
-def download(band):
-    item = next(i for i in items if band in i["id"])
-    r = requests.get(f"{BASE}/download/{item['collection']}/{item['id']}")
-    f = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
-    f.write(r.content); f.close()
-    return rasterio.open(f.name).read(1).astype(float)
+# Group by date
+dates = defaultdict(dict)
+for item in items:
+    band = item["id"].rsplit("_", 1)[-1]
+    dt = item["properties"]["datetime"][:10]
+    dates[dt][band] = item
 
-red, nir = download("B04"), download("B08")
-ndvi = np.where((nir + red) &gt; 0, (nir - red) / (nir + red), 0)
+# Extract NDVI time series
+ndvi_ts = []
+for dt in sorted(dates):
+    if "B04" not in dates[dt] or "B08" not in dates[dt]:
+        continue
+    try:
+        red = requests.get(f"{BASE}/point/{dates[dt]['B04']['collection']}/{dates[dt]['B04']['id']}",
+                           params={"lon": LON, "lat": LAT}).json()["value"]
+        nir = requests.get(f"{BASE}/point/{dates[dt]['B08']['collection']}/{dates[dt]['B08']['id']}",
+                           params={"lon": LON, "lat": LAT}).json()["value"]
+        if nir + red &gt; 0:
+            ndvi_ts.append((datetime.strptime(dt, "%Y-%m-%d"), (nir - red) / (nir + red)))
+    except: continue
 
-plt.figure(figsize=(10, 10))
-plt.imshow(ndvi, cmap="RdYlGn", vmin=-0.2, vmax=0.8)
-plt.title("NDVI — Copenhagen (Sentinel-2)")
-plt.colorbar(shrink=0.6, label="NDVI"); plt.axis("off")
-plt.savefig("ndvi.png", dpi=150)</code></pre>
+# Plot
+d, v = zip(*ndvi_ts)
+plt.figure(figsize=(14, 5))
+plt.fill_between(d, v, alpha=0.3, color="#3fb950")
+plt.plot(d, v, "o-", color="#3fb950", markersize=4)
+plt.title(f"NDVI Time Series — Copenhagen ({LAT}°N, {LON}°E)")
+plt.ylabel("NDVI"); plt.grid(alpha=0.2)
+plt.savefig("ndvi_timeseries.png", dpi=150)</code></pre>
 </div>
 
 <div class="tab-content" id="tab-openeo-py">
