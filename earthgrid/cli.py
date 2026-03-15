@@ -130,6 +130,13 @@ def main():
     p_sync.add_argument("--dry-run", action="store_true", help="Only report what would be synced")
 
 
+    # --- Verify / Heal ---
+    p_verify = sub.add_parser("verify", help="Verify chunk integrity and optionally heal corrupted data")
+    p_verify.add_argument("--heal", action="store_true", help="Re-download items with corrupted chunks")
+    p_verify.add_argument("--delete-corrupt", action="store_true", help="Delete corrupted chunks without re-downloading")
+    p_verify.add_argument("--collection", default=None, help="Only verify this collection")
+    p_verify.add_argument("--verbose", "-v", action="store_true", help="Show each chunk being checked")
+
     # --- Docker ---
     p_docker = sub.add_parser("docker", help="Manage Docker deployment")
     docker_sub = p_docker.add_subparsers(dest="docker_action")
@@ -163,6 +170,10 @@ def main():
 
     if args.command == "admin":
         _cmd_admin(args)
+        return
+
+    if args.command == "verify":
+        _cmd_verify(args)
         return
 
     if args.command == "docker":

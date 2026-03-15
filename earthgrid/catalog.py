@@ -232,3 +232,19 @@ class Catalog:
             assets=json.loads(row["assets_json"]),
             chunk_hashes=json.loads(row["chunk_hashes_json"]),
         )
+
+    def delete_item(self, item_id: str) -> bool:
+        """Delete an item from the catalog. Returns True if it existed."""
+        cur = self.db.execute("DELETE FROM items WHERE id = ?", (item_id,))
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def list_items(self, collection: str | None = None) -> list:
+        """List all items, optionally filtered by collection."""
+        if collection:
+            rows = self.db.execute(
+                "SELECT * FROM items WHERE collection = ?", (collection,)
+            ).fetchall()
+        else:
+            rows = self.db.execute("SELECT * FROM items").fetchall()
+        return [self._row_to_item(r) for r in rows]
