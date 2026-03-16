@@ -864,10 +864,10 @@ def _cmd_fetch(args):
     if args.source == "element84":
         from .element84 import fetch_and_ingest_element84
         if args.limit > 0:
-            print(f"Fetching from Element84 (bbox={args.bbox}, cloud2264{args.cloud}%, limit={args.limit} products)...")
+            print(f"Fetching from Element84 (bbox={args.bbox}, cloud≤{args.cloud}%, limit={args.limit} products)...")
             print(f"  Tip: use --limit 0 for all available products")
         else:
-            print(f"Fetching from Element84 (bbox={args.bbox}, cloud2264{args.cloud}%, no limit)...")
+            print(f"Fetching from Element84 (bbox={args.bbox}, cloud≤{args.cloud}%, no limit)...")
         distribute = not getattr(args, 'no_distribute', False)
         try:
             results = asyncio.run(fetch_and_ingest_element84(
