@@ -1,10 +1,10 @@
 {
-  "updated": "2026-03-16T05:40:01Z",
+  "updated": "2026-03-16T05:50:01Z",
   "version": "",
   "network": {
     "nodes_alive": 2,
     "nodes_total": 2,
-    "total_bytes": 67246981760,
+    "total_bytes": 67359421056,
     "available_storage_gb": 3050.0,
     "redundancy": 1.0
   },
@@ -15,7 +15,22 @@
       "area_km2": 12056
     }
   },
-  "uptake": {},
+  "uptake": {
+    "report_type": "EarthGrid Uptake Statistics",
+    "period_days": 365,
+    "privacy": "anonymous \u2014 no user identification stored",
+    "summary": {
+      "total_requests": 0,
+      "total_gb": 0.0,
+      "total_aoi_km2": 0,
+      "collections_accessed": 0
+    },
+    "by_collection": [],
+    "by_job_type": [],
+    "top_processes": [],
+    "monthly_trend": [],
+    "daily_trend": []
+  },
   "km2_requested": 0,
   "operations": [
     {
