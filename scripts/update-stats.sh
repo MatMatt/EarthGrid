@@ -72,9 +72,3 @@ stats = {
 print(json.dumps(stats, indent=2))
 " > "$STATS_FILE"
 
-cd "$REPO"
-if ! git diff --quiet docs/stats.json 2>/dev/null; then
-    git add docs/stats.json
-    git commit -m "auto: update stats.json [$(date -u +%Y-%m-%dT%H:%M:%SZ)]" --no-verify
-    git push
-fi

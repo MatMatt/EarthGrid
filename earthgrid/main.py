@@ -817,6 +817,33 @@ async def public_dashboard():
             })
     return HTMLResponse("<h1>Dashboard not found</h1>", status_code=404)
 
+
+@app.get("/stats.json")
+async def stats_json():
+    """Serve generated stats.json (updated by cron, not committed to git)."""
+    for candidate in [
+        Path(__file__).parent.parent / "docs" / "stats.json",
+        Path("/data") / "docs" / "stats.json",
+    ]:
+        if candidate.exists():
+            import json
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+            return data
+    raise HTTPException(404, "stats.json not found")
+
+@app.get("/peers.json")
+async def peers_json():
+    """Serve generated peers.json (updated by cron, not committed to git)."""
+    for candidate in [
+        Path(__file__).parent.parent / "docs" / "peers.json",
+        Path("/data") / "docs" / "peers.json",
+    ]:
+        if candidate.exists():
+            import json
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+            return data
+    raise HTTPException(404, "peers.json not found")
+
 @app.get("/stats/coverage")
 def stats_coverage():
     """Spatial coverage per sensor collection (network-wide if beacon)."""

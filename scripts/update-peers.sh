@@ -56,11 +56,3 @@ out = {
 }
 print(json.dumps(out, indent=2))
 " > "$PEERS_FILE"
-
-# Commit and push only if changed
-cd "$REPO"
-if ! git diff --quiet docs/peers.json 2>/dev/null; then
-    git add docs/peers.json
-    git commit -m "auto: update peers.json [$(date -u +%Y-%m-%dT%H:%M:%SZ)]" --no-verify
-    git push
-fi
