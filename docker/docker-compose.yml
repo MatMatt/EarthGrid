@@ -18,9 +18,9 @@ services:
       - /mnt/sda/earthgrid:/data
       - ../docs:/app/docs
     environment:
-      - EARTHGRID_NODE_NAME=my-node
+      - EARTHGRID_NODE_NAME=node-alpha
       - EARTHGRID_PORT=8400
-      - EARTHGRID_STORAGE_LIMIT_GB=100
+      - EARTHGRID_STORAGE_LIMIT_GB=3000
       - EARTHGRID_STORE_PATH=/data/store
       - EARTHGRID_CATALOG_PATH=/data/catalog.db
       - EARTHGRID_SOURCE_USERS_DB=/data/source_users.db
