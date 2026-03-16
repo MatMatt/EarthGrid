@@ -531,6 +531,7 @@ async def startup():
             settings.node_id,
             peers_count=len(federation.peers),
             uptime_seconds=0,
+            storage_pledged_gb=settings.storage_limit_gb,
         )
     except Exception as e:
         import logging

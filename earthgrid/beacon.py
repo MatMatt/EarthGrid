@@ -599,6 +599,7 @@ async def node_heartbeat(
                 node_id,
                 peers_count=0,
                 uptime_seconds=uptime_seconds or 0,
+                storage_pledged_gb=storage_limit_gb or 0,
             )
             # Sync items/bytes from node registry into gamification
             if item_count is not None or chunks_bytes is not None:

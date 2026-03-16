@@ -112,6 +112,7 @@ class GamificationEngine:
                 continents TEXT NOT NULL DEFAULT '',
                 first_seen REAL NOT NULL DEFAULT 0,
                 last_seen REAL NOT NULL DEFAULT 0,
+                storage_pledged_gb REAL NOT NULL DEFAULT 0,
                 score INTEGER NOT NULL DEFAULT 0,
                 display_alias TEXT NOT NULL DEFAULT '',
                 anonymous INTEGER NOT NULL DEFAULT 0
@@ -304,21 +305,20 @@ class GamificationEngine:
             params.append(now)
 
             # Score is recalculated from current state (not incremental)
-            # Weights: uptime (10/day) > storage (5/GB) > items (1) > served (3/GB) > queries (1/100)
-            # Fetch current totals after updates
+            # Weights: uptime (10/day) > pledged storage (5/GB) > items (1) > served (3/GB) > queries (1/100)
             _cur = conn.execute(
-                "SELECT items_ingested, bytes_stored, bytes_served, queries_answered, uptime_seconds, streak_days FROM node_scores WHERE node_id=?",
+                "SELECT items_ingested, bytes_served, queries_answered, uptime_seconds, streak_days, storage_pledged_gb FROM node_scores WHERE node_id=?",
                 (node_id,)).fetchone()
             if _cur:
                 _items = (_cur[0] or 0) + items_delta
-                _gb_stored = ((_cur[1] or 0) + bytes_delta) / (1024**3)
-                _gb_served = ((_cur[2] or 0) + bytes_served_delta) / (1024**3)
-                _queries = (_cur[3] or 0) + queries_delta
-                _uptime_days = (_cur[4] or 0) / 86400
-                _streak = _cur[5] or 0
+                _gb_served = ((_cur[1] or 0) + bytes_served_delta) / (1024**3)
+                _queries = (_cur[2] or 0) + queries_delta
+                _uptime_days = (_cur[3] or 0) / 86400
+                _streak = _cur[4] or 0
+                _gb_pledged = _cur[5] or 0
                 new_score = int(
                     _uptime_days * 10 +      # 10 pts per day online
-                    _gb_stored * 5 +          # 5 pts per GB shared
+                    _gb_pledged * 5 +         # 5 pts per GB pledged to network
                     _items * 1 +              # 1 pt per item
                     _gb_served * 3 +          # 3 pts per GB served
                     _queries // 100 +         # 1 pt per 100 queries
@@ -347,14 +347,15 @@ class GamificationEngine:
             self._check_achievements(conn, node_id, row["owner_user"])
 
     def record_heartbeat(self, node_id: str, peers_count: int = 0,
-                         uptime_seconds: float = 0):
+                         uptime_seconds: float = 0, storage_pledged_gb: float = 0):
         """Record a node heartbeat (called periodically by federation sync)."""
         now = time.time()
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""UPDATE node_scores SET
-                last_seen=?, uptime_seconds=?, max_peers=MAX(max_peers, ?)
+                last_seen=?, uptime_seconds=?, max_peers=MAX(max_peers, ?),
+                storage_pledged_gb=MAX(storage_pledged_gb, ?)
                 WHERE node_id=?""",
-                (now, uptime_seconds, peers_count, node_id))
+                (now, uptime_seconds, peers_count, storage_pledged_gb or 0, node_id))
             # Streak update
             today = time.strftime("%Y-%m-%d", time.gmtime())
             row = conn.execute(
@@ -371,15 +372,15 @@ class GamificationEngine:
                     new_streak = row[1]
                 # Recalculate score from current state
                 _uptime_days = uptime_seconds / 86400
-                _gb_stored = (row[3] or 0) / (1024**3)
+                _gb_pledged = storage_pledged_gb or 0
                 _gb_served = (row[4] or 0) / (1024**3)
                 score = int(
-                    _uptime_days * 10 +
-                    _gb_stored * 5 +
-                    (row[2] or 0) * 1 +       # items
-                    _gb_served * 3 +
-                    (row[5] or 0) // 100 +    # queries
-                    new_streak * 2
+                    _uptime_days * 10 +       # 10 pts per day online
+                    _gb_pledged * 5 +          # 5 pts per GB pledged to network
+                    (row[2] or 0) * 1 +       # 1 pt per item
+                    _gb_served * 3 +           # 3 pts per GB served
+                    (row[5] or 0) // 100 +    # 1 pt per 100 queries
+                    new_streak * 2             # 2 pts per streak day
                 )
                 conn.execute("UPDATE node_scores SET score=? WHERE node_id=?",
                              (score, node_id))
@@ -514,7 +515,8 @@ class GamificationEngine:
             if board_type == "nodes":
                 rows = conn.execute("""SELECT node_id, owner_user, score,
                     items_ingested, bytes_stored, bytes_served, streak_days,
-                    uptime_seconds, max_peers, display_alias, anonymous
+                    uptime_seconds, max_peers, display_alias, anonymous,
+                    storage_pledged_gb
                     FROM node_scores
                     ORDER BY score DESC LIMIT ?""", (limit,)).fetchall()
                 return [{"rank": i+1,
@@ -525,6 +527,7 @@ class GamificationEngine:
                          "score": r["score"],
                          "items": r["items_ingested"],
                          "gb_stored": round((r["bytes_stored"] or 0) / (1024**3), 1),
+                         "gb_pledged": r.get("storage_pledged_gb", 0) or 0,
                          "gb_served": round((r["bytes_served"] or 0) / (1024**3), 1),
                          "streak": r["streak_days"], "peers": r["max_peers"],
                          "uptime_days": round((r["uptime_seconds"] or 0) / 86400, 1)}
