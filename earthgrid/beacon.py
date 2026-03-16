@@ -492,7 +492,7 @@ def _human_bytes(b: int) -> str:
 def health():
         # Auto-register in gamification
     try:
-        from .gamification_endpoints import engine
+        from .gamification_endpoints import _get_engine
         engine.ensure_node_registered(node_id, node_name=node_name if 'node_name' in dir() else "")
     except Exception:
         pass
@@ -606,8 +606,9 @@ async def node_heartbeat(
 
     # Update gamification for this node
     try:
-        from .gamification_endpoints import engine
+        from . import gamification_endpoints as _gep
         node = registry.nodes.get(node_id)
+        engine = _gep._engine
         if node and engine:
             engine.ensure_node_registered(node_id, node_name=node.node_name)
             engine.record_heartbeat(
@@ -626,8 +627,10 @@ async def node_heartbeat(
                     if chunks_bytes is not None:
                         conn.execute("UPDATE node_scores SET bytes_stored=? WHERE node_id=?",
                                      (chunks_bytes, node_id))
-    except Exception:
-        pass
+                    conn.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger("earthgrid.beacon").error(f"Gamification sync failed for {node_id}: {e}")
 
     return {"status": "ok"}
 
