@@ -830,6 +830,29 @@ def stats_requests():
         return {"total_requests": 0, "total_km2_queried": 0}
 
 
+
+
+@app.get("/stats/uptake")
+async def stats_uptake(period_days: int = 30):
+    """Anonymous uptake statistics for reporting.
+
+    No user identification — only aggregate counts per collection,
+    job type, and time period. Safe for EU Commission reporting.
+    """
+    return stats_engine.uptake_report(period_days=period_days)
+
+
+@app.get("/stats/uptake/csv")
+async def stats_uptake_csv(period_days: int = 30):
+    """Download uptake stats as CSV for reporting."""
+    from fastapi.responses import Response
+    csv_data = stats_engine.uptake_csv(period_days=period_days)
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="earthgrid_uptake_{period_days}d.csv"'},
+    )
+
 @app.get("/stats")
 def node_stats():
     """Detailed node statistics — storage, access, uptime."""
@@ -1307,6 +1330,10 @@ def download_file(
 
     # Track in stats
     stats_engine.record_collection_access(collection_id, access_type="download")
+    stats_engine.record_uptake(
+        collection_id=collection_id, job_type="download",
+        bytes_out=len(data) if isinstance(data, bytes) else 0,
+    )
 
     suffix = f"_{'_'.join(band_list)}" if band_list else ""
     return Response(

@@ -75,6 +75,19 @@ class StatsEngine:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dl_ts ON download_log(timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dl_origin ON download_log(origin)")
 
+            conn.execute("""CREATE TABLE IF NOT EXISTS uptake_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                collection_id TEXT NOT NULL DEFAULT '',
+                job_type TEXT NOT NULL DEFAULT 'sync',
+                bbox TEXT NOT NULL DEFAULT '',
+                temporal_extent TEXT NOT NULL DEFAULT '',
+                bytes_out INTEGER NOT NULL DEFAULT 0,
+                process_ids TEXT NOT NULL DEFAULT ''
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_uptake_ts ON uptake_log(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_uptake_coll ON uptake_log(collection_id)")
+
     def record_chunk_access(self, chunk_sha: str, access_type: str = "read",
                             node_id: str = "", collection_id: str = "",
                             item_id: str = ""):
@@ -335,6 +348,160 @@ class StatsEngine:
             "bandwidth_7d": self.bandwidth_summary(period_hours=168),
         }
 
+
+    def record_uptake(self, collection_id: str, job_type: str = "sync",
+                      bbox: str = "", temporal_extent: str = "",
+                      bytes_out: int = 0, process_ids: str = ""):
+        """Record an anonymous uptake event. NO user info stored."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO uptake_log
+                   (timestamp, collection_id, job_type, bbox, temporal_extent,
+                    bytes_out, process_ids)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (time.time(), collection_id, job_type, bbox, temporal_extent,
+                 bytes_out, process_ids)
+            )
+
+    def uptake_report(self, period_days: int = 30) -> dict:
+        """Anonymous uptake report for EU Commission reporting.
+
+        Returns aggregate statistics only — no user identification possible.
+        """
+        cutoff = time.time() - (period_days * 86400)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            # Total requests + volume
+            totals = conn.execute(
+                """SELECT COUNT(*) as requests,
+                   SUM(bytes_out) as total_bytes,
+                   COUNT(DISTINCT collection_id) as collections_used
+                   FROM uptake_log WHERE timestamp > ?""",
+                (cutoff,)
+            ).fetchone()
+
+            # Per collection
+            by_collection = conn.execute(
+                """SELECT collection_id,
+                   COUNT(*) as requests,
+                   SUM(bytes_out) as total_bytes,
+                   MIN(timestamp) as first_access,
+                   MAX(timestamp) as last_access
+                   FROM uptake_log WHERE timestamp > ?
+                   GROUP BY collection_id
+                   ORDER BY requests DESC""",
+                (cutoff,)
+            ).fetchall()
+
+            # Per job type (sync vs batch vs download)
+            by_type = conn.execute(
+                """SELECT job_type,
+                   COUNT(*) as requests,
+                   SUM(bytes_out) as total_bytes
+                   FROM uptake_log WHERE timestamp > ?
+                   GROUP BY job_type
+                   ORDER BY requests DESC""",
+                (cutoff,)
+            ).fetchall()
+
+            # Monthly trend
+            monthly = conn.execute(
+                """SELECT strftime('%Y-%m', timestamp, 'unixepoch') as month,
+                   COUNT(*) as requests,
+                   SUM(bytes_out) as total_bytes,
+                   COUNT(DISTINCT collection_id) as collections
+                   FROM uptake_log WHERE timestamp > ?
+                   GROUP BY month ORDER BY month""",
+                (cutoff,)
+            ).fetchall()
+
+            # Daily trend (last 30 days)
+            daily = conn.execute(
+                """SELECT date(timestamp, 'unixepoch') as day,
+                   COUNT(*) as requests,
+                   SUM(bytes_out) as total_bytes
+                   FROM uptake_log WHERE timestamp > ?
+                   GROUP BY day ORDER BY day""",
+                (cutoff,)
+            ).fetchall()
+
+            # Process usage (which openEO processes are popular)
+            # process_ids is comma-separated, we aggregate
+            all_procs = conn.execute(
+                """SELECT process_ids FROM uptake_log
+                   WHERE timestamp > ? AND process_ids != ''""",
+                (cutoff,)
+            ).fetchall()
+
+        # Count process usage
+        proc_counts = {}
+        for row in all_procs:
+            for p in row["process_ids"].split(","):
+                p = p.strip()
+                if p:
+                    proc_counts[p] = proc_counts.get(p, 0) + 1
+        top_processes = sorted(proc_counts.items(), key=lambda x: -x[1])[:20]
+
+        return {
+            "report_type": "EarthGrid Uptake Statistics",
+            "period_days": period_days,
+            "privacy": "anonymous — no user identification stored",
+            "summary": {
+                "total_requests": totals["requests"] or 0,
+                "total_gb": round((totals["total_bytes"] or 0) / (1024**3), 3),
+                "collections_accessed": totals["collections_used"] or 0,
+            },
+            "by_collection": [
+                {
+                    "collection": r["collection_id"],
+                    "requests": r["requests"],
+                    "gb": round((r["total_bytes"] or 0) / (1024**3), 3),
+                }
+                for r in by_collection
+            ],
+            "by_job_type": [
+                {"type": r["job_type"], "requests": r["requests"],
+                 "gb": round((r["total_bytes"] or 0) / (1024**3), 3)}
+                for r in by_type
+            ],
+            "top_processes": [{"process": p, "count": c} for p, c in top_processes],
+            "monthly_trend": [
+                {"month": r["month"], "requests": r["requests"],
+                 "gb": round((r["total_bytes"] or 0) / (1024**3), 3),
+                 "collections": r["collections"]}
+                for r in monthly
+            ],
+            "daily_trend": [
+                {"date": r["day"], "requests": r["requests"],
+                 "gb": round((r["total_bytes"] or 0) / (1024**3), 3)}
+                for r in daily
+            ],
+        }
+
+    def uptake_csv(self, period_days: int = 30) -> str:
+        """Export uptake as CSV for Commission reporting."""
+        cutoff = time.time() - (period_days * 86400)
+        import csv, io, datetime
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                """SELECT date(timestamp, 'unixepoch') as day,
+                   collection_id, job_type,
+                   COUNT(*) as requests,
+                   SUM(bytes_out) as total_bytes
+                   FROM uptake_log WHERE timestamp > ?
+                   GROUP BY day, collection_id, job_type
+                   ORDER BY day, collection_id""",
+                (cutoff,)
+            ).fetchall()
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["date", "collection", "job_type", "requests", "bytes", "gb"])
+        for r in rows:
+            w.writerow([r[0], r[1], r[2], r[3], r[4] or 0,
+                        round((r[4] or 0) / (1024**3), 3)])
+        return buf.getvalue()
+
     def cleanup(self, retain_days: int = 90):
         """Remove access logs older than retain_days."""
         cutoff = time.time() - (retain_days * 86400)
@@ -342,4 +509,5 @@ class StatsEngine:
             c1 = conn.execute("DELETE FROM chunk_access WHERE timestamp < ?", (cutoff,)).rowcount
             c2 = conn.execute("DELETE FROM collection_access WHERE timestamp < ?", (cutoff,)).rowcount
             c3 = conn.execute("DELETE FROM bandwidth_log WHERE timestamp < ?", (cutoff,)).rowcount
-        logger.info(f"Stats cleanup: removed {c1} chunk + {c2} collection + {c3} bandwidth records (>{retain_days}d)")
+            c4 = conn.execute("DELETE FROM uptake_log WHERE timestamp < ?", (cutoff,)).rowcount
+        logger.info(f"Stats cleanup: removed {c1} chunk + {c2} collection + {c3} bandwidth + {c4} uptake records (>{retain_days}d)")

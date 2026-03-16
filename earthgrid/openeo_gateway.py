@@ -580,6 +580,23 @@ class OpenEOGateway:
             return m.group(1)
         return None
 
+
+    @staticmethod
+    def _extract_process_ids(graph: dict) -> str:
+        """Extract process names from an openEO process graph (for uptake stats)."""
+        procs = set()
+        def _walk(node):
+            if isinstance(node, dict):
+                if "process_id" in node:
+                    procs.add(node["process_id"])
+                for v in node.values():
+                    _walk(v)
+            elif isinstance(node, list):
+                for item in node:
+                    _walk(item)
+        _walk(graph)
+        return ",".join(sorted(procs))
+
     async def execute_sync(self, process_graph: dict) -> bytes:
         """Execute process graph synchronously and return GeoTIFF bytes.
 
@@ -907,6 +924,13 @@ class OpenEOGateway:
                     self.stats.record_collection_access(
                         req.collection_id, access_type="openeo",
                         bbox=str(req.spatial_extent), time_range=str(req.temporal_extent)
+                    )
+                    self.stats.record_uptake(
+                        collection_id=req.collection_id,
+                        job_type="sync",
+                        bbox=str(req.spatial_extent),
+                        temporal_extent=str(req.temporal_extent),
+                        process_ids=self._extract_process_ids(process_graph),
                     )
 
             result.chunks_local = total_local
