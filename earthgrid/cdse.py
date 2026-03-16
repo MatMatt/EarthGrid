@@ -19,6 +19,34 @@ logger = logging.getLogger("earthgrid.cdse")
 
 # CDSE endpoints
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
+
+# Map CDSE collection+product_type to EarthGrid collection names
+CDSE_TO_EARTHGRID = {
+    ("SENTINEL-2", "S2MSI2A"): "sentinel-2-l2a",
+    ("SENTINEL-2", "S2MSI1C"): "sentinel-2-l1c",
+    ("SENTINEL-1", "IW_GRDH_1S"): "sentinel-1-grd",
+    ("SENTINEL-1", "IW_SLC__1S"): "sentinel-1-slc",
+    ("SENTINEL-3", "OL_1_EFR___"): "sentinel-3-olci",
+    ("SENTINEL-3", "OL_2_LFR___"): "sentinel-3-olci",
+    ("SENTINEL-3", "SL_2_LST___"): "sentinel-3-slstr",
+    ("SENTINEL-3", "SY_2_SYN___"): "sentinel-3-syn",
+    ("SENTINEL-5P", ""): "sentinel-5p",
+}
+
+def _resolve_earthgrid_collection(cdse_collection: str, product_type: str) -> str:
+    """Resolve CDSE collection+product to EarthGrid collection name."""
+    # Try exact match first
+    pt_padded = product_type.ljust(11, '_') if cdse_collection.startswith("SENTINEL-3") else product_type
+    key = (cdse_collection, pt_padded)
+    if key in CDSE_TO_EARTHGRID:
+        return CDSE_TO_EARTHGRID[key]
+    # Try without product_type
+    key2 = (cdse_collection, "")
+    if key2 in CDSE_TO_EARTHGRID:
+        return CDSE_TO_EARTHGRID[key2]
+    # Fallback: lowercase + sanitize
+    return cdse_collection.lower().replace(" ", "-")
+
 ODATA_URL = "https://catalogue.dataspace.copernicus.eu/odata/v1"
 DOWNLOAD_URL = "https://zipper.dataspace.copernicus.eu/odata/v1"
 
@@ -368,6 +396,9 @@ async def fetch_and_ingest(
 
     Returns list of ingested item summaries.
     """
+    # Auto-resolve earthgrid collection name from CDSE collection + product_type
+    if not earthgrid_collection:
+        earthgrid_collection = _resolve_earthgrid_collection(collection, product_type)
     from .ingest import ingest_cog
 
     # Search
