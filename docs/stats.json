@@ -1,10 +1,10 @@
 {
-  "updated": "2026-03-16T06:14:05Z",
-  "version": "0.3.2",
+  "updated": "2026-03-16T06:20:01Z",
+  "version": "",
   "network": {
     "nodes_alive": 2,
     "nodes_total": 2,
-    "total_bytes": 70020930912,
+    "total_bytes": 70050991456,
     "available_storage_gb": 3050.0,
     "redundancy": 1.0
   },
@@ -31,11 +31,7 @@
     "monthly_trend": [],
     "daily_trend": []
   },
-  "ingest": {
-    "total_items_fetched": 0,
-    "total_gb_fetched": 65.21,
-    "daily": []
-  },
+  "ingest": {},
   "km2_requested": 0,
   "operations": [
     {
