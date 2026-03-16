@@ -258,13 +258,13 @@ async def fetch_and_ingest_element84(
     # Try to get grid nodes for distribution
     nodes = []
     if distribute:
-        from . import _FALLBACK_BEACON
+        from . import BOOTSTRAP_PEERS
         try:
             from .config import settings
-            beacon_url = settings.beacon_url or _FALLBACK_BEACON
+            beacon_url = settings.beacon_url or BOOTSTRAP_PEERS[0]
             node_id = local_node_id or settings.node_id
         except Exception:
-            beacon_url = _FALLBACK_BEACON
+            beacon_url = BOOTSTRAP_PEERS[0]
             node_id = local_node_id
 
         nodes = await _get_grid_nodes(beacon_url, node_id)

@@ -729,8 +729,8 @@ async def remote_fetch(
     band_list = [b.strip() for b in bands.split(",")] if bands else None
     
     results = await fetch_and_ingest_element84(
-        chunk_store=app.state.chunk_store,
-        catalog=app.state.catalog,
+        chunk_store=chunk_store,
+        catalog=catalog,
         bbox=bbox_list,
         start_date=start,
         end_date=end,
