@@ -736,7 +736,21 @@ def _redundancy_index() -> float:
 
 
 
-@app.post("/fetch", dependencies=[Depends(_require_admin_auth)])
+def _require_grid_auth(request: Request, x_api_key: str = Depends(_api_key_header)):
+    """Allow fetch from admin key OR LAN peers (registered grid nodes)."""
+    # Admin key always works
+    if settings.admin_key and x_api_key == settings.admin_key:
+        return
+    # Allow LAN requests (grid node delegation)
+    client_ip = request.client.host if request.client else ""
+    if _is_lan_ip(client_ip):
+        return
+    # No keys configured = open
+    if not settings.admin_key and not settings.api_key:
+        return
+    raise HTTPException(401, "Grid fetch requires admin key or LAN access")
+
+@app.post("/fetch", dependencies=[Depends(_require_grid_auth)])
 async def remote_fetch(
     bbox: str = Query(...),
     start: str = Query(None),
@@ -763,6 +777,7 @@ async def remote_fetch(
         bands=band_list,
         limit=limit,
         earthgrid_collection=collection,
+        distribute=False,  # Never re-delegate from a delegated fetch
     )
     
     ingested = [r for r in results if r.get("item_id") and not r.get("skipped")]

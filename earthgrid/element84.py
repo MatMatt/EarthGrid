@@ -276,8 +276,15 @@ async def fetch_and_ingest_element84(
         if full:
             print(f"  \u26a0\ufe0f  Skipping {len(full)} full node(s): {', '.join(n['node_name'] for n in full)}")
 
-    # If we have multiple nodes, distribute items across them
-    if len(nodes) > 1 and distribute:
+    # Check if local node was filtered out (full) but remote nodes exist
+    local_available = any(n["is_local"] for n in nodes)
+    remote_available = [n for n in nodes if not n["is_local"]]
+
+    # If we have nodes to distribute to (even just 1 remote when local is full)
+    if nodes and distribute and (len(nodes) > 1 or (not local_available and remote_available)):
+        # If local node was removed (full), all items go to remote nodes
+        if not local_available and remote_available:
+            print(f"\n\U0001f4e1 Local storage full — delegating all {len(items)} items to remote nodes")
         total_free = sum(n["free_gb"] for n in nodes)
         if total_free <= 0:
             total_free = len(nodes)  # equal split if all report 0
