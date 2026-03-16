@@ -83,7 +83,8 @@ class StatsEngine:
                 bbox TEXT NOT NULL DEFAULT '',
                 temporal_extent TEXT NOT NULL DEFAULT '',
                 bytes_out INTEGER NOT NULL DEFAULT 0,
-                process_ids TEXT NOT NULL DEFAULT ''
+                process_ids TEXT NOT NULL DEFAULT '',
+                bbox_km2 REAL NOT NULL DEFAULT 0
             )""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_uptake_ts ON uptake_log(timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_uptake_coll ON uptake_log(collection_id)")
@@ -349,18 +350,52 @@ class StatsEngine:
         }
 
 
+
+    @staticmethod
+    def _bbox_area_km2(bbox_str: str) -> float:
+        """Calculate approximate area of a WGS84 bbox in km².
+        
+        bbox format: "west,south,east,north" or "[west, south, east, north]"
+        Uses spherical approximation (good enough for reporting).
+        """
+        try:
+            clean = bbox_str.strip("[]() ")
+            if not clean:
+                return 0.0
+            parts = [float(x.strip()) for x in clean.split(",")]
+            if len(parts) != 4:
+                return 0.0
+            west, south, east, north = parts
+            # Handle antimeridian crossing
+            dlon = east - west
+            if dlon < 0:
+                dlon += 360
+            dlat = north - south
+            if dlat <= 0 or dlon <= 0:
+                return 0.0
+            # Approximate area using mid-latitude
+            import math
+            mid_lat = math.radians((north + south) / 2)
+            # 1 degree lat ≈ 111.32 km, 1 degree lon ≈ 111.32 * cos(lat) km
+            km_lat = dlat * 111.32
+            km_lon = dlon * 111.32 * math.cos(mid_lat)
+            return round(km_lat * km_lon, 2)
+        except Exception:
+            return 0.0
+
     def record_uptake(self, collection_id: str, job_type: str = "sync",
                       bbox: str = "", temporal_extent: str = "",
                       bytes_out: int = 0, process_ids: str = ""):
         """Record an anonymous uptake event. NO user info stored."""
+        area = self._bbox_area_km2(bbox)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO uptake_log
                    (timestamp, collection_id, job_type, bbox, temporal_extent,
-                    bytes_out, process_ids)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    bytes_out, process_ids, bbox_km2)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (time.time(), collection_id, job_type, bbox, temporal_extent,
-                 bytes_out, process_ids)
+                 bytes_out, process_ids, area)
             )
 
     def uptake_report(self, period_days: int = 30) -> dict:
@@ -372,11 +407,12 @@ class StatsEngine:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
 
-            # Total requests + volume
+            # Total requests + volume + AOI
             totals = conn.execute(
                 """SELECT COUNT(*) as requests,
                    SUM(bytes_out) as total_bytes,
-                   COUNT(DISTINCT collection_id) as collections_used
+                   COUNT(DISTINCT collection_id) as collections_used,
+                   SUM(bbox_km2) as total_km2
                    FROM uptake_log WHERE timestamp > ?""",
                 (cutoff,)
             ).fetchone()
@@ -386,6 +422,7 @@ class StatsEngine:
                 """SELECT collection_id,
                    COUNT(*) as requests,
                    SUM(bytes_out) as total_bytes,
+                   SUM(bbox_km2) as total_km2,
                    MIN(timestamp) as first_access,
                    MAX(timestamp) as last_access
                    FROM uptake_log WHERE timestamp > ?
@@ -450,6 +487,7 @@ class StatsEngine:
             "summary": {
                 "total_requests": totals["requests"] or 0,
                 "total_gb": round((totals["total_bytes"] or 0) / (1024**3), 3),
+                "total_aoi_km2": round(totals["total_km2"] or 0, 1),
                 "collections_accessed": totals["collections_used"] or 0,
             },
             "by_collection": [
@@ -457,6 +495,7 @@ class StatsEngine:
                     "collection": r["collection_id"],
                     "requests": r["requests"],
                     "gb": round((r["total_bytes"] or 0) / (1024**3), 3),
+                    "aoi_km2": round(r["total_km2"] or 0, 1),
                 }
                 for r in by_collection
             ],
@@ -488,7 +527,8 @@ class StatsEngine:
                 """SELECT date(timestamp, 'unixepoch') as day,
                    collection_id, job_type,
                    COUNT(*) as requests,
-                   SUM(bytes_out) as total_bytes
+                   SUM(bytes_out) as total_bytes,
+                   SUM(bbox_km2) as total_km2
                    FROM uptake_log WHERE timestamp > ?
                    GROUP BY day, collection_id, job_type
                    ORDER BY day, collection_id""",
@@ -496,10 +536,10 @@ class StatsEngine:
             ).fetchall()
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["date", "collection", "job_type", "requests", "bytes", "gb"])
+        w.writerow(["date", "collection", "job_type", "requests", "bytes", "gb", "aoi_km2"])
         for r in rows:
             w.writerow([r[0], r[1], r[2], r[3], r[4] or 0,
-                        round((r[4] or 0) / (1024**3), 3)])
+                        round((r[4] or 0) / (1024**3), 3), round(r[5] or 0, 1)])
         return buf.getvalue()
 
     def cleanup(self, retain_days: int = 90):
