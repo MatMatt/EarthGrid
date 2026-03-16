@@ -250,19 +250,7 @@ earthgrid docker update    # git pull + rebuild + restart
 
 Config is stored in `~/.earthgrid/docker-compose.yml`. Subsequent `docker update` reuses the existing config.
 
-### pip *(coming soon)*
-
-```bash
-pip install earthgrid
-earthgrid setup
-earthgrid start
-```
-
-> ⚠️ PyPI package not yet published. For now, install from source (see below).
-
-Requires Python ≥ 3.9. The node auto-discovers the network via GitHub Pages seeds.
-
-### From source
+### From source *(recommended)*
 
 ```bash
 git clone https://github.com/MatMatt/EarthGrid.git
@@ -271,6 +259,18 @@ pip install -e .
 earthgrid setup
 earthgrid start
 ```
+
+Requires Python ≥ 3.9.
+
+### pip *(coming soon)*
+
+```bash
+pip install earthgrid
+earthgrid setup
+earthgrid start
+```
+
+> PyPI package not yet published.
 
 ---
 
