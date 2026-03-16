@@ -415,7 +415,7 @@ async function discoverBeacon() {
     try {
         // Try beacons.json relative to this page (works on GitHub Pages + local)
         const base = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '');
-        const resp = await fetch(base + '/../beacons.json');
+        const resp = await fetch('beacons.json');
         if (resp.ok) {
             const data = await resp.json();
             const peers = data.bootstrap_peers || data.beacons || [];
