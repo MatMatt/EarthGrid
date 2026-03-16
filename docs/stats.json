@@ -1,10 +1,10 @@
 {
-  "updated": "2026-03-16T06:53:43Z",
-  "version": "",
+  "updated": "2026-03-16T06:54:53Z",
+  "version": "0.3.2",
   "network": {
-    "nodes_alive": 0,
-    "nodes_total": 0,
-    "total_bytes": 0,
+    "nodes_alive": 1,
+    "nodes_total": 1,
+    "total_bytes": 14683315928,
     "available_storage_gb": 0,
     "redundancy": 1.0
   },
@@ -37,6 +37,8 @@
     "collections": 0,
     "daily": []
   },
+  "items": 325,
+  "chunks": 27950,
   "km2_requested": 0,
   "operations": [
     {
