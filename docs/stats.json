@@ -1,10 +1,10 @@
 {
-  "updated": "2026-03-16T07:50:01Z",
+  "updated": "2026-03-16T08:00:02Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 2,
     "nodes_total": 2,
-    "total_bytes": 70480291168,
+    "total_bytes": 70631655776,
     "available_storage_gb": 3050.0,
     "redundancy": 1.0
   },
@@ -20,16 +20,42 @@
     "period_days": 365,
     "privacy": "anonymous \u2014 no user identification stored",
     "summary": {
-      "total_requests": 0,
-      "total_gb": 0.0,
+      "total_requests": 2,
+      "total_gb": 0.449,
       "total_aoi_km2": 0,
-      "collections_accessed": 0
+      "collections_accessed": 1
     },
-    "by_collection": [],
-    "by_job_type": [],
+    "by_collection": [
+      {
+        "collection": "sentinel-2-l2a",
+        "requests": 2,
+        "gb": 0.449,
+        "aoi_km2": 0
+      }
+    ],
+    "by_job_type": [
+      {
+        "type": "download",
+        "requests": 2,
+        "gb": 0.449
+      }
+    ],
     "top_processes": [],
-    "monthly_trend": [],
-    "daily_trend": []
+    "monthly_trend": [
+      {
+        "month": "2026-03",
+        "requests": 2,
+        "gb": 0.449,
+        "collections": 1
+      }
+    ],
+    "daily_trend": [
+      {
+        "date": "2026-03-16",
+        "requests": 2,
+        "gb": 0.449
+      }
+    ]
   },
   "ingest": {
     "total_items_fetched": 0,
@@ -38,7 +64,7 @@
     "daily": []
   },
   "items": 325,
-  "chunks": 28306,
+  "chunks": 28542,
   "km2_requested": 0,
   "operations": [
     {
