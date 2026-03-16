@@ -67,6 +67,7 @@ stats = {
         'leaderboard_groups': fetch('/gamification/leaderboard?type=groups&limit=20'),
         'achievements': fetch('/gamification/achievements'),
         'feed': fetch('/gamification/feed?limit=30'),
+        'economy': fetch('/gamification/economy'),
     },
 }
 print(json.dumps(stats, indent=2))
