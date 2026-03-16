@@ -645,9 +645,8 @@ def _cmd_users(args):  # handles both "sources" and "users"
             return
         for u in users:
             status = "✓" if u["is_enabled"] and u["is_healthy"] else "✗"
-            print(f"  {status} [{u['id']}] {u['name']} ({u['provider']}/{u['username']}) "
-                  f"— {u['success_count']} ok, {u['fail_count']} fail, "
-                  f"{u['total_downloaded_gb']:.1f} GB downloaded")
+            print(f"  {status} [{u['id']}] {u['name']} ({u['provider']}/{u['username']})"
+                  f"")
 
     elif args.users_action == "add":
         password = args.password
