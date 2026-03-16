@@ -20,6 +20,36 @@ MAX_CONCURRENT = 10
 CHUNK_TIMEOUT = 30
 
 
+
+def _ensure_wgs84_bbox(bbox: list, properties: dict) -> list:
+    """Ensure bbox is in WGS84. If UTM detected, reproject."""
+    if not bbox or len(bbox) < 4:
+        return bbox
+    w, s, e, n = bbox[:4]
+    # Quick check: WGS84 coords are within [-180,180] x [-90,90]
+    if -180 <= w <= 180 and -90 <= s <= 90 and -180 <= e <= 180 and -90 <= n <= 90:
+        return bbox
+    # Likely projected coords — try to get CRS from properties
+    epsg = properties.get("proj:epsg") or properties.get("earthgrid:crs", "")
+    if isinstance(epsg, str) and epsg.startswith("EPSG:"):
+        epsg = int(epsg.split(":")[1])
+    if not epsg:
+        # Guess from common S2 UTM zones based on easting range
+        if 100000 < w < 900000:
+            # Could be UTM — try to extract zone from item ID
+            epsg = 32633  # fallback to zone 33
+    if epsg:
+        try:
+            from rasterio.crs import CRS
+            from rasterio.warp import transform_bounds
+            src = CRS.from_epsg(epsg)
+            if not src.is_geographic:
+                nw, ns, ne, nn = transform_bounds(src, CRS.from_epsg(4326), w, s, e, n)
+                return [round(nw, 6), round(ns, 6), round(ne, 6), round(nn, 6)]
+        except Exception:
+            pass
+    return bbox
+
 class Replicator:
     """Replicate catalog and chunks from a remote peer."""
 
@@ -159,7 +189,7 @@ class Replicator:
                         id=item_data["id"],
                         collection=item_data["collection"],
                         geometry=item_data.get("geometry", {}),
-                        bbox=item_data.get("bbox", []),
+                        bbox=_ensure_wgs84_bbox(item_data.get("bbox", []), item_data.get("properties", {})),
                         properties=item_data.get("properties", {}),
                         assets=item_data.get("assets", {}),
                         chunk_hashes=chunk_hashes,
