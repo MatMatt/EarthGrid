@@ -28,8 +28,8 @@ services:
       - EARTHGRID_IDENTITY_KEY_PATH=/data/.node_key
       - EARTHGRID_USERS_DB=/data/users.db
       # Uncomment to also run as beacon:
-      # - EARTHGRID_ALSO_BEACON=true
-      # - EARTHGRID_PUBLIC_URL=https://your-domain.com/earthgrid
+      - EARTHGRID_ALSO_BEACON=true
+      - EARTHGRID_PUBLIC_URL=https://mattiuzzi.zapto.org/earthgrid
     env_file:
       - .env
     restart: unless-stopped

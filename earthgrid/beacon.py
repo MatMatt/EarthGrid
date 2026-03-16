@@ -600,6 +600,16 @@ async def node_heartbeat(
                 peers_count=0,
                 uptime_seconds=uptime_seconds or 0,
             )
+            # Sync items/bytes from node registry into gamification
+            if item_count is not None or chunks_bytes is not None:
+                import sqlite3
+                with sqlite3.connect(engine.db_path) as conn:
+                    if item_count is not None:
+                        conn.execute("UPDATE node_scores SET items_ingested=? WHERE node_id=?",
+                                     (item_count, node_id))
+                    if chunks_bytes is not None:
+                        conn.execute("UPDATE node_scores SET bytes_stored=? WHERE node_id=?",
+                                     (chunks_bytes, node_id))
     except Exception:
         pass
 
