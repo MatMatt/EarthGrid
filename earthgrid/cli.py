@@ -869,33 +869,41 @@ def _cmd_fetch(args):
         else:
             print(f"Fetching from Element84 (bbox={args.bbox}, cloud2264{args.cloud}%, no limit)...")
         distribute = not getattr(args, 'no_distribute', False)
-        results = asyncio.run(fetch_and_ingest_element84(
-            chunk_store=cs,
-            catalog=cat,
-            bbox=bbox,
-            start_date=args.start,
-            end_date=args.end,
-            cloud_cover=args.cloud,
-            bands=band_list,
-            limit=args.limit,
-            earthgrid_collection=args.collection,
-            distribute=distribute,
-        ))
+        try:
+            results = asyncio.run(fetch_and_ingest_element84(
+                chunk_store=cs,
+                catalog=cat,
+                bbox=bbox,
+                start_date=args.start,
+                end_date=args.end,
+                cloud_cover=args.cloud,
+                bands=band_list,
+                limit=args.limit,
+                earthgrid_collection=args.collection,
+                distribute=distribute,
+            ))
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Interrupted — partial results saved. Already ingested data is safe.")
+            return
     else:
         print(f"Fetching from CDSE (bbox={args.bbox}, cloud≤{args.cloud}%)...")
-        results = asyncio.run(fetch_and_ingest(
-            cdse_client=client,
-            chunk_store=cs,
-            catalog=cat,
-            bbox=bbox,
-            start_date=args.start,
-            end_date=args.end,
-            cloud_cover=args.cloud,
-            bands=band_list,
-            product_type=args.product_type,
-            limit=args.limit,
-            earthgrid_collection=args.collection,
-        ))
+        try:
+            results = asyncio.run(fetch_and_ingest(
+                cdse_client=client,
+                chunk_store=cs,
+                catalog=cat,
+                bbox=bbox,
+                start_date=args.start,
+                end_date=args.end,
+                cloud_cover=args.cloud,
+                bands=band_list,
+                product_type=args.product_type,
+                limit=args.limit,
+                earthgrid_collection=args.collection,
+            ))
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Interrupted — partial results saved. Already ingested data is safe.")
+            return
 
     ingested = [r for r in results if r.get("item_id") and not r.get("skipped")]
     skipped = [r for r in results if r.get("skipped")]

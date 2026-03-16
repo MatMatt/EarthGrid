@@ -183,7 +183,7 @@ function renderLeaderboard(data) {
     return;
   }
   let h = '<table class="lb-table"><thead><tr><th>#</th><th>Name</th><th>Score</th>';
-  if (currentBoard === 'nodes') h += '<th>Items</th><th>Stored</th><th>Served</th><th>Streak</th>';
+  if (currentBoard === 'nodes') h += '<th>Items</th><th>Stored</th><th>Pledged</th><th>Served</th><th>Streak</th>';
   else if (currentBoard === 'users') h += '<th>Nodes</th><th>Items</th><th>Stored</th>';
   else h += '<th>Members</th>';
   h += '</tr></thead><tbody>';
@@ -194,6 +194,7 @@ function renderLeaderboard(data) {
       h += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
       h += '<td>' + (e.items||0).toLocaleString() + '</td>';
       h += '<td>' + (e.gb_stored||0) + ' GB</td>';
+      h += '<td>' + (e.gb_pledged||0) + ' GB</td>';
       h += '<td>' + (e.gb_served||0) + ' GB</td>';
       h += '<td>' + (e.streak||0) + 'd</td>';
     } else if (currentBoard === 'users') {

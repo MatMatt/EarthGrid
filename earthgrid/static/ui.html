@@ -157,6 +157,18 @@ input::placeholder { color: var(--muted); }
 .kv:last-child { border-bottom: none; }
 .kv-key { color: var(--muted); }
 .kv-val { font-weight: 500; text-align: right; word-break: break-all; max-width: 70%; }
+
+.score-badge { display:inline-flex; align-items:center; gap:4px; background:var(--accent); color:#0d1117; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:700; }
+.score-info-btn { cursor:pointer; opacity:0.6; transition:opacity 0.15s; font-size:13px; }
+.score-info-btn:hover { opacity:1; }
+.score-modal-bg { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:1000; display:flex; align-items:center; justify-content:center; }
+.score-modal { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:480px; width:90%; max-height:80vh; overflow-y:auto; }
+.score-modal h3 { margin:0 0 12px; font-size:16px; }
+.score-modal table { width:100%; border-collapse:collapse; font-size:13px; }
+.score-modal td { padding:6px 8px; border-bottom:1px solid var(--border); }
+.score-modal td:last-child { text-align:right; font-weight:600; color:var(--accent); }
+.score-modal .close-btn { float:right; cursor:pointer; font-size:18px; opacity:0.5; }
+.score-modal .close-btn:hover { opacity:1; }
 </style>
 </head>
 <body>
@@ -826,6 +838,19 @@ async function loadNetwork() {
       return;
     }
 
+    // Fetch gamification scores and merge
+    let scoreMap = {};
+    try {
+      const gData = await apiFetch('/gamification/leaderboard?type=nodes&limit=100');
+      for (const e of (gData.entries || [])) {
+        scoreMap[e.node_id] = e.score;
+      }
+    } catch {}
+    for (const n of nodes) {
+      if (scoreMap[n.node_id] !== undefined) n.score = scoreMap[n.node_id];
+      else if (scoreMap[n.node_name] !== undefined) n.score = scoreMap[n.node_name];
+    }
+
     // Highlight current node
     const localId = nodeInfo?.node_id;
 
@@ -1017,6 +1042,39 @@ async function init() {
 }
 
 init();
+// ============================================================
+// Scoring Info
+// ============================================================
+function showScoreInfo() {
+  const existing = document.querySelector('.score-modal-bg');
+  if (existing) existing.remove();
+  const div = document.createElement('div');
+  div.className = 'score-modal-bg';
+  div.onclick = function(e) { if (e.target === div) div.remove(); };
+  div.innerHTML = `<div class="score-modal">
+    <span class="close-btn" onclick="this.closest('.score-modal-bg').remove()">&times;</span>
+    <h3>How Scores Are Calculated</h3>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 16px">
+      Scores reflect each node's contribution to the EarthGrid network.
+      They update automatically with every heartbeat.
+    </p>
+    <table>
+      <tr><td>⏱️ Uptime</td><td>10 pts / day online</td></tr>
+      <tr><td>💾 Storage Pledged</td><td>5 pts / GB pledged</td></tr>
+      <tr><td>📦 Data Ingested</td><td>1 pt / item</td></tr>
+      <tr><td>📡 Data Served</td><td>3 pts / GB served to peers</td></tr>
+      <tr><td>🔍 Queries Answered</td><td>1 pt / 100 queries</td></tr>
+      <tr><td>🔥 Streak</td><td>2 pts / consecutive day online</td></tr>
+    </table>
+    <p style="color:var(--muted);font-size:12px;margin:16px 0 0">
+      Nodes participate anonymously by default. Opt in via the CLI
+      (<code>earthgrid gamification opt-in</code>) to link your score
+      to a username and appear on the leaderboard.
+    </p>
+  </div>`;
+  document.body.appendChild(div);
+}
+
 </script>
 </body>
 </html>
