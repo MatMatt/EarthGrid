@@ -30,14 +30,14 @@ async def search_element84(
     collection: str = "sentinel-2-l2a",
 ) -> list[dict]:
     """Search Element84 STAC for items."""
-    max_per_page = 100
+    max_per_page = 250
     target = limit if limit > 0 else 10000
     body = {
         "collections": [collection],
         "bbox": list(bbox),
         "limit": min(target, max_per_page),
         "query": {"eo:cloud_cover": {"lte": cloud_cover}},
-        "sortby": [{"field": "properties.datetime", "direction": "desc"}],
+        # sortby removed for speed — results sorted client-side after fetch
     }
     if start_date or end_date:
         start = start_date or "2015-01-01"
@@ -45,7 +45,14 @@ async def search_element84(
         body["datetime"] = f"{start}T00:00:00Z/{end}T23:59:59Z"
 
     items = []
-    async with httpx.AsyncClient(timeout=30) as client:
+    # Only fetch needed fields to reduce payload
+    body["fields"] = {
+        "include": ["id", "bbox", "geometry", "properties.datetime",
+                     "properties.eo:cloud_cover", "properties.grid:code",
+                     "properties.s2:mgrs_tile", "assets"],
+        "exclude": ["links"]
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
         while len(items) < target:
             body["limit"] = min(target - len(items), max_per_page)
             resp = await client.post(f"{STAC_API}/search", json=body)
@@ -55,6 +62,11 @@ async def search_element84(
             if not page:
                 break
             items.extend(page)
+            matched = data.get("numberMatched") or data.get("context", {}).get("matched")
+            if matched:
+                print(f"    🔍 Found {len(items)}/{matched} items...", end="", flush=True)
+            else:
+                print(f"    🔍 Found {len(items)} items...", end="", flush=True)
             next_link = None
             for link in data.get("links", []):
                 if link.get("rel") == "next":
@@ -66,6 +78,11 @@ async def search_element84(
                 body.update(next_link)
             else:
                 break
+    # Sort by date descending (client-side, since we removed server-side sort)
+    items.sort(key=lambda x: x.get("properties", {}).get("datetime", ""), reverse=True)
+    if items:
+        print()  # newline after progress counter
+
     results = []
     for item in items:
         props = item.get("properties", {})
