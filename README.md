@@ -5,7 +5,7 @@ Distributed storage for Earth observation data.
 **No single point of failure. No vendor lock-in. Community-driven.**
 
 [![Live Dashboard](https://img.shields.io/badge/dashboard-live-brightgreen)](https://matmatt.github.io/EarthGrid/)
-[![Python](https://img.shields.io/badge/python-≥3.9-blue)](https://pypi.org/project/earthgrid/)
+[![Python](https://img.shields.io/badge/python-≥3.9-blue)](https://github.com/MatMatt/EarthGrid)
 [![License](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSE)
 
 ## What is EarthGrid?
@@ -61,12 +61,14 @@ EarthGrid stores **only official data** from sources like Copernicus, Sentinel, 
 
 ### Bootstrap & Discovery
 
-New nodes discover the network via a seed list hosted on GitHub Pages:
+New nodes discover the network via a hardcoded list of bootstrap peers (compiled into the package, like Bitcoin seed nodes):
 
 1. `earthgrid start` (no config needed)
-2. Fetches `peers.json` from GitHub Pages → finds beacon URL
-3. Registers with beacon → learns about other nodes via gossip
-4. GitHub is only needed for initial discovery — after that, the node is self-sufficient
+2. Contacts bootstrap peers from the built-in list → finds the network
+3. Registers with a beacon → learns about other nodes via gossip
+4. Bootstrap list is only needed for initial discovery — after that, the node is self-sufficient
+
+Custom bootstrap peers can be added via `EARTHGRID_BOOTSTRAP_PEERS` env var or `~/.earthgrid/config.json`.
 
 ---
 
@@ -433,6 +435,8 @@ Processing results are **ephemeral** — computed on-the-fly and returned direct
 | `GET /process/operations` | List available operations |
 | `GET /openeo/collections` | openEO collections |
 | `GET /openeo/processes` | openEO supported processes |
+| `GET /stats/uptake` | Anonymous uptake report (requests, GB, km²) |
+| `GET /stats/uptake/csv` | Uptake CSV export for reporting |
 
 ### Protected endpoints (API key required)
 
@@ -462,9 +466,9 @@ Processing results are **ephemeral** — computed on-the-fly and returned direct
 
 Live network stats: **[matmatt.github.io/EarthGrid](https://matmatt.github.io/EarthGrid/)**
 
-Shows: Network nodes, km² coverage per sensor, redundancy index, km² queried, total storage.
+Shows: Network nodes, km² coverage per sensor, redundancy index, total storage, and anonymous uptake statistics (requests, GB delivered, km² queried).
 
-Auto-updated every 30 seconds. Seed list (`peers.json`) updated every 10 minutes from beacon.
+Auto-updated every 30 seconds. Includes CSV export for reporting.
 
 ---
 

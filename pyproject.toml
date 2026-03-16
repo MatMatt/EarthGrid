@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "earthgrid"
-version = "0.2.0"
+version = "0.3.2"
 description = "Distributed storage and access for satellite imagery and Earth observation products"
 requires-python = ">=3.9"
 license = "EUPL-1.2"
