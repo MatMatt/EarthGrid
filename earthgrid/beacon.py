@@ -174,7 +174,7 @@ class BeaconRegistry:
                 # The regular heartbeat timeout (300s) takes over from here.
                 now = time.time()
                 if self._nodes_cache:
-                    log.info(f"Beacon startup: restoring {len(self._nodes_cache)} persisted nodes")
+                    logger.info(f"Beacon startup: restoring {len(self._nodes_cache)} persisted nodes")
                     for node in self._nodes_cache.values():
                         node.last_seen = now
                     # Update DB too
