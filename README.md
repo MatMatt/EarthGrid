@@ -166,7 +166,7 @@ EarthGrid can fetch from multiple upstream providers. **All data is stored as Cl
 | **Element84** (AWS) | ❌ No | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG — fastest ingest |
 | **CDSE** (Copernicus) | ✅ Free | S1, S2, S3, S5P, CLMS, full archive | JP2000 → converted to COG on ingest |
 | **WEkEO** | 🔜 Coming soon | C3S, CAMS | Climate & atmosphere services |
-| **CMEMS** | ✅ Free | Marine data | Ocean & marine products |
+| *More sources* | | | *Coming soon (CMEMS, etc.)* |
 
 ### Which source should I use?
 
@@ -200,7 +200,6 @@ Each Copernicus Service has its own licence. Common requirements:
 | Service | Licence | Citation |
 |---|---|---|
 | **CLMS** (Land) | [Copernicus Land](https://land.copernicus.eu/en/data-policy) | *"© Copernicus Land Monitoring Service [Year], EEA"* |
-| **CMEMS** (Marine) | [Copernicus Marine](https://marine.copernicus.eu/user-corner/service-commitments-and-licence) | Product-specific DOI (see product page) |
 | **C3S** (Climate) | [Copernicus Climate](https://cds.climate.copernicus.eu/disclaimer) | *"Contains modified Copernicus Climate Change Service information [Year]"* |
 | **CAMS** (Atmosphere) | [Copernicus Atmosphere](https://ads.atmosphere.copernicus.eu/disclaimer) | *"Contains modified Copernicus Atmosphere Monitoring Service information [Year]"* |
 
