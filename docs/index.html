@@ -410,204 +410,126 @@ earthgrid start</code></pre>
 
 <script>
 // Discover beacon from beacons.json (same repo), fallback to localhost
-let BEACON = 'http://localhost:8400';
-async function discoverBeacon() {
-    try {
-        // Try beacons.json relative to this page (works on GitHub Pages + local)
-        const base = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '');
-        const resp = await fetch('beacons.json');
-        if (resp.ok) {
-            const data = await resp.json();
-            const peers = data.bootstrap_peers || data.beacons || [];
-            for (const p of peers) {
-                try {
-                    const h = await fetch(p.url.replace(/\/$/, '') + '/health', {signal: AbortSignal.timeout(5000)});
-                    if (h.ok) return p.url.replace(/\/$/, '');
-                } catch {}
-            }
-        }
-    } catch {}
-    // If on a non-GH-Pages host, try self
-    const loc = window.location;
-    if (loc.hostname !== 'localhost' && !loc.hostname.startsWith('127.') && !loc.hostname.endsWith('github.io')) {
-        return loc.origin;
-    }
-    return 'http://localhost:8400';
-}
-
+// Load from static stats.json (updated every 10 min by cron)
 function sensorLabel(col) {
-  // sentinel-2-l2a → Sentinel-2 L2A
   return col.replace(/_derived$/, '')
     .replace(/sentinel-(\d+)-(.+)/i, (_, n, lvl) => 'Sentinel-' + n + ' ' + lvl.toUpperCase())
     .replace(/landsat-(.+)/i, (_, rest) => 'Landsat ' + rest.toUpperCase());
 }
 
+function fmtBytes(b) { return b >= 1e12 ? (b/1e12).toFixed(1)+' TB' : (b/1e9).toFixed(1)+' GB'; }
+function fmtGB(gb) { return gb >= 1000 ? (gb/1000).toFixed(1)+' TB' : gb.toFixed(0)+' GB'; }
+function fmtKm2(k) { return k >= 1e6 ? (k/1e6).toFixed(1)+'M' : k >= 1000 ? (k/1000).toFixed(0)+'k' : k.toFixed(0); }
+
 async function load() {
   try {
-    // Root status
-    const r = await fetch(BEACON + '/');
+    const r = await fetch('stats.json?t=' + Date.now());
+    if (!r.ok) throw new Error('stats.json not found');
     const d = await r.json();
+    const net = d.network || {};
 
-    // Aggregate storage from all registered nodes
-    const nr2 = await fetch(BEACON + '/nodes');
-    const nd2 = await nr2.json();
-    const allN = nd2.nodes || [];
-    let totalBytes = 0;
-    for (const n of allN) {
-      totalBytes += n.chunks_bytes || 0;
-    }
-    // Fallback: if no nodes registered, use beacon's own stats
-    if (totalBytes === 0) totalBytes = d.chunks_bytes || d.earthgrid?.chunks_bytes || 0;
-
-    // Available storage: sum of storage_limit_gb from all nodes
-    let totalAvailGB = 0;
-    for (const n of allN) {
-      totalAvailGB += n.storage_limit_gb || 0;
-    }
-    document.getElementById('vAvailStorage').textContent = totalAvailGB >= 1000 ? (totalAvailGB / 1000).toFixed(1) + ' TB' : totalAvailGB.toFixed(0) + ' GB';
-    document.getElementById('sAvailStorage').classList.remove('loading');
-    // Compute network-wide redundancy from beacon
-    try {
-      const repR = await fetch(BEACON + '/replication/health');
-      const repD = await repR.json();
-      document.getElementById('vRedundancy').textContent = (repD.average_replication || 1.0).toFixed(1) + 'x';
-    } catch(e) {
-      document.getElementById('vRedundancy').textContent = (d.redundancy_index || 1.0) + 'x';
-    }
-    document.getElementById('vStorage').textContent = totalBytes >= 1e12 ? (totalBytes / 1e12).toFixed(1) + ' TB' : (totalBytes / 1e9).toFixed(1) + ' GB';
-    if (d.version) document.getElementById('ver').textContent = d.version;
-    document.querySelectorAll('.stat.loading').forEach(s => s.classList.remove('loading'));
-
-    // km² requested
-    try {
-      const rr = await fetch(BEACON + '/stats/requests');
-      const rd = await rr.json();
-      document.getElementById('vRequested').textContent = (rd.total_km2_queried || rd.total_km2_requested || 0).toLocaleString();
-      document.getElementById('sRequested').classList.remove('loading');
-    } catch(e) {
-      document.getElementById('vRequested').textContent = '0';
-    }
-
-    // Coverage per sensor — from beacon (aggregates all nodes server-side)
-    let sensors = {};
-    try {
-      const cr = await fetch(BEACON + '/stats/coverage');
-      const cd = await cr.json();
-      sensors = cd.sensors || {};
-    } catch(e) {}
-
-    // Compute GB per collection from nodes
-    let colBytes = {};
-    for (const n of allN) {
-      for (const col of (n.collections || [])) {
-        colBytes[col] = (colBytes[col] || 0) + (n.chunks_bytes || 0);
-      }
-    }
-    let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">GB</th><th class="num">Tiles</th><th class="num">Items</th></tr></thead><tbody>';
-    for (const [col, s] of Object.entries(sensors).sort((a,b) => (b[1].items||0) - (a[1].items||0))) {
-      const gb = (colBytes[col] || 0) / 1e9;
-      html += '<tr>';
-      html += '<td class="sensor">' + sensorLabel(col) + '</td>';
-      html += '<td class="num">' + gb.toFixed(1) + '</td>';
-      html += '<td class="num">' + s.tiles + '</td>';
-      html += '<td class="num">' + s.items + '</td>';
-      html += '</tr>';
-    }
-    html += '</tbody></table>';
-    document.getElementById('coverageTable').innerHTML = html;
-
-    // Nodes (from beacon — counts all alive nodes including LAN-only)
-    document.getElementById('vNodes').textContent = allN.filter(n => n.alive).length;
+    // Stat cards
+    document.getElementById('vNodes').textContent = net.nodes_alive || 0;
     document.getElementById('sNodes').classList.remove('loading');
 
+    document.getElementById('vAvailStorage').textContent = fmtGB(net.available_storage_gb || 0);
+    document.getElementById('sAvailStorage').classList.remove('loading');
+
+    document.getElementById('vRedundancy').textContent = (net.redundancy || 1.0) + 'x';
+    document.getElementById('sRedundancy').classList.remove('loading');
+
+    document.getElementById('vStorage').textContent = fmtBytes(net.total_bytes || 0);
+    document.getElementById('sStorage').classList.remove('loading');
+
+    document.getElementById('vRequested').textContent = fmtKm2(d.km2_requested || 0);
+    document.getElementById('sRequested').classList.remove('loading');
+
+    if (d.version) document.getElementById('ver').textContent = d.version;
+
+    // Coverage table
+    const sensors = d.coverage || {};
+    if (Object.keys(sensors).length > 0) {
+      let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">Tiles</th><th class="num">Items</th></tr></thead><tbody>';
+      for (const [col, s] of Object.entries(sensors).sort((a,b) => (b[1].items||0) - (a[1].items||0))) {
+        html += '<tr><td class="sensor">' + sensorLabel(col) + '</td>';
+        html += '<td class="num">' + (s.tiles||0) + '</td>';
+        html += '<td class="num">' + (s.items||0) + '</td></tr>';
+      }
+      html += '</tbody></table>';
+      document.getElementById('coverageTable').innerHTML = html;
+    }
+
     // Operations
-    const or2 = await fetch(BEACON + '/process/operations');
-    const od = await or2.json();
+    const ops = d.operations || [];
     let oh = '';
-    (od.operations || []).forEach(o => {
-      oh += '<div class="op"><span class="opname">' + o.name + '</span><br><span style="color:var(--dim)">' + o.description + '</span></div>';
-    });
+    ops.forEach(o => { oh += '<div class="op"><span class="opname">' + o.name + '</span><br><span style="color:var(--dim)">' + o.description + '</span></div>'; });
     document.getElementById('opsList').innerHTML = oh || '<em>None</em>';
 
     // --- Uptake Statistics ---
-    try {
-      const ur = await fetch(BEACON + '/stats/uptake?period_days=30');
-      const ud = await ur.json();
-      const s = ud.summary || {};
+    const uptake = d.uptake || {};
+    const us = uptake.summary || {};
 
-      // Top stat cards
-      document.getElementById('vUptakeReq').textContent = (s.total_requests || 0).toLocaleString();
-      document.getElementById('sUptakeReq').classList.remove('loading');
-      document.getElementById('vUptakeGB').textContent = (s.total_gb || 0).toFixed(1);
-      document.getElementById('sUptakeGB').classList.remove('loading');
-      const km2 = s.total_aoi_km2 || 0;
-      document.getElementById('vUptakeKm2').textContent = km2 >= 1e6 ? (km2/1e6).toFixed(1) + 'M' : km2 >= 1000 ? (km2/1000).toFixed(0) + 'k' : km2.toFixed(0);
-      document.getElementById('sUptakeKm2').classList.remove('loading');
+    document.getElementById('vUptakeReq').textContent = (us.total_requests || 0).toLocaleString();
+    document.getElementById('sUptakeReq').classList.remove('loading');
+    document.getElementById('vUptakeGB').textContent = (us.total_gb || 0).toFixed(1);
+    document.getElementById('sUptakeGB').classList.remove('loading');
+    document.getElementById('vUptakeKm2').textContent = fmtKm2(us.total_aoi_km2 || 0);
+    document.getElementById('sUptakeKm2').classList.remove('loading');
 
-      // CSV download link
-      document.getElementById('csvLink').href = BEACON + '/stats/uptake/csv?period_days=30';
-
-      // Per-collection table
-      const cols = ud.by_collection || [];
-      if (cols.length > 0) {
-        const maxReq = Math.max(...cols.map(c => c.requests));
-        let th = '<table class="cov-table"><thead><tr><th>Collection</th><th class="num">Requests</th><th class="num">GB</th><th class="num">km²</th><th style="width:40%"></th></tr></thead><tbody>';
-        for (const c of cols) {
-          const pct = maxReq > 0 ? (c.requests / maxReq * 100) : 0;
-          const km2val = (c.aoi_km2 || 0);
-          const km2str = km2val >= 1e6 ? (km2val/1e6).toFixed(1) + 'M' : km2val >= 1000 ? (km2val/1000).toFixed(0) + 'k' : km2val.toFixed(0);
-          th += '<tr>';
-          th += '<td class="sensor">' + sensorLabel(c.collection) + '</td>';
-          th += '<td class="num">' + c.requests.toLocaleString() + '</td>';
-          th += '<td class="num">' + (c.gb || 0).toFixed(1) + '</td>';
-          th += '<td class="num">' + km2str + '</td>';
-          th += '<td><div style="background:var(--accent);height:14px;border-radius:3px;width:' + pct + '%;opacity:0.6"></div></td>';
-          th += '</tr>';
-        }
-        th += '</tbody></table>';
-        document.getElementById('uptakeTable').innerHTML = th;
-      } else {
-        document.getElementById('uptakeTable').innerHTML = '<em style="color:var(--dim)">No usage data yet</em>';
+    // Per-collection table
+    const cols = uptake.by_collection || [];
+    if (cols.length > 0) {
+      const maxReq = Math.max(...cols.map(c => c.requests));
+      let th = '<table class="cov-table"><thead><tr><th>Collection</th><th class="num">Requests</th><th class="num">GB</th><th class="num">km²</th><th style="width:40%"></th></tr></thead><tbody>';
+      for (const c of cols) {
+        const pct = maxReq > 0 ? (c.requests / maxReq * 100) : 0;
+        th += '<tr><td class="sensor">' + sensorLabel(c.collection) + '</td>';
+        th += '<td class="num">' + c.requests.toLocaleString() + '</td>';
+        th += '<td class="num">' + (c.gb||0).toFixed(1) + '</td>';
+        th += '<td class="num">' + fmtKm2(c.aoi_km2||0) + '</td>';
+        th += '<td><div style="background:var(--accent);height:14px;border-radius:3px;width:' + pct + '%;opacity:0.6"></div></td></tr>';
       }
-
-      // Daily trend mini-chart
-      const daily = ud.daily_trend || [];
-      if (daily.length > 1) {
-        const maxDay = Math.max(...daily.map(d => d.requests));
-        let bars = '<div style="color:var(--dim);font-size:0.8rem;margin-bottom:4px">Daily requests (30d)</div><div class="trend-chart">';
-        for (const d of daily) {
-          const h = maxDay > 0 ? Math.max(2, (d.requests / maxDay) * 60) : 2;
-          bars += '<div class="trend-bar" style="height:' + h + 'px" data-tip="' + d.date + ': ' + d.requests + ' req"></div>';
-        }
-        bars += '</div>';
-        document.getElementById('uptakeTrend').innerHTML = bars;
-      }
-
-      // Top processes
-      const procs = ud.top_processes || [];
-      if (procs.length > 0) {
-        let ph = '<div style="color:var(--dim);font-size:0.8rem;margin-top:1rem;margin-bottom:4px">Top openEO processes</div><div class="ops">';
-        for (const p of procs.slice(0, 10)) {
-          ph += '<div class="op"><span class="opname">' + p.process + '</span> <span style="color:var(--dim)">' + p.count + 'x</span></div>';
-        }
-        ph += '</div>';
-        document.getElementById('uptakeTrend').innerHTML += ph;
-      }
-
-    } catch(e) {
-      document.getElementById('vUptakeReq').textContent = '—';
-      document.getElementById('vUptakeGB').textContent = '—';
-      document.getElementById('vUptakeKm2').textContent = '—';
-      console.error('Uptake load error:', e);
+      th += '</tbody></table>';
+      document.getElementById('uptakeTable').innerHTML = th;
+    } else {
+      document.getElementById('uptakeTable').innerHTML = '<em style="color:var(--dim)">No usage data yet</em>';
     }
 
+    // Daily trend
+    const daily = uptake.daily_trend || [];
+    if (daily.length > 1) {
+      const maxDay = Math.max(...daily.map(d => d.requests));
+      let bars = '<div style="color:var(--dim);font-size:0.8rem;margin-bottom:4px">Daily requests (last year)</div><div class="trend-chart">';
+      for (const dd of daily) {
+        const h = maxDay > 0 ? Math.max(2, (dd.requests / maxDay) * 60) : 2;
+        bars += '<div class="trend-bar" style="height:' + h + 'px" data-tip="' + dd.date + ': ' + dd.requests + ' req"></div>';
+      }
+      bars += '</div>';
+      document.getElementById('uptakeTrend').innerHTML = bars;
+    }
+
+    // Top processes
+    const procs = uptake.top_processes || [];
+    if (procs.length > 0) {
+      let ph = '<div style="color:var(--dim);font-size:0.8rem;margin-top:1rem;margin-bottom:4px">Top openEO processes</div><div class="ops">';
+      for (const p of procs.slice(0, 10)) {
+        ph += '<div class="op"><span class="opname">' + p.process + '</span> <span style="color:var(--dim)">' + p.count + 'x</span></div>';
+      }
+      ph += '</div>';
+      document.getElementById('uptakeTrend').innerHTML += ph;
+    }
+
+    // Updated timestamp
+    if (d.updated) {
+      const el = document.querySelector('.footer');
+      if (el) el.innerHTML = el.innerHTML.replace(/EarthGrid v/, 'Updated: ' + d.updated.replace('T',' ').replace('Z',' UTC') + ' · EarthGrid v');
+    }
 
   } catch(e) {
-    
     console.error('Load error:', e);
   }
 }
-discoverBeacon().then(url => { BEACON = url; load(); setInterval(load, 30000); });
+load();
 </script>
 </body>
 </html>

@@ -1,0 +1,76 @@
+{
+  "updated": "2026-03-16T05:18:21Z",
+  "version": "",
+  "network": {
+    "nodes_alive": 2,
+    "nodes_total": 2,
+    "total_bytes": 66931848832,
+    "available_storage_gb": 3050.0,
+    "redundancy": 1.0
+  },
+  "coverage": {
+    "sentinel-2-l2a": {
+      "items": 765,
+      "tiles": 2,
+      "area_km2": 12056
+    }
+  },
+  "uptake": {},
+  "km2_requested": 0,
+  "operations": [
+    {
+      "name": "ndvi",
+      "description": "Normalized Difference Vegetation Index: (NIR - Red) / (NIR + Red)",
+      "required_bands": [
+        "B08",
+        "B04"
+      ]
+    },
+    {
+      "name": "ndwi",
+      "description": "Normalized Difference Water Index: (Green - NIR) / (Green + NIR)",
+      "required_bands": [
+        "B03",
+        "B08"
+      ]
+    },
+    {
+      "name": "ndsi",
+      "description": "Normalized Difference Snow Index: (Green - SWIR) / (Green + SWIR)",
+      "required_bands": [
+        "B03",
+        "B11"
+      ]
+    },
+    {
+      "name": "evi",
+      "description": "Enhanced Vegetation Index: 2.5 * (NIR - Red) / (NIR + 6*Red - 7.5*Blue + 1)",
+      "required_bands": [
+        "B08",
+        "B04",
+        "B02"
+      ]
+    },
+    {
+      "name": "cloud_mask",
+      "description": "Cloud mask from SCL: 1=clear, 0=cloud (classes 8,9,10)",
+      "required_bands": [
+        "SCL"
+      ]
+    },
+    {
+      "name": "true_color",
+      "description": "True color composite (Red, Green, Blue)",
+      "required_bands": [
+        "B04",
+        "B03",
+        "B02"
+      ]
+    },
+    {
+      "name": "band_math",
+      "description": "Custom band math expression. Bands available as variables.",
+      "required_bands": null
+    }
+  ]
+}
