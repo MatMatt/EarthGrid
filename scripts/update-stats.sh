@@ -61,6 +61,13 @@ stats = {
     'chunks': eg.get('chunks', 0),
     'km2_requested': requests_data.get('total_km2_queried', requests_data.get('total_km2_requested', 0)),
     'operations': fetch('/process/operations').get('operations', []),
+    'gamification': {
+        'leaderboard_nodes': fetch('/gamification/leaderboard?type=nodes&limit=20'),
+        'leaderboard_users': fetch('/gamification/leaderboard?type=users&limit=20'),
+        'leaderboard_groups': fetch('/gamification/leaderboard?type=groups&limit=20'),
+        'achievements': fetch('/gamification/achievements'),
+        'feed': fetch('/gamification/feed?limit=30'),
+    },
 }
 print(json.dumps(stats, indent=2))
 " > "$STATS_FILE"

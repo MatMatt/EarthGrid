@@ -173,52 +173,96 @@ function fmtTime(ts) {
   return Math.floor(diff/86400) + 'd ago';
 }
 
-async function loadLeaderboard() {
+
+function renderLeaderboard(data) {
+  const entries = data.entries || [];
+  if (entries.length === 0) {
+    document.getElementById('leaderboard').innerHTML = '<em style="color:var(--dim)">No participants yet</em>';
+    return;
+  }
+  let h = '<table class="lb-table"><thead><tr><th>#</th><th>Name</th><th>Score</th>';
+  if (currentBoard === 'nodes') h += '<th>Items</th><th>Stored</th><th>Served</th><th>Streak</th>';
+  else if (currentBoard === 'users') h += '<th>Nodes</th><th>Items</th><th>Stored</th>';
+  else h += '<th>Members</th>';
+  h += '</tr></thead><tbody>';
+  for (const e of entries) {
+    h += '<tr><td class="lb-rank' + rankClass(e.rank) + '">' + rankIcon(e.rank) + '</td>';
+    if (currentBoard === 'nodes') {
+      h += '<td class="lb-name">' + (e.node_name||e.node_id) + '</td>';
+      h += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
+      h += '<td>' + (e.items||0).toLocaleString() + '</td>';
+      h += '<td>' + (e.gb_stored||0) + ' GB</td>';
+      h += '<td>' + (e.gb_served||0) + ' GB</td>';
+      h += '<td>' + (e.streak||0) + 'd</td>';
+    } else if (currentBoard === 'users') {
+      h += '<td class="lb-name">' + (e.display_name||e.username) + '</td>';
+      h += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
+      h += '<td>' + (e.nodes||0) + '</td><td>' + (e.items||0).toLocaleString() + '</td>';
+      h += '<td>' + (e.gb_stored||0) + ' GB</td>';
+    } else {
+      h += '<td class="lb-name">' + e.group_name + '</td>';
+      h += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
+      h += '<td>' + (e.members||0) + '</td>';
+    }
+    h += '</tr>';
+  }
+  h += '</tbody></table>';
+  document.getElementById('leaderboard').innerHTML = h;
+}
+
+function renderAchievements(data) {
+  const achs = data.achievements || [];
+  if (achs.length === 0) {
+    document.getElementById('achievementShowcase').innerHTML = '<em style="color:var(--dim)">No achievements defined</em>';
+    return;
+  }
+  let h = '';
+  achs.forEach(a => {
+    h += '<div class="ach-card"><span class="ach-icon">' + a.icon + '</span>';
+    h += '<div><div class="ach-name">' + a.name + '</div>';
+    h += '<div class="ach-desc">' + a.desc + '</div></div></div>';
+  });
+  document.getElementById('achievementShowcase').innerHTML = h;
+}
+
+function renderFeed(data) {
+  const items = data.feed || [];
+  if (items.length === 0) {
+    document.getElementById('activityFeed').innerHTML = '<em style="color:var(--dim)">No activity yet</em>';
+    return;
+  }
+  let h = '';
+  items.forEach(f => {
+    const icon = f.event_type === 'achievement' ? '🏆' : f.event_type === 'ingest' ? '📥' : '📡';
+    h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.85rem">';
+    h += icon + ' <strong>' + (f.node_name||f.node_id||'') + '</strong> ' + (f.message||'') ;
+    h += ' <span style="color:var(--dim);font-size:0.75rem">' + fmtTime(f.timestamp) + '</span></div>';
+  });
+  document.getElementById('activityFeed').innerHTML = h;
+}
+
+async function loadLeaderboard(fromStats) {
+  // Use pre-fetched data from stats.json if available
+  if (fromStats && fromStats.gamification) {
+    const key = 'leaderboard_' + currentBoard;
+    const data = fromStats.gamification[key] || {};
+    renderLeaderboard(data);
+    return;
+  }
   try {
     const r = await fetch(EARTHGRID_API + '/gamification/leaderboard?type=' + currentBoard + '&limit=20');
     if (!r.ok) { document.getElementById('leaderboard').innerHTML = '<em style="color:var(--dim)">Not available</em>'; return; }
     const data = await r.json();
-    const entries = data.entries || [];
-    if (entries.length === 0) {
-      document.getElementById('leaderboard').innerHTML = '<em style="color:var(--dim)">No participants yet. <code>POST /gamification/opt-in</code> to join!</em>';
-      return;
-    }
-
-    let html = '<table class="lb-table"><thead><tr><th>#</th><th>Name</th><th>Score</th>';
-    if (currentBoard === 'nodes') html += '<th>Items</th><th>Stored</th><th>Served</th><th>Streak</th>';
-    else if (currentBoard === 'users') html += '<th>Nodes</th><th>Items</th><th>Stored</th>';
-    else html += '<th>Members</th>';
-    html += '</tr></thead><tbody>';
-
-    for (const e of entries) {
-      html += '<tr>';
-      html += '<td class="lb-rank' + rankClass(e.rank) + '">' + rankIcon(e.rank) + '</td>';
-      if (currentBoard === 'nodes') {
-        html += '<td class="lb-name">' + e.node_id + ' <span class="lb-meta">(' + (e.owner||'?') + ')</span></td>';
-        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.items||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.gb_stored||0) + ' GB</td>';
-        html += '<td>' + (e.gb_served||0) + ' GB</td>';
-        html += '<td>' + (e.streak||0) + 'd' + (e.streak >= 7 ? '<span class="streak-badge">🔥</span>' : '') + '</td>';
-      } else if (currentBoard === 'users') {
-        html += '<td class="lb-name">' + (e.display_name || e.username) + '</td>';
-        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.nodes||0) + '</td>';
-        html += '<td>' + (e.items||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.gb_stored||0) + ' GB</td>';
-      } else {
-        html += '<td class="lb-name">' + e.group_name + '</td>';
-        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.members||0) + '</td>';
-      }
-      html += '</tr>';
-    }
-    html += '</tbody></table>';
-    document.getElementById('leaderboard').innerHTML = html;
+    renderLeaderboard(data);
   } catch(e) { console.error('Leaderboard error:', e); }
 }
 
-async function loadAchievements() {
+async function loadAchievements(fromStats) {
+  if (fromStats && fromStats.gamification) {
+    const data = fromStats.gamification.achievements || {};
+    renderAchievements(data);
+    return;
+  }
   try {
     const r = await fetch(EARTHGRID_API + '/gamification/achievements');
     if (!r.ok) return;
@@ -235,7 +279,12 @@ async function loadAchievements() {
   } catch(e) { console.error('Achievements error:', e); }
 }
 
-async function loadFeed() {
+async function loadFeed(fromStats) {
+  if (fromStats && fromStats.gamification) {
+    const data = fromStats.gamification.feed || {};
+    renderFeed(data);
+    return;
+  }
   try {
     const r = await fetch(EARTHGRID_API + '/gamification/feed?limit=30');
     if (!r.ok) return;
@@ -737,6 +786,11 @@ async function load() {
       const el = document.querySelector('.footer');
       if (el) el.innerHTML = el.innerHTML.replace(/EarthGrid v/, 'Updated: ' + d.updated.replace('T',' ').replace('Z',' UTC') + ' · EarthGrid v');
     }
+
+    // Load gamification from stats.json data
+    loadLeaderboard(d);
+    loadAchievements(d);
+    loadFeed(d);
 
   } catch(e) {
     console.error('Load error:', e);
