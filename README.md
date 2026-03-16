@@ -200,6 +200,7 @@ Each Copernicus Service has its own licence. Common requirements:
 | **CLMS** (Land) | [Copernicus Land](https://land.copernicus.eu/en/data-policy) | *"© Copernicus Land Monitoring Service [Year], EEA"* |
 | **C3S** (Climate) | [Copernicus Climate](https://cds.climate.copernicus.eu/disclaimer) | *"Contains modified Copernicus Climate Change Service information [Year]"* |
 | **CAMS** (Atmosphere) | [Copernicus Atmosphere](https://ads.atmosphere.copernicus.eu/disclaimer) | *"Contains modified Copernicus Atmosphere Monitoring Service information [Year]"* |
+| **CMEMS** (Marine) | [Copernicus Marine](https://marine.copernicus.eu/user-corner/service-commitments-and-licence) | *"Contains modified Copernicus Marine Service information [Year]"* |
 
 ### Landsat (via Element84)
 
