@@ -170,7 +170,7 @@ EarthGrid can fetch from multiple upstream providers. **All data is stored as Cl
 
 ### Source setup
 
-During `earthgrid setup`, the installer walks you through all available sources one by one. For each provider, you can add credentials or skip. No account needed for Element84 (public access) — the others require free registration.
+Element84 (public access) is included by default — no account needed. During `earthgrid setup`, the installer walks you through additional sources (CDSE, WEkEO, etc.) one by one. Add credentials or skip.
 
 All data is converted to COG on ingest, so the data in the grid is identical regardless of source. More sources = more data available to the network.
 
@@ -331,7 +331,7 @@ earthgrid docker exec admin show-key
 earthgrid docker exec admin renew-key
 ```
 
-Supported providers: **CDSE** (Sentinel, Landsat), **WEkEO** (CLMS, C3S, CAMS), **Element84** (public S2/S1/Landsat mirror), **CMEMS** (marine data).
+Supported providers: **Element84** (built-in, no auth needed), **CDSE** (Sentinel, Landsat), **WEkEO** (CLMS, CMEMS, C3S, CAMS). More coming soon.
 
 ---
 
