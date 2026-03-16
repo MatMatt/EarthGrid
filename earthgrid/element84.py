@@ -213,6 +213,74 @@ async def _check_node_health(node: dict, timeout: float = 5) -> bool:
             return False
 
 
+async def _delegate_batch_to_node(
+    node: dict,
+    items: list[dict],
+    bands: list[str],
+    collection: str,
+    cloud_cover: float,
+) -> list[dict]:
+    """Send a single batch fetch request to a remote node covering all items.
+    Uses the bbox union and full date range instead of per-item requests."""
+    if not items:
+        return []
+    
+    # Compute bounding box union
+    all_bboxes = [it.get("bbox", []) for it in items if it.get("bbox")]
+    if all_bboxes:
+        min_lon = min(b[0] for b in all_bboxes)
+        min_lat = min(b[1] for b in all_bboxes)
+        max_lon = max(b[2] for b in all_bboxes)
+        max_lat = max(b[3] for b in all_bboxes)
+        bbox_str = f"{min_lon},{min_lat},{max_lon},{max_lat}"
+    else:
+        bbox_str = ""
+    
+    # Date range
+    dates = sorted([it["date"][:10] for it in items if it.get("date")])
+    start = dates[0] if dates else ""
+    end = dates[-1] if dates else ""
+    
+    params = {
+        "bbox": bbox_str,
+        "start": start,
+        "end": end,
+        "cloud": cloud_cover,
+        "limit": 0,  # no limit — fetch all
+        "source": "element84",
+        "collection": collection,
+    }
+    if bands:
+        params["bands"] = ",".join(bands)
+    
+    headers = {}
+    if node.get("admin_key"):
+        headers["Authorization"] = f"Bearer {node['admin_key']}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(
+                f"{node['url']}/fetch",
+                params=params,
+                headers=headers,
+            )
+            result = resp.json()
+            status = result.get("status", "")
+            if status == "accepted":
+                job_id = result.get("job_id", "?")
+                return [{"status": "delegated_batch", "node": node["url"],
+                         "job_id": job_id, "items_count": len(items),
+                         "message": f"Batch fetch of {len(items)} items started on {node['node_name']}"}]
+            ingested = result.get("ingested", 0)
+            skipped = result.get("skipped", 0)
+            return [{"status": "batch_done", "node": node["node_name"],
+                     "ingested": ingested, "skipped": skipped,
+                     "items_sent": len(items)}]
+    except Exception as e:
+        logger.error(f"Batch delegation to {node['node_name']} failed: {e}")
+        return [{"error": str(e), "node": node["node_name"], "items_count": len(items)}]
+
+
 async def _delegate_item_to_node(
     node: dict,
     item: dict,
@@ -506,30 +574,25 @@ async def fetch_and_ingest_element84(
                                 node_results.append({"error": str(e), "item_id": item.get("id", "")})
                     return node_results
 
-                print(f"\n\U0001f4e1 Remote ({node['node_name']}): {len(node_items)} items")
-                failed_items = []
-                for idx, item in enumerate(node_items):
-                    date_str = item["date"][:10] if item["date"] else "?"
-                    cc = item["cloud_cover"]
-                    print(f"\r  \U0001f4e1 [{idx+1}/{len(node_items)}] {item['id']} ({date_str}, {cc:.0f}% cloud) \u2192 {node['node_name']}    ", end="", flush=True)
-                    r = await _delegate_item_to_node(node, item, target_bands, earthgrid_collection, cloud_cover)
-                    node_results.extend(r)
-                    # Track failed items for redistribution
-                    if any(x.get("retry_failed") for x in r if isinstance(x, dict)):
-                        failed_items.append(item)
-                print()  # newline after progress
-
-                # Redistribute failed items to other nodes
-                if failed_items:
-                    node["_failed"] = True  # Mark node as failed
+                dates = sorted([it["date"][:10] for it in node_items if it.get("date")])
+                print(f"\n\U0001f4e1 Remote ({node['node_name']}): {len(node_items)} items ({dates[0] if dates else '?'} to {dates[-1] if dates else '?'})")
+                print(f"  Sending batch fetch request...", end="", flush=True)
+                r = await _delegate_batch_to_node(node, node_items, target_bands, earthgrid_collection, cloud_cover)
+                node_results.extend(r)
+                if any(x.get("error") for x in r if isinstance(x, dict)):
+                    print(f" \u274c failed")
+                    # Fallback to per-item delegation
+                    node["_failed"] = True
                     alt_nodes = [n for n in nodes if n["node_id"] != node["node_id"]
                                  and n["free_gb"] >= 0.5 and not n.get("_failed")]
                     if alt_nodes:
                         alt = alt_nodes[0]
-                        print(f"  \u26a0\ufe0f  {len(failed_items)} items failed on {node['node_name']} — retrying on {alt['node_name']}")
-                        for item in failed_items:
-                            r = await _delegate_item_to_node(alt, item, target_bands, earthgrid_collection, cloud_cover)
-                            node_results.extend(r)
+                        print(f"  \u26a0\ufe0f  Retrying on {alt['node_name']}...")
+                        r2 = await _delegate_batch_to_node(alt, node_items, target_bands, earthgrid_collection, cloud_cover)
+                        node_results.extend(r2)
+                else:
+                    msg = r[0].get("message", "done") if r else "done"
+                    print(f" \u2705 {msg}")
             return node_results
 
         # Launch all nodes in parallel (local + all remotes simultaneously)
