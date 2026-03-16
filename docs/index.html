@@ -142,13 +142,15 @@ a:hover { text-decoration:underline; }
 
 // Detect API base from the page's stats.json source or fallback
 const EARTHGRID_API = (() => {
-  // If served alongside the API (same origin), use relative paths
-  // If on GitHub Pages or static hosting, discover from stats.json
   try {
     const meta = document.querySelector('meta[name="earthgrid-api"]');
-    if (meta) return meta.content.replace(/\/$/, '');
+    if (meta && meta.content) return meta.content.replace(/\/$/, '');
   } catch(e) {}
-  // Default: same origin (works when served by the node itself or proxied)
+  // On GitHub Pages: use the public beacon URL
+  if (location.hostname.includes('github.io')) {
+    return 'https://mattiuzzi.zapto.org/earthgrid';
+  }
+  // Same origin (served by node or proxied)
   return '';
 })();
 
@@ -662,7 +664,8 @@ function fmtKm2(k) { return k >= 1e6 ? (k/1e6).toFixed(1)+'M' : k >= 1000 ? (k/1
 
 async function load() {
   try {
-    const r = await fetch('stats.json?t=' + Date.now());
+    const statsUrl = EARTHGRID_API ? EARTHGRID_API + '/stats.json?t=' + Date.now() : 'stats.json?t=' + Date.now();
+    const r = await fetch(statsUrl);
     if (!r.ok) throw new Error('stats.json not found');
     const d = await r.json();
     const net = d.network || {};
