@@ -168,13 +168,11 @@ EarthGrid can fetch from multiple upstream providers. **All data is stored as Cl
 | **WEkEO** | 🔜 Coming soon | C3S, CAMS | Climate & atmosphere services |
 | *More sources* | | | *Coming soon (CMEMS, etc.)* |
 
-### Which source should I use?
+### Source setup
 
-- **Just want to contribute?** → Element84. No account, instant start.
-- **Need the full Sentinel archive?** → Add CDSE (free registration).
-- **Both?** → Recommended. More sources = more data available to the network.
+During `earthgrid setup`, the installer walks you through all available sources one by one. For each provider, you can add credentials or skip. No account needed for Element84 (public access) — the others require free registration.
 
-Since EarthGrid converts everything to COG, data from Element84 and CDSE is **byte-identical in the grid**. Element84 is simply faster to ingest because the source is already COG (no JP2000→COG conversion step).
+All data is converted to COG on ingest, so the data in the grid is identical regardless of source. More sources = more data available to the network.
 
 ---
 
