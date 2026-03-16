@@ -114,14 +114,25 @@ async def _get_grid_nodes(beacon_url: str, local_node_id: str = "") -> list[dict
     return nodes
 
 
+async def _check_node_health(node: dict, timeout: float = 5) -> bool:
+    """Quick health check — is the node reachable?"""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            resp = await client.get(f"{node['url']}/health")
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+
 async def _delegate_item_to_node(
     node: dict,
     item: dict,
     bands: list[str],
     collection: str,
     cloud_cover: float,
+    retries: int = 2,
 ) -> list[dict]:
-    """Send a fetch request for a single item to a remote node."""
+    """Send a fetch request to a remote node with retry logic."""
     bbox = item.get("bbox", [])
     dt = item.get("date", "")[:10]
     bbox_str = ",".join(str(x) for x in bbox) if bbox else ""
@@ -142,24 +153,34 @@ async def _delegate_item_to_node(
     if node.get("admin_key"):
         headers["Authorization"] = f"Bearer {node['admin_key']}"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    last_error = None
+    for attempt in range(retries + 1):
         try:
-            resp = await client.post(
-                f"{node['url']}/fetch",
-                params=params,
-                headers=headers,
-            )
-            result = resp.json()
-            status = result.get("status", "")
-            if status == "accepted":
-                job_id = result.get("job_id", "?")
-                return [{"status": "delegated", "node": node["url"], "job_id": job_id,
-                         "message": f"Background fetch started on {node['node_name']} (job {job_id})"}]
-            ingested = result.get("ingested", 0)
-            return result.get("details", [{"status": "delegated", "node": node["url"], "ingested": ingested}])
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    f"{node['url']}/fetch",
+                    params=params,
+                    headers=headers,
+                )
+                result = resp.json()
+                status = result.get("status", "")
+                if status == "accepted":
+                    job_id = result.get("job_id", "?")
+                    return [{"status": "delegated", "node": node["url"], "job_id": job_id,
+                             "message": f"Background fetch started on {node['node_name']} (job {job_id})"}]
+                ingested = result.get("ingested", 0)
+                return result.get("details", [{"status": "delegated", "node": node["url"], "ingested": ingested}])
         except Exception as e:
-            logger.error(f"Delegation to {node['url']} failed: {e}")
-            return [{"error": f"Delegation to {node['node_name']} failed: {e}"}]
+            last_error = e
+            if attempt < retries:
+                wait = 2 ** attempt  # 1s, 2s backoff
+                logger.warning(f"Delegation to {node['node_name']} attempt {attempt+1} failed: {e} — retrying in {wait}s")
+                await asyncio.sleep(wait)
+            else:
+                logger.error(f"Delegation to {node['node_name']} failed after {retries+1} attempts: {e}")
+
+    return [{"error": f"Delegation to {node['node_name']} failed after {retries+1} attempts: {last_error}",
+             "item_id": item.get("id", ""), "retry_failed": True}]
 
 
 async def _ingest_item_locally(
@@ -339,20 +360,53 @@ async def fetch_and_ingest_element84(
                         break
                     node_results.extend(r)
             else:
+                # Health check before sending items
+                healthy = await _check_node_health(node)
+                if not healthy:
+                    print(f"\n\u274c {node['node_name']} unreachable — redistributing {len(node_items)} items")
+                    # Find alternative nodes
+                    alt_nodes = [n for n in nodes if n["node_id"] != node["node_id"]
+                                 and n["free_gb"] >= 0.5 and not n.get("_failed")]
+                    if alt_nodes:
+                        alt = alt_nodes[0]
+                        print(f"  \u21b3 Redirecting to {alt['node_name']}")
+                        for item in node_items:
+                            r = await _delegate_item_to_node(alt, item, target_bands, earthgrid_collection, cloud_cover)
+                            node_results.extend(r)
+                    else:
+                        # Try local as last resort
+                        print(f"  \u21b3 No alternatives — trying local ingest")
+                        for item in node_items:
+                            try:
+                                r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
+                                node_results.extend(r)
+                            except Exception as e:
+                                node_results.append({"error": str(e), "item_id": item.get("id", "")})
+                    return node_results
+
                 print(f"\n\U0001f4e1 Remote ({node['node_name']}): {len(node_items)} items")
-                tasks = []
+                failed_items = []
                 for item in node_items:
                     date_str = item["date"][:10] if item["date"] else "?"
                     cc = item["cloud_cover"]
                     print(f"  \U0001f4e1 {item['id']}  ({date_str}, {cc:.0f}% cloud) \u2192 {node['node_name']}")
-                    tasks.append(_delegate_item_to_node(node, item, target_bands, earthgrid_collection, cloud_cover))
-                # All items to this remote node in parallel
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                for r in batch_results:
-                    if isinstance(r, Exception):
-                        node_results.append({"error": str(r)})
-                    else:
-                        node_results.extend(r)
+                    r = await _delegate_item_to_node(node, item, target_bands, earthgrid_collection, cloud_cover)
+                    node_results.extend(r)
+                    # Track failed items for redistribution
+                    if any(x.get("retry_failed") for x in r if isinstance(x, dict)):
+                        failed_items.append(item)
+
+                # Redistribute failed items to other nodes
+                if failed_items:
+                    node["_failed"] = True  # Mark node as failed
+                    alt_nodes = [n for n in nodes if n["node_id"] != node["node_id"]
+                                 and n["free_gb"] >= 0.5 and not n.get("_failed")]
+                    if alt_nodes:
+                        alt = alt_nodes[0]
+                        print(f"  \u26a0\ufe0f  {len(failed_items)} items failed on {node['node_name']} — retrying on {alt['node_name']}")
+                        for item in failed_items:
+                            r = await _delegate_item_to_node(alt, item, target_bands, earthgrid_collection, cloud_cover)
+                            node_results.extend(r)
             return node_results
 
         # Launch all nodes in parallel (local + all remotes simultaneously)
@@ -373,12 +427,17 @@ async def fetch_and_ingest_element84(
         if distribute and not nodes:
             print("  \u2139\ufe0f  No grid nodes found — fetching locally only")
 
-        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-            for item in items:
-                date_str = item["date"][:10] if item["date"] else "?"
-                cc = item["cloud_cover"]
-                print(f"\n  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
+        for item in items:
+            date_str = item["date"][:10] if item["date"] else "?"
+            cc = item["cloud_cover"]
+            print(f"\n  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
+            try:
                 r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
                 results.extend(r)
+            except Exception as e:
+                logger.error(f"Failed to ingest {item['id']}: {e}")
+                results.append({"error": str(e), "item_id": item.get("id", "")})
+                # Continue with next item instead of crashing
+                continue
 
     return results
