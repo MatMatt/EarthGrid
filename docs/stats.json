@@ -1,10 +1,10 @@
 {
-  "updated": "2026-03-16T08:00:02Z",
+  "updated": "2026-03-16T08:06:19Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 2,
     "nodes_total": 2,
-    "total_bytes": 70631655776,
+    "total_bytes": 70687846752,
     "available_storage_gb": 3050.0,
     "redundancy": 1.0
   },
@@ -64,7 +64,7 @@
     "daily": []
   },
   "items": 325,
-  "chunks": 28542,
+  "chunks": 28660,
   "km2_requested": 0,
   "operations": [
     {
@@ -121,5 +121,126 @@
       "description": "Custom band math expression. Bands available as variables.",
       "required_bands": null
     }
-  ]
+  ],
+  "gamification": {
+    "leaderboard_nodes": {
+      "type": "nodes",
+      "period": "all",
+      "entries": []
+    },
+    "leaderboard_users": {
+      "type": "users",
+      "period": "all",
+      "entries": []
+    },
+    "leaderboard_groups": {
+      "type": "groups",
+      "period": "all",
+      "entries": []
+    },
+    "achievements": {
+      "achievements": [
+        {
+          "id": "first_seed",
+          "icon": "\ud83c\udf31",
+          "name": "First Seed",
+          "desc": "Ingested your first data",
+          "threshold": 1,
+          "field": "items_ingested"
+        },
+        {
+          "id": "mesh_pioneer",
+          "icon": "\ud83e\udd1d",
+          "name": "Mesh Pioneer",
+          "desc": "Connected to 10+ peers",
+          "threshold": 10,
+          "field": "max_peers"
+        },
+        {
+          "id": "always_on",
+          "icon": "\ud83d\udcaa",
+          "name": "Always On",
+          "desc": "30 consecutive days online",
+          "threshold": 30,
+          "field": "streak_days"
+        },
+        {
+          "id": "terabyte_club",
+          "icon": "\ud83c\udfd4\ufe0f",
+          "name": "Terabyte Club",
+          "desc": "Stored 1 TB+ of data",
+          "threshold": 1024,
+          "field": "gb_stored"
+        },
+        {
+          "id": "data_relay",
+          "icon": "\ud83d\udce1",
+          "name": "Data Relay",
+          "desc": "Served 100 GB+ to other nodes",
+          "threshold": 100,
+          "field": "gb_served"
+        },
+        {
+          "id": "early_adopter",
+          "icon": "\ud83e\uddea",
+          "name": "Early Adopter",
+          "desc": "Among the first 100 users",
+          "threshold": 100,
+          "field": "user_rank"
+        },
+        {
+          "id": "continental",
+          "icon": "\ud83c\udf0d",
+          "name": "Continental",
+          "desc": "Data spanning 3+ continents",
+          "threshold": 3,
+          "field": "continents"
+        },
+        {
+          "id": "global_citizen",
+          "icon": "\ud83c\udf10",
+          "name": "Global Citizen",
+          "desc": "Data from all 6 inhabited continents",
+          "threshold": 6,
+          "field": "continents"
+        },
+        {
+          "id": "speed_demon",
+          "icon": "\ud83d\udd25",
+          "name": "Speed Demon",
+          "desc": "Fastest query response in network",
+          "threshold": 1,
+          "field": "speed_rank"
+        },
+        {
+          "id": "power_node",
+          "icon": "\u26a1",
+          "name": "Power Node",
+          "desc": "Top 3 in any category for 7+ days",
+          "threshold": 7,
+          "field": "top3_streak"
+        },
+        {
+          "id": "centurion",
+          "icon": "\ud83d\udcaf",
+          "name": "Centurion",
+          "desc": "100+ days total uptime",
+          "threshold": 100,
+          "field": "uptime_days"
+        },
+        {
+          "id": "petabyte_dream",
+          "icon": "\ud83d\ude80",
+          "name": "Petabyte Dream",
+          "desc": "Served 1 TB+ total",
+          "threshold": 1024,
+          "field": "gb_served"
+        }
+      ],
+      "total": 12
+    },
+    "feed": {
+      "feed": []
+    }
+  }
 }
