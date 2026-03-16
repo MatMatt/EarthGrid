@@ -13,6 +13,38 @@ logger = logging.getLogger("earthgrid.element84")
 
 STAC_API = "https://earth-search.aws.element84.com/v1"
 
+
+async def _beacon_inventory(beacon_url: str, bbox: tuple, collection: str,
+                             start_date: str = None, end_date: str = None) -> set[str]:
+    """Ask beacon for all item IDs it already has for this bbox/collection.
+    Returns a set of item IDs that exist in the grid."""
+    params = {"collections": collection, "limit": 10000}
+    if bbox:
+        params["bbox"] = ",".join(str(x) for x in bbox)
+    if start_date or end_date:
+        s = start_date or "2015-01-01"
+        e = end_date or "2099-12-31"
+        params["datetime"] = f"{s}T00:00:00Z/{e}T23:59:59Z"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(f"{beacon_url}/search", params=params)
+            if resp.status_code == 200:
+                data = resp.json()
+                features = data.get("features", [])
+                ids = set()
+                for feat in features:
+                    fid = feat.get("id", "")
+                    ids.add(fid)
+                    # Also add without band suffix for matching
+                    # e.g. "S2A_32TPS_20240101_0_L2A_B02" -> "S2A_32TPS_20240101_0_L2A"
+                    base = "_".join(fid.split("_")[:5]) if "_" in fid else fid
+                    ids.add(base)
+                return ids
+    except Exception as e:
+        logger.debug(f"Beacon inventory check failed: {e}")
+    return set()
+
+
 BAND_MAP_S2 = {
     "B02": "blue", "B03": "green", "B04": "red", "B08": "nir",
     "B05": "rededge1", "B06": "rededge2", "B07": "rededge3",
@@ -29,55 +61,90 @@ async def search_element84(
     limit: int = 5,
     collection: str = "sentinel-2-l2a",
 ) -> list[dict]:
-    """Search Element84 STAC for items."""
+    """Search Element84 STAC for items. Uses parallel page fetching."""
+    import time as _time
+    _t0 = _time.monotonic()
     max_per_page = 250
-    target = limit if limit > 0 else 10000
-    body = {
+    target = limit if limit > 0 else 99999
+
+    base_body = {
         "collections": [collection],
         "bbox": list(bbox),
-        "limit": min(target, max_per_page),
+        "limit": max_per_page,
         "query": {"eo:cloud_cover": {"lte": cloud_cover}},
-        # sortby removed for speed — results sorted client-side after fetch
+        "fields": {
+            "include": ["id", "bbox", "geometry", "properties.datetime",
+                         "properties.eo:cloud_cover", "properties.grid:code",
+                         "properties.s2:mgrs_tile", "assets"],
+            "exclude": ["links"]
+        },
     }
     if start_date or end_date:
         start = start_date or "2015-01-01"
         end = end_date or "2099-12-31"
-        body["datetime"] = f"{start}T00:00:00Z/{end}T23:59:59Z"
+        base_body["datetime"] = f"{start}T00:00:00Z/{end}T23:59:59Z"
 
-    items = []
-    # Only fetch needed fields to reduce payload
-    body["fields"] = {
-        "include": ["id", "bbox", "geometry", "properties.datetime",
-                     "properties.eo:cloud_cover", "properties.grid:code",
-                     "properties.s2:mgrs_tile", "assets"],
-        "exclude": ["links"]
-    }
     async with httpx.AsyncClient(timeout=60) as client:
-        while len(items) < target:
-            body["limit"] = min(target - len(items), max_per_page)
-            resp = await client.post(f"{STAC_API}/search", json=body)
-            resp.raise_for_status()
-            data = resp.json()
-            page = data.get("features", [])
-            if not page:
-                break
-            items.extend(page)
-            matched = data.get("numberMatched") or data.get("context", {}).get("matched")
-            if matched:
-                print(f"    🔍 Found {len(items)}/{matched} items...", end="", flush=True)
-            else:
-                print(f"    🔍 Found {len(items)} items...", end="", flush=True)
+        # First page: get total count
+        resp = await client.post(f"{STAC_API}/search", json=base_body)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("features", [])
+        matched = data.get("numberMatched") or data.get("context", {}).get("matched") or 0
+
+        if not items:
+            return []
+
+        print(f"\r  \U0001f50d {matched} items matched, fetching...", end="", flush=True)
+
+        # If we got everything in one page, done
+        if len(items) >= matched or len(items) >= target or len(items) < max_per_page:
+            _elapsed = _time.monotonic() - _t0
+            print(f"\r  \U0001f50d {len(items)} items found ({_elapsed:.1f}s)        ")
+            items = items[:target]
+        else:
+            # Parallel fetch remaining pages using token-based pagination
+            # Element84 supports POST with token param for pagination
+            remaining_pages = []
+            next_body = dict(base_body)
+
+            # Get next link from first response
             next_link = None
             for link in data.get("links", []):
                 if link.get("rel") == "next":
                     next_link = link.get("body") or link.get("href")
                     break
-            if not next_link or len(page) < body["limit"]:
-                break
-            if isinstance(next_link, dict):
-                body.update(next_link)
-            else:
-                break
+
+            # Sequential pagination (Element84 uses cursor tokens, can't skip pages)
+            while len(items) < min(target, matched):
+                if not next_link:
+                    break
+                if isinstance(next_link, dict):
+                    next_body.update(next_link)
+                else:
+                    break
+                next_body["limit"] = max_per_page
+                resp = await client.post(f"{STAC_API}/search", json=next_body)
+                if resp.status_code != 200:
+                    break
+                page_data = resp.json()
+                page = page_data.get("features", [])
+                if not page:
+                    break
+                items.extend(page)
+                print(f"\r  \U0001f50d Found {len(items)}/{matched} items...", end="", flush=True)
+
+                next_link = None
+                for link in page_data.get("links", []):
+                    if link.get("rel") == "next":
+                        next_link = link.get("body") or link.get("href")
+                        break
+                if len(page) < max_per_page:
+                    break
+
+            _elapsed = _time.monotonic() - _t0
+            print(f"\r  \U0001f50d {len(items)} items found ({_elapsed:.1f}s)        ")
+            items = items[:target]
     # Sort by date descending (client-side, since we removed server-side sort)
     items.sort(key=lambda x: x.get("properties", {}).get("datetime", ""), reverse=True)
     if items:
@@ -282,6 +349,39 @@ async def fetch_and_ingest_element84(
     """
     from .ingest import ingest_cog
 
+    target_bands = bands or ["B02", "B03", "B04", "B08", "SCL"]
+    results = []
+
+    # Try to get grid nodes for distribution
+    nodes = []
+    beacon_url = ""
+    if distribute:
+        from . import BOOTSTRAP_PEERS
+        try:
+            from .config import settings
+            beacon_url = settings.beacon_url or BOOTSTRAP_PEERS[0]
+            node_id = local_node_id or settings.node_id
+        except Exception:
+            beacon_url = BOOTSTRAP_PEERS[0]
+            node_id = local_node_id
+
+        nodes = await _get_grid_nodes(beacon_url, node_id)
+
+    # ── Beacon-first: check what the grid already has ──
+    grid_item_ids = set()
+    if beacon_url:
+        import time as _time
+        _t0 = _time.monotonic()
+        print("  🔍 Checking grid inventory...", end="", flush=True)
+        grid_item_ids = await _beacon_inventory(beacon_url, bbox, earthgrid_collection,
+                                                 start_date, end_date)
+        _elapsed = _time.monotonic() - _t0
+        if grid_item_ids:
+            print(f" {len(grid_item_ids)} items already in grid ({_elapsed:.1f}s)")
+        else:
+            print(f" empty ({_elapsed:.1f}s)")
+
+    # ── Search Element84 for available items ──
     items = await search_element84(
         bbox=bbox,
         start_date=start_date,
@@ -295,22 +395,22 @@ async def fetch_and_ingest_element84(
         logger.info("No items found on Element84")
         return []
 
-    target_bands = bands or ["B02", "B03", "B04", "B08", "SCL"]
-    results = []
-
-    # Try to get grid nodes for distribution
-    nodes = []
-    if distribute:
-        from . import BOOTSTRAP_PEERS
-        try:
-            from .config import settings
-            beacon_url = settings.beacon_url or BOOTSTRAP_PEERS[0]
-            node_id = local_node_id or settings.node_id
-        except Exception:
-            beacon_url = BOOTSTRAP_PEERS[0]
-            node_id = local_node_id
-
-        nodes = await _get_grid_nodes(beacon_url, node_id)
+    # ── Filter: skip items already in the grid ──
+    if grid_item_ids:
+        before = len(items)
+        items_new = [it for it in items if it["id"] not in grid_item_ids]
+        skipped = before - len(items_new)
+        if skipped:
+            print(f"  ⏭ {skipped} items already in grid, {len(items_new)} new to fetch")
+            # Report skipped items
+            for it in items:
+                if it["id"] in grid_item_ids:
+                    results.append({"item_id": it["id"], "skipped": True,
+                                    "reason": "already in grid"})
+        items = items_new
+        if not items:
+            print("  ✅ All items already in the grid!")
+            return results
 
     # Filter out full nodes (< 0.5 GB free)
     if nodes:
