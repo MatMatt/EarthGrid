@@ -527,7 +527,7 @@ class GamificationEngine:
                          "score": r["score"],
                          "items": r["items_ingested"],
                          "gb_stored": round((r["bytes_stored"] or 0) / (1024**3), 1),
-                         "gb_pledged": r.get("storage_pledged_gb", 0) or 0,
+                         "gb_pledged": r["storage_pledged_gb"],
                          "gb_served": round((r["bytes_served"] or 0) / (1024**3), 1),
                          "streak": r["streak_days"], "peers": r["max_peers"],
                          "uptime_days": round((r["uptime_seconds"] or 0) / 86400, 1)}
