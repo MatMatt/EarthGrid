@@ -12,7 +12,7 @@ Distributed storage for Earth observation data.
 
 A federated network where anyone can run a node, store satellite data, and make it available to others. Think BitTorrent meets STAC for Earth observation.
 
-EarthGrid stores **only official data** from sources like Copernicus, Sentinel, and Landsat. No personal uploads. The network exists as a **public good** for resilient access to Earth observation data.
+EarthGrid stores **only official data** from sources like Copernicus (Sentinel) and Landsat. No personal uploads. The network exists as a **public good** for resilient access to Earth observation data.
 
 ## Why?
 
