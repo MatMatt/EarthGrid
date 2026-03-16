@@ -7,6 +7,7 @@ Distributed storage for Earth observation data.
 [![Live Dashboard](https://img.shields.io/badge/dashboard-live-brightgreen)](https://matmatt.github.io/EarthGrid/)
 [![Python](https://img.shields.io/badge/python-≥3.9-blue)](https://github.com/MatMatt/EarthGrid)
 [![License](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSE)
+> ⚠️ **Early development** — disruptive changes might occur. Code review and consolidation needed. Planned: UDF support (openEO user-defined functions).
 
 ## What is EarthGrid?
 
