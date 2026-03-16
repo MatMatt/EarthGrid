@@ -227,6 +227,8 @@ earthgrid docker start --storage 100 --beacon --name my-node
 
 The CLI generates `docker-compose.yml` automatically — no manual config needed. All data paths (`/data/`) are set correctly by default.
 
+Once running, the **WebUI** is available at: `http://localhost:8400/ui`
+
 ```bash
 earthgrid docker start     # Build and start container
 earthgrid docker stop      # Stop container
@@ -235,6 +237,14 @@ earthgrid docker logs      # Tail container logs
 earthgrid docker restart   # Regenerate compose + restart
 earthgrid docker update    # git pull + rebuild + restart
 ```
+
+**Docker-only hosts** (no pip install on host): update manually:
+
+```bash
+cd EarthGrid && git pull && cd docker && docker compose build --no-cache && docker compose up -d
+```
+
+> ⚠️ **Never run `earthgrid update` or `earthgrid start` inside the container** (`docker exec`). These commands try pip/systemd which don't work in Docker. Use `earthgrid docker exec` only for data commands like `sources`, `fetch`, `admin`.
 
 **Options:**
 
