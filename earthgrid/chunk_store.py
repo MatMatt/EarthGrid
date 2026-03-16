@@ -146,6 +146,61 @@ class ChunkStore:
             return True
         return False
 
+
+    def evict_to_limit(self, target_bytes: int | None = None) -> tuple[int, int]:
+        """Evict oldest chunks until storage is within limit.
+        
+        Returns (chunks_evicted, bytes_freed).
+        Uses target_bytes if given, otherwise self.limit_bytes.
+        Evicts oldest-modified chunks first.
+        """
+        limit = target_bytes if target_bytes is not None else self.limit_bytes
+        if limit <= 0:
+            return (0, 0)
+        
+        current = self.total_bytes
+        if current <= limit:
+            return (0, 0)
+        
+        import logging
+        log = logging.getLogger("earthgrid.eviction")
+        
+        # Collect all chunks with mtime + size
+        chunks = []
+        for p in self.store_path.rglob("*"):
+            if p.is_file() and len(p.name) == 64:
+                try:
+                    st = p.stat()
+                    chunks.append((st.st_mtime, st.st_size, p))
+                except OSError:
+                    pass
+        
+        # Sort oldest first
+        chunks.sort(key=lambda x: x[0])
+        
+        evicted = 0
+        freed = 0
+        for _mtime, size, path in chunks:
+            if current <= limit:
+                break
+            try:
+                path.unlink()
+                current -= size
+                freed += size
+                evicted += 1
+            except OSError:
+                pass
+        
+        # Reset caches
+        self._cached_total_bytes = None
+        self._cached_chunk_count = None
+        
+        if evicted:
+            log.info(f"Evicted {evicted} chunks, freed {freed / 1024**2:.1f} MB "
+                     f"({self.total_bytes / 1024**3:.1f} / {limit / 1024**3:.1f} GB)")
+        
+        return (evicted, freed)
+
     def list_chunks(self) -> list[str]:
         """List all chunk hashes."""
         chunks = []

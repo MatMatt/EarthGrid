@@ -401,6 +401,52 @@ async def _beacon_heartbeat_loop():
             pass
 
 
+
+# --- Auto-eviction (storage limit enforcement) ---
+async def _auto_eviction_loop():
+    """Periodically check storage and evict if over limit."""
+    log = logging.getLogger("earthgrid.eviction")
+    while True:
+        await asyncio.sleep(300)  # every 5 min
+        try:
+            if chunk_store.limit_bytes <= 0:
+                continue
+            used = chunk_store.total_bytes
+            if used <= chunk_store.limit_bytes:
+                continue
+            
+            over_gb = (used - chunk_store.limit_bytes) / 1024**3
+            log.warning(f"Storage over limit by {over_gb:.2f} GB — starting eviction")
+            
+            # Evict to 95% of limit (leave some headroom)
+            target = int(chunk_store.limit_bytes * 0.95)
+            evicted, freed = chunk_store.evict_to_limit(target)
+            
+            if evicted > 0:
+                # Clean up catalog: remove items whose chunks are now gone
+                try:
+                    items = catalog.search(limit=100000)
+                    orphaned = 0
+                    for item in items:
+                        if not item.chunk_hashes:
+                            continue
+                        all_hashes = []
+                        for band_hashes in item.chunk_hashes.values():
+                            all_hashes.extend(band_hashes)
+                        if not all_hashes:
+                            continue
+                        # Check if majority of chunks are gone
+                        missing = sum(1 for h in all_hashes if not chunk_store.has(h))
+                        if missing > len(all_hashes) * 0.5:
+                            catalog.delete_item(item.id)
+                            orphaned += 1
+                    if orphaned:
+                        log.info(f"Removed {orphaned} orphaned items from catalog after eviction")
+                except Exception as e:
+                    log.warning(f"Catalog cleanup after eviction failed: {e}")
+        except Exception as e:
+            log.warning(f"Auto-eviction cycle failed: {e}")
+
 # --- Auto-replication ---
 async def _auto_replication_loop():
     """Periodically sync catalog + chunks from peer nodes."""
@@ -541,6 +587,7 @@ async def startup():
     await _discover_peers_from_beacon()
     asyncio.create_task(_beacon_heartbeat_loop())
     asyncio.create_task(_speed_measure_loop())
+    asyncio.create_task(_auto_eviction_loop())
     asyncio.create_task(_auto_replication_loop())
 
     # Mount beacon if enabled

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from .chunk_store import ChunkStore
+from .chunk_store import ChunkStore, StorageLimitError
 from .catalog import Catalog, STACItem, STACCollection
 
 logger = logging.getLogger("earthgrid.replication")
@@ -219,7 +219,11 @@ class Replicator:
                     )
                     if resp.status_code == 200:
                         data = resp.content
-                        stored_sha = self.chunk_store.put(data)
+                        try:
+                            stored_sha = self.chunk_store.put(data)
+                        except StorageLimitError:
+                            logger.warning("Storage full during replication — stopping")
+                            return downloaded, bytes_total, errors
                         if stored_sha == sha:
                             downloaded += 1
                             bytes_total += len(data)
