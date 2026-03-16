@@ -25,6 +25,7 @@ root = fetch('/')
 nodes_data = fetch('/nodes')
 coverage = fetch('/stats/coverage')
 uptake = fetch('/stats/uptake?period_days=365')
+ingest = fetch('/stats/ingest?period_days=365')
 requests_data = fetch('/stats/requests')
 
 nodes = nodes_data.get('nodes', [])
@@ -52,6 +53,7 @@ stats = {
     },
     'coverage': coverage.get('sensors', {}),
     'uptake': uptake,
+    'ingest': ingest,
     'km2_requested': requests_data.get('total_km2_queried', requests_data.get('total_km2_requested', 0)),
     'operations': fetch('/process/operations').get('operations', []),
 }

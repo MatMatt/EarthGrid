@@ -832,6 +832,13 @@ def stats_requests():
 
 
 
+
+
+@app.get("/stats/ingest")
+async def stats_ingest(period_days: int = 365):
+    """Daily ingest history — data fetched from upstream sources."""
+    return stats_engine.ingest_history(period_days=period_days)
+
 @app.get("/stats/uptake")
 async def stats_uptake(period_days: int = 30):
     """Anonymous uptake statistics for reporting.

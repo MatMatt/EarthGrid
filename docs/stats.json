@@ -1,14 +1,20 @@
 {
-  "updated": "2026-03-16T06:13:49Z",
-  "version": "",
+  "updated": "2026-03-16T06:14:05Z",
+  "version": "0.3.2",
   "network": {
-    "nodes_alive": 0,
-    "nodes_total": 0,
-    "total_bytes": 0,
-    "available_storage_gb": 0,
+    "nodes_alive": 2,
+    "nodes_total": 2,
+    "total_bytes": 70020930912,
+    "available_storage_gb": 3050.0,
     "redundancy": 1.0
   },
-  "coverage": {},
+  "coverage": {
+    "sentinel-2-l2a": {
+      "items": 775,
+      "tiles": 2,
+      "area_km2": 12056
+    }
+  },
   "uptake": {
     "report_type": "EarthGrid Uptake Statistics",
     "period_days": 365,
@@ -25,7 +31,11 @@
     "monthly_trend": [],
     "daily_trend": []
   },
-  "ingest": {},
+  "ingest": {
+    "total_items_fetched": 0,
+    "total_gb_fetched": 65.21,
+    "daily": []
+  },
   "km2_requested": 0,
   "operations": [
     {

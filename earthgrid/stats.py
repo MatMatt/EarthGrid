@@ -542,6 +542,41 @@ class StatsEngine:
                         round((r[4] or 0) / (1024**3), 3), round(r[5] or 0, 1)])
         return buf.getvalue()
 
+
+    def ingest_history(self, period_days: int = 365) -> dict:
+        """Daily ingest history — how much data was fetched from sources over time."""
+        cutoff = time.time() - (period_days * 86400)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            # Daily ingest from sources
+            daily = conn.execute(
+                """SELECT date(timestamp, 'unixepoch') as day,
+                   COUNT(*) as items,
+                   SUM(bytes_transferred) as total_bytes
+                   FROM download_log
+                   WHERE timestamp > ? AND origin = 'source'
+                   GROUP BY day ORDER BY day""",
+                (cutoff,)
+            ).fetchall()
+            # Totals
+            totals = conn.execute(
+                """SELECT COUNT(*) as items,
+                   SUM(bytes_transferred) as total_bytes,
+                   COUNT(DISTINCT collection_id) as collections
+                   FROM download_log
+                   WHERE origin = 'source'"""
+            ).fetchone()
+        return {
+            "total_items_fetched": totals["items"] or 0,
+            "total_gb_fetched": round((totals["total_bytes"] or 0) / (1024**3), 2),
+            "collections": totals["collections"] or 0,
+            "daily": [
+                {"date": r["day"], "items": r["items"],
+                 "gb": round((r["total_bytes"] or 0) / (1024**3), 3)}
+                for r in daily
+            ],
+        }
+
     def cleanup(self, retain_days: int = 90):
         """Remove access logs older than retain_days."""
         cutoff = time.time() - (retain_days * 86400)

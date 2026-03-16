@@ -68,6 +68,7 @@ a:hover { text-decoration:underline; }
   <div class="stat loading" id="sUptakeReq"><div class="value" id="vUptakeReq">—</div><div class="label">Requests (30d)</div></div>
   <div class="stat loading" id="sUptakeGB"><div class="value" id="vUptakeGB">—</div><div class="label">GB Delivered (30d)</div></div>
   <div class="stat loading" id="sUptakeKm2"><div class="value" id="vUptakeKm2">—</div><div class="label">km² Queried (30d)</div></div>
+  <div class="stat loading" id="sFetched"><div class="value" id="vFetched">—</div><div class="label">GB Fetched from Sources</div></div>
 </div>
 
 <div class="section">
@@ -77,6 +78,13 @@ a:hover { text-decoration:underline; }
 
 
 
+
+
+<div class="section">
+<h2>📥 Data Ingest History</h2>
+<p style="color:var(--dim);font-size:0.85rem;margin-bottom:1rem;">Data fetched from upstream sources (Element84, CDSE, etc.)</p>
+<div id="ingestChart"><em style="color:var(--dim)">Loading...</em></div>
+</div>
 
 <div class="section">
 <h2>📊 Uptake Statistics</h2>
@@ -467,6 +475,29 @@ async function load() {
     ops.forEach(o => { oh += '<div class="op"><span class="opname">' + o.name + '</span><br><span style="color:var(--dim)">' + o.description + '</span></div>'; });
     document.getElementById('opsList').innerHTML = oh || '<em>None</em>';
 
+
+    // --- Ingest History ---
+    const ingest = d.ingest || {};
+    const ig = ingest.total_gb_fetched || 0;
+    document.getElementById('vFetched').textContent = ig >= 1000 ? (ig/1000).toFixed(1) + ' TB' : ig.toFixed(1) + ' GB';
+    document.getElementById('sFetched').classList.remove('loading');
+
+    const iDaily = ingest.daily || [];
+    if (iDaily.length > 0) {
+      const maxItems = Math.max(...iDaily.map(d => d.items));
+      let bars = '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.75rem;margin-bottom:2px"><span>Daily items ingested</span><span>' + (ingest.total_items_fetched||0).toLocaleString() + ' total</span></div>';
+      bars += '<div style="display:flex;align-items:flex-end;gap:1px;height:80px;background:rgba(255,255,255,0.02);border-radius:4px;padding:4px">';
+      for (const dd of iDaily) {
+        const h = maxItems > 0 ? Math.max(2, (dd.items / maxItems) * 72) : 2;
+        bars += '<div style="flex:1;min-width:2px;height:' + h + 'px;background:var(--green);border-radius:1px 1px 0 0;opacity:0.7" title="' + dd.date + ': ' + dd.items + ' items, ' + dd.gb + ' GB"></div>';
+      }
+      bars += '</div>';
+      bars += '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.7rem;margin-top:2px"><span>' + iDaily[0].date + '</span><span>' + iDaily[iDaily.length-1].date + '</span></div>';
+      document.getElementById('ingestChart').innerHTML = bars;
+    } else {
+      document.getElementById('ingestChart').innerHTML = '<em style="color:var(--dim)">No ingest data yet</em>';
+    }
+
     // --- Uptake Statistics ---
     const uptake = d.uptake || {};
     const us = uptake.summary || {};
@@ -501,7 +532,7 @@ async function load() {
     const daily = uptake.daily_trend || [];
     if (daily.length > 1) {
       const maxDay = Math.max(...daily.map(d => d.requests));
-      let bars = '<div style="color:var(--dim);font-size:0.8rem;margin-bottom:4px">Daily requests (last year)</div><div class="trend-chart">';
+      let bars = '<div style="color:var(--dim);font-size:0.8rem;margin-bottom:4px">Daily requests</div><div class="trend-chart">';
       for (const dd of daily) {
         const h = maxDay > 0 ? Math.max(2, (dd.requests / maxDay) * 60) : 2;
         bars += '<div class="trend-bar" style="height:' + h + 'px" data-tip="' + dd.date + ': ' + dd.requests + ' req"></div>';
