@@ -164,7 +164,7 @@ EarthGrid can fetch from multiple upstream providers. **All data is stored as Cl
 |---|---|---|---|
 | **Element84** (AWS) | ❌ No | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG — fastest ingest |
 | **CDSE** (Copernicus) | ✅ Free | S1, S2, S3, S5P, CLMS, full archive | JP2000 → converted to COG on ingest |
-| **WEkEO** | ✅ Free | CLMS (legacy), C3S, CAMS | Climate & land services |
+| **WEkEO** | 🔜 Coming soon | C3S, CAMS | Climate & atmosphere services |
 | **CMEMS** | ✅ Free | Marine data | Ocean & marine products |
 
 ### Which source should I use?
