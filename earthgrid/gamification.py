@@ -303,12 +303,29 @@ class GamificationEngine:
             updates.append("last_seen = ?")
             params.append(now)
 
-            # Score calculation: 1 per item + 1 per GB stored + 2 per GB served + 1 per 100 queries
-            score_add = items_delta + (bytes_delta // (1024**3)) + \
-                        (bytes_served_delta // (1024**3)) * 2 + (queries_delta // 100)
-            if score_add > 0:
-                updates.append("score = score + ?")
-                params.append(score_add)
+            # Score is recalculated from current state (not incremental)
+            # Weights: uptime (10/day) > storage (5/GB) > items (1) > served (3/GB) > queries (1/100)
+            # Fetch current totals after updates
+            _cur = conn.execute(
+                "SELECT items_ingested, bytes_stored, bytes_served, queries_answered, uptime_seconds, streak_days FROM node_scores WHERE node_id=?",
+                (node_id,)).fetchone()
+            if _cur:
+                _items = (_cur[0] or 0) + items_delta
+                _gb_stored = ((_cur[1] or 0) + bytes_delta) / (1024**3)
+                _gb_served = ((_cur[2] or 0) + bytes_served_delta) / (1024**3)
+                _queries = (_cur[3] or 0) + queries_delta
+                _uptime_days = (_cur[4] or 0) / 86400
+                _streak = _cur[5] or 0
+                new_score = int(
+                    _uptime_days * 10 +      # 10 pts per day online
+                    _gb_stored * 5 +          # 5 pts per GB shared
+                    _items * 1 +              # 1 pt per item
+                    _gb_served * 3 +          # 3 pts per GB served
+                    _queries // 100 +         # 1 pt per 100 queries
+                    _streak * 2              # 2 pts per streak day
+                )
+                updates.append("score = ?")
+                params.append(new_score)
 
             if updates:
                 params.append(node_id)
@@ -341,14 +358,31 @@ class GamificationEngine:
             # Streak update
             today = time.strftime("%Y-%m-%d", time.gmtime())
             row = conn.execute(
-                "SELECT streak_last_date, streak_days FROM node_scores WHERE node_id=?",
+                "SELECT streak_last_date, streak_days, items_ingested, bytes_stored, bytes_served, queries_answered FROM node_scores WHERE node_id=?",
                 (node_id,)).fetchone()
-            if row and row[0] != today:
-                yesterday = time.strftime("%Y-%m-%d", time.gmtime(now - 86400))
-                new_streak = (row[1] + 1) if row[0] == yesterday else 1
-                conn.execute(
-                    "UPDATE node_scores SET streak_days=?, streak_last_date=? WHERE node_id=?",
-                    (new_streak, today, node_id))
+            if row:
+                if row[0] != today:
+                    yesterday = time.strftime("%Y-%m-%d", time.gmtime(now - 86400))
+                    new_streak = (row[1] + 1) if row[0] == yesterday else 1
+                    conn.execute(
+                        "UPDATE node_scores SET streak_days=?, streak_last_date=? WHERE node_id=?",
+                        (new_streak, today, node_id))
+                else:
+                    new_streak = row[1]
+                # Recalculate score from current state
+                _uptime_days = uptime_seconds / 86400
+                _gb_stored = (row[3] or 0) / (1024**3)
+                _gb_served = (row[4] or 0) / (1024**3)
+                score = int(
+                    _uptime_days * 10 +
+                    _gb_stored * 5 +
+                    (row[2] or 0) * 1 +       # items
+                    _gb_served * 3 +
+                    (row[5] or 0) // 100 +    # queries
+                    new_streak * 2
+                )
+                conn.execute("UPDATE node_scores SET score=? WHERE node_id=?",
+                             (score, node_id))
 
     def _check_achievements(self, conn: sqlite3.Connection, node_id: str,
                             username: str):
