@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends     libgdal-dev
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY earthgrid/ earthgrid/
+COPY docs/ docs/
 
 RUN pip install --no-cache-dir ".[full]"
 
