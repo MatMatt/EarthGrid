@@ -690,8 +690,12 @@ def node_info(request: Request):
         "node_name": settings.node_name,
         "chunks": chunk_store.chunk_count,
         "chunks_bytes": chunk_store.total_bytes,
+        "storage_limit_gb": settings.storage_limit_gb,
         "item_count": summary["item_count"],
+        "total_area_km2": summary["total_area_km2"],
         "collections": summary["collections"],
+        "peers": len(federation.peers),
+        "redundancy_index": _redundancy_index(),
     }
     return caps
 
