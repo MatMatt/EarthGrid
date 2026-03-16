@@ -626,7 +626,7 @@ async function load() {
     document.getElementById('vAvailStorage').textContent = fmtGB(net.available_storage_gb || 0);
     document.getElementById('sAvailStorage').classList.remove('loading');
 
-    document.getElementById('sRedundancy').classList.remove('loading');
+    const redEl = document.getElementById('sRedundancy'); if (redEl) redEl.classList.remove('loading');
 
     document.getElementById('vStorage').textContent = fmtBytes(net.total_bytes || 0);
     document.getElementById('sStorage').classList.remove('loading');
