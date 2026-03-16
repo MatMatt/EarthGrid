@@ -53,6 +53,41 @@ BAND_MAP_S2 = {
 }
 
 
+async def _search_chunk(client, bbox, start, end, cloud_cover, max_per_page, collection, fields):
+    """Search a single time chunk, handling pagination."""
+    body = {
+        "collections": [collection],
+        "bbox": list(bbox),
+        "limit": max_per_page,
+        "query": {"eo:cloud_cover": {"lte": cloud_cover}},
+        "fields": fields,
+        "datetime": f"{start}T00:00:00Z/{end}T23:59:59Z",
+    }
+    items = []
+    while True:
+        resp = await client.post(f"{STAC_API}/search", json=body)
+        if resp.status_code != 200:
+            break
+        data = resp.json()
+        page = data.get("features", [])
+        if not page:
+            break
+        items.extend(page)
+        # Follow pagination
+        next_link = None
+        for link in data.get("links", []):
+            if link.get("rel") == "next":
+                next_link = link.get("body") or link.get("href")
+                break
+        if not next_link or len(page) < max_per_page:
+            break
+        if isinstance(next_link, dict):
+            body.update(next_link)
+        else:
+            break
+    return items
+
+
 async def search_element84(
     bbox: tuple[float, float, float, float],
     start_date: str | None = None,
@@ -61,90 +96,60 @@ async def search_element84(
     limit: int = 5,
     collection: str = "sentinel-2-l2a",
 ) -> list[dict]:
-    """Search Element84 STAC for items. Uses parallel page fetching."""
+    """Search Element84 STAC for items. Splits time range into parallel chunks."""
     import time as _time
+    from datetime import datetime as _dt, timedelta as _td
     _t0 = _time.monotonic()
     max_per_page = 250
     target = limit if limit > 0 else 99999
 
-    base_body = {
-        "collections": [collection],
-        "bbox": list(bbox),
-        "limit": max_per_page,
-        "query": {"eo:cloud_cover": {"lte": cloud_cover}},
-        "fields": {
-            "include": ["id", "bbox", "geometry", "properties.datetime",
-                         "properties.eo:cloud_cover", "properties.grid:code",
-                         "properties.s2:mgrs_tile", "assets"],
-            "exclude": ["links"]
-        },
+    fields = {
+        "include": ["id", "bbox", "geometry", "properties.datetime",
+                     "properties.eo:cloud_cover", "properties.grid:code",
+                     "properties.s2:mgrs_tile", "assets"],
+        "exclude": ["links"]
     }
-    if start_date or end_date:
-        start = start_date or "2015-01-01"
-        end = end_date or "2099-12-31"
-        base_body["datetime"] = f"{start}T00:00:00Z/{end}T23:59:59Z"
+
+    s = start_date or "2015-01-01"
+    e = end_date or _dt.now().strftime("%Y-%m-%d")
+
+    # Split time range into ~6-month chunks for parallel search
+    d_start = _dt.strptime(s, "%Y-%m-%d")
+    d_end = _dt.strptime(e, "%Y-%m-%d")
+    chunks = []
+    chunk_start = d_start
+    while chunk_start < d_end:
+        chunk_end = min(chunk_start + _td(days=182), d_end)
+        chunks.append((chunk_start.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
+        chunk_start = chunk_end + _td(days=1)
+
+    n_chunks = len(chunks)
+    print(f"  \U0001f50d Searching {n_chunks} time chunks in parallel...", end="", flush=True)
 
     async with httpx.AsyncClient(timeout=60) as client:
-        # First page: get total count
-        resp = await client.post(f"{STAC_API}/search", json=base_body)
-        resp.raise_for_status()
-        data = resp.json()
-        items = data.get("features", [])
-        matched = data.get("numberMatched") or data.get("context", {}).get("matched") or 0
+        tasks = [
+            _search_chunk(client, bbox, cs, ce, cloud_cover, max_per_page, collection, fields)
+            for cs, ce in chunks
+        ]
+        chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        if not items:
-            return []
+    items = []
+    for r in chunk_results:
+        if isinstance(r, list):
+            items.extend(r)
 
-        print(f"\r  \U0001f50d {matched} items matched, fetching...", end="", flush=True)
+    # Deduplicate by item ID (chunks might overlap at boundaries)
+    seen = set()
+    unique = []
+    for item in items:
+        iid = item.get("id", "")
+        if iid not in seen:
+            seen.add(iid)
+            unique.append(item)
+    items = unique[:target]
 
-        # If we got everything in one page, done
-        if len(items) >= matched or len(items) >= target or len(items) < max_per_page:
-            _elapsed = _time.monotonic() - _t0
-            print(f"\r  \U0001f50d {len(items)} items found ({_elapsed:.1f}s)        ")
-            items = items[:target]
-        else:
-            # Parallel fetch remaining pages using token-based pagination
-            # Element84 supports POST with token param for pagination
-            remaining_pages = []
-            next_body = dict(base_body)
-
-            # Get next link from first response
-            next_link = None
-            for link in data.get("links", []):
-                if link.get("rel") == "next":
-                    next_link = link.get("body") or link.get("href")
-                    break
-
-            # Sequential pagination (Element84 uses cursor tokens, can't skip pages)
-            while len(items) < min(target, matched):
-                if not next_link:
-                    break
-                if isinstance(next_link, dict):
-                    next_body.update(next_link)
-                else:
-                    break
-                next_body["limit"] = max_per_page
-                resp = await client.post(f"{STAC_API}/search", json=next_body)
-                if resp.status_code != 200:
-                    break
-                page_data = resp.json()
-                page = page_data.get("features", [])
-                if not page:
-                    break
-                items.extend(page)
-                print(f"\r  \U0001f50d Found {len(items)}/{matched} items...", end="", flush=True)
-
-                next_link = None
-                for link in page_data.get("links", []):
-                    if link.get("rel") == "next":
-                        next_link = link.get("body") or link.get("href")
-                        break
-                if len(page) < max_per_page:
-                    break
-
-            _elapsed = _time.monotonic() - _t0
-            print(f"\r  \U0001f50d {len(items)} items found ({_elapsed:.1f}s)        ")
-            items = items[:target]
+    _elapsed = _time.monotonic() - _t0
+    print(f"\r  \U0001f50d {len(items)} items found ({_elapsed:.1f}s)        ")
     # Sort by date descending (client-side, since we removed server-side sort)
     items.sort(key=lambda x: x.get("properties", {}).get("datetime", ""), reverse=True)
     if items:
