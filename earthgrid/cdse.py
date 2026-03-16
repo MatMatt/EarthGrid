@@ -96,7 +96,7 @@ class CDSEClient:
         ]
         if product_type:
             # CDSE S3 product types are 10 chars, padded with underscores
-            pt = product_type.ljust(10, '_') if collection.startswith("SENTINEL-3") else product_type
+            pt = product_type.ljust(11, '_') if collection.startswith("SENTINEL-3") else product_type
             filters.append(
                 f"Attributes/OData.CSC.StringAttribute/any(att:att/Name eq "
                 f"'productType' and att/OData.CSC.StringAttribute/Value eq '{pt}')"
