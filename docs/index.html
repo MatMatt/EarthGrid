@@ -42,6 +42,16 @@ a:hover { text-decoration:underline; }
 .cov-table .num { text-align:right; font-variant-numeric:tabular-nums; }
 
 
+
+/* Uptake bar chart */
+.uptake-bar { display:flex; align-items:center; gap:0.5rem; margin:0.3rem 0; }
+.uptake-bar .bar { height:20px; background:var(--accent); border-radius:3px; min-width:2px; transition:width 0.3s; }
+.uptake-bar .bar-label { font-size:0.8rem; color:var(--dim); white-space:nowrap; min-width:100px; }
+.uptake-bar .bar-value { font-size:0.8rem; color:var(--text); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.trend-chart { display:flex; align-items:flex-end; gap:2px; height:60px; }
+.trend-bar { background:var(--accent); border-radius:2px 2px 0 0; min-width:4px; flex:1; opacity:0.7; position:relative; }
+.trend-bar:hover { opacity:1; }
+.trend-bar:hover::after { content:attr(data-tip); position:absolute; bottom:100%; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.7rem; white-space:nowrap; color:var(--text); }
 </style>
 </head>
 <body>
@@ -55,6 +65,9 @@ a:hover { text-decoration:underline; }
   <div class="stat loading" id="sRedundancy"><div class="value" id="vRedundancy">—</div><div class="label">Redundancy Index</div></div>
   <div class="stat loading" id="sRequested"><div class="value" id="vRequested">—</div><div class="label">GB Requested</div></div>
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Total Data</div></div>
+  <div class="stat loading" id="sUptakeReq"><div class="value" id="vUptakeReq">—</div><div class="label">Requests (30d)</div></div>
+  <div class="stat loading" id="sUptakeGB"><div class="value" id="vUptakeGB">—</div><div class="label">GB Delivered (30d)</div></div>
+  <div class="stat loading" id="sUptakeKm2"><div class="value" id="vUptakeKm2">—</div><div class="label">km² Queried (30d)</div></div>
 </div>
 
 <div class="section">
@@ -63,6 +76,14 @@ a:hover { text-decoration:underline; }
 </div>
 
 
+
+
+<div class="section">
+<h2>📊 Uptake Statistics</h2>
+<p style="color:var(--dim);font-size:0.85rem;margin-bottom:1rem;">Anonymous aggregate usage — no user tracking. <a href="" id="csvLink" download>Download CSV</a></p>
+<div id="uptakeTable"><em style="color:var(--dim)">Loading...</em></div>
+<div id="uptakeTrend" style="margin-top:1rem;"></div>
+</div>
 
 <div class="section">
 <h2>⚡ Processing Operations</h2>
@@ -94,6 +115,16 @@ a:hover { text-decoration:underline; }
 .tab-content.active { display:block; }
 .tab-panel pre { margin-top:0; border-top-left-radius:0; border-top-right-radius:0; }
 .tab-panel h4 { font-size:0.95rem; margin:1rem 0 0.5rem; color:var(--dim); }
+
+/* Uptake bar chart */
+.uptake-bar { display:flex; align-items:center; gap:0.5rem; margin:0.3rem 0; }
+.uptake-bar .bar { height:20px; background:var(--accent); border-radius:3px; min-width:2px; transition:width 0.3s; }
+.uptake-bar .bar-label { font-size:0.8rem; color:var(--dim); white-space:nowrap; min-width:100px; }
+.uptake-bar .bar-value { font-size:0.8rem; color:var(--text); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.trend-chart { display:flex; align-items:flex-end; gap:2px; height:60px; }
+.trend-bar { background:var(--accent); border-radius:2px 2px 0 0; min-width:4px; flex:1; opacity:0.7; position:relative; }
+.trend-bar:hover { opacity:1; }
+.trend-bar:hover::after { content:attr(data-tip); position:absolute; bottom:100%; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.7rem; white-space:nowrap; color:var(--text); }
 </style>
 
 <div class="tabs" id="lang-tabs">
@@ -480,6 +511,79 @@ async function load() {
       oh += '<div class="op"><span class="opname">' + o.name + '</span><br><span style="color:var(--dim)">' + o.description + '</span></div>';
     });
     document.getElementById('opsList').innerHTML = oh || '<em>None</em>';
+
+    // --- Uptake Statistics ---
+    try {
+      const ur = await fetch(BEACON + '/stats/uptake?period_days=30');
+      const ud = await ur.json();
+      const s = ud.summary || {};
+
+      // Top stat cards
+      document.getElementById('vUptakeReq').textContent = (s.total_requests || 0).toLocaleString();
+      document.getElementById('sUptakeReq').classList.remove('loading');
+      document.getElementById('vUptakeGB').textContent = (s.total_gb || 0).toFixed(1);
+      document.getElementById('sUptakeGB').classList.remove('loading');
+      const km2 = s.total_aoi_km2 || 0;
+      document.getElementById('vUptakeKm2').textContent = km2 >= 1e6 ? (km2/1e6).toFixed(1) + 'M' : km2 >= 1000 ? (km2/1000).toFixed(0) + 'k' : km2.toFixed(0);
+      document.getElementById('sUptakeKm2').classList.remove('loading');
+
+      // CSV download link
+      document.getElementById('csvLink').href = BEACON + '/stats/uptake/csv?period_days=30';
+
+      // Per-collection table
+      const cols = ud.by_collection || [];
+      if (cols.length > 0) {
+        const maxReq = Math.max(...cols.map(c => c.requests));
+        let th = '<table class="cov-table"><thead><tr><th>Collection</th><th class="num">Requests</th><th class="num">GB</th><th class="num">km²</th><th style="width:40%"></th></tr></thead><tbody>';
+        for (const c of cols) {
+          const pct = maxReq > 0 ? (c.requests / maxReq * 100) : 0;
+          const km2val = (c.aoi_km2 || 0);
+          const km2str = km2val >= 1e6 ? (km2val/1e6).toFixed(1) + 'M' : km2val >= 1000 ? (km2val/1000).toFixed(0) + 'k' : km2val.toFixed(0);
+          th += '<tr>';
+          th += '<td class="sensor">' + sensorLabel(c.collection) + '</td>';
+          th += '<td class="num">' + c.requests.toLocaleString() + '</td>';
+          th += '<td class="num">' + (c.gb || 0).toFixed(1) + '</td>';
+          th += '<td class="num">' + km2str + '</td>';
+          th += '<td><div style="background:var(--accent);height:14px;border-radius:3px;width:' + pct + '%;opacity:0.6"></div></td>';
+          th += '</tr>';
+        }
+        th += '</tbody></table>';
+        document.getElementById('uptakeTable').innerHTML = th;
+      } else {
+        document.getElementById('uptakeTable').innerHTML = '<em style="color:var(--dim)">No usage data yet</em>';
+      }
+
+      // Daily trend mini-chart
+      const daily = ud.daily_trend || [];
+      if (daily.length > 1) {
+        const maxDay = Math.max(...daily.map(d => d.requests));
+        let bars = '<div style="color:var(--dim);font-size:0.8rem;margin-bottom:4px">Daily requests (30d)</div><div class="trend-chart">';
+        for (const d of daily) {
+          const h = maxDay > 0 ? Math.max(2, (d.requests / maxDay) * 60) : 2;
+          bars += '<div class="trend-bar" style="height:' + h + 'px" data-tip="' + d.date + ': ' + d.requests + ' req"></div>';
+        }
+        bars += '</div>';
+        document.getElementById('uptakeTrend').innerHTML = bars;
+      }
+
+      // Top processes
+      const procs = ud.top_processes || [];
+      if (procs.length > 0) {
+        let ph = '<div style="color:var(--dim);font-size:0.8rem;margin-top:1rem;margin-bottom:4px">Top openEO processes</div><div class="ops">';
+        for (const p of procs.slice(0, 10)) {
+          ph += '<div class="op"><span class="opname">' + p.process + '</span> <span style="color:var(--dim)">' + p.count + 'x</span></div>';
+        }
+        ph += '</div>';
+        document.getElementById('uptakeTrend').innerHTML += ph;
+      }
+
+    } catch(e) {
+      document.getElementById('vUptakeReq').textContent = '—';
+      document.getElementById('vUptakeGB').textContent = '—';
+      document.getElementById('vUptakeKm2').textContent = '—';
+      console.error('Uptake load error:', e);
+    }
+
 
   } catch(e) {
     
