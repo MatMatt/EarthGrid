@@ -732,11 +732,13 @@ async def routed_search(
 
     # Find relevant nodes
     if col_list:
-        target_nodes = set()
+        seen_ids = set()
+        target_nodes = []
         for col in col_list:
             for node in registry.find_nodes_for_collection(col):
-                target_nodes.add(node)
-        target_nodes = list(target_nodes)
+                if node.node_id not in seen_ids:
+                    seen_ids.add(node.node_id)
+                    target_nodes.append(node)
     else:
         target_nodes = registry.get_alive_nodes()
 

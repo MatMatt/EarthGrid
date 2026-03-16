@@ -508,15 +508,16 @@ async def fetch_and_ingest_element84(
 
                 print(f"\n\U0001f4e1 Remote ({node['node_name']}): {len(node_items)} items")
                 failed_items = []
-                for item in node_items:
+                for idx, item in enumerate(node_items):
                     date_str = item["date"][:10] if item["date"] else "?"
                     cc = item["cloud_cover"]
-                    print(f"  \U0001f4e1 {item['id']}  ({date_str}, {cc:.0f}% cloud) \u2192 {node['node_name']}")
+                    print(f"\r  \U0001f4e1 [{idx+1}/{len(node_items)}] {item['id']} ({date_str}, {cc:.0f}% cloud) \u2192 {node['node_name']}    ", end="", flush=True)
                     r = await _delegate_item_to_node(node, item, target_bands, earthgrid_collection, cloud_cover)
                     node_results.extend(r)
                     # Track failed items for redistribution
                     if any(x.get("retry_failed") for x in r if isinstance(x, dict)):
                         failed_items.append(item)
+                print()  # newline after progress
 
                 # Redistribute failed items to other nodes
                 if failed_items:
