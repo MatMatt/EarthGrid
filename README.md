@@ -1,6 +1,6 @@
 # EarthGrid 🌍
 
-Distributed storage for Earth observation data.
+Distributed storage and openEO processing for Earth observation data.
 
 **No single point of failure. No vendor lock-in. Community-driven.**
 
