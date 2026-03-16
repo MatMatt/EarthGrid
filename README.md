@@ -221,6 +221,7 @@ EarthGrid **redistributes** official data as-is (content-addressed, integrity-ve
 git clone https://github.com/MatMatt/EarthGrid.git
 cd EarthGrid
 pip install -e .
+earthgrid sources add --provider element84  # No auth needed (public)
 earthgrid docker start --storage 100 --beacon --name my-node
 ```
 
@@ -256,6 +257,7 @@ Config is stored in `~/.earthgrid/docker-compose.yml`. Subsequent `docker update
 git clone https://github.com/MatMatt/EarthGrid.git
 cd EarthGrid
 pip install -e .
+earthgrid sources add --provider element84  # No auth needed (public)
 earthgrid setup
 earthgrid start
 ```
