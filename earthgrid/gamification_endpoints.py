@@ -28,10 +28,11 @@ def _get_engine() -> GamificationEngine:
 # --- Models ---
 
 class OptInRequest(BaseModel):
-    username: str
+    username: str = ""
     display_name: str = ""
     node_id: str = ""
     group_id: str = ""
+    anonymous: bool = False
 
 
 class GroupCreateRequest(BaseModel):
@@ -100,12 +101,21 @@ async def list_achievements():
 async def opt_in(req: OptInRequest):
     """Opt in a user and/or node to gamification."""
     engine = _get_engine()
-    engine.opt_in_user(req.username, req.display_name)
-    if req.node_id:
-        engine.opt_in_node(req.node_id, req.username)
-        if req.group_id:
-            engine.set_node_group(req.node_id, req.group_id)
-    return {"status": "opted_in", "username": req.username, "node_id": req.node_id}
+    if req.anonymous:
+        # Anonymous: node participates but no traceable user link
+        if not req.node_id:
+            raise HTTPException(400, "node_id required for anonymous opt-in")
+        engine.opt_in_node(req.node_id, anonymous=True)
+        return {"status": "opted_in", "anonymous": True, "node_id": "(hidden)"}
+    else:
+        if not req.username:
+            raise HTTPException(400, "username required (or set anonymous=true)")
+        engine.opt_in_user(req.username, req.display_name)
+        if req.node_id:
+            engine.opt_in_node(req.node_id, req.username)
+            if req.group_id:
+                engine.set_node_group(req.node_id, req.group_id)
+        return {"status": "opted_in", "username": req.username, "node_id": req.node_id}
 
 
 @router.post("/group")

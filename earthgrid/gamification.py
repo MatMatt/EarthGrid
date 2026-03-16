@@ -111,7 +111,9 @@ class GamificationEngine:
                 continents TEXT NOT NULL DEFAULT '',
                 first_seen REAL NOT NULL DEFAULT 0,
                 last_seen REAL NOT NULL DEFAULT 0,
-                score INTEGER NOT NULL DEFAULT 0
+                score INTEGER NOT NULL DEFAULT 0,
+                display_alias TEXT NOT NULL DEFAULT '',
+                anonymous INTEGER NOT NULL DEFAULT 0
             )""")
 
             # User scores (aggregated)
@@ -136,7 +138,9 @@ class GamificationEngine:
                 created_by TEXT NOT NULL DEFAULT '',
                 created_at REAL NOT NULL DEFAULT 0,
                 description TEXT NOT NULL DEFAULT '',
-                total_score INTEGER NOT NULL DEFAULT 0
+                total_score INTEGER NOT NULL DEFAULT 0,
+                display_alias TEXT NOT NULL DEFAULT '',
+                anonymous INTEGER NOT NULL DEFAULT 0
             )""")
 
             # Group membership
@@ -175,15 +179,29 @@ class GamificationEngine:
 
     # --- Opt-in ---
 
-    def opt_in_node(self, node_id: str, owner_user: str = ""):
-        """Opt a node into gamification."""
+    def opt_in_node(self, node_id: str, owner_user: str = "",
+                     anonymous: bool = False):
+        """Opt a node into gamification.
+        
+        anonymous=True: node participates but with no traceable link to a user.
+        The node gets a random display alias like 'node-a7f3' instead.
+        """
         now = time.time()
+        display_alias = ""
+        if anonymous:
+            import hashlib
+            display_alias = "node-" + hashlib.sha256(node_id.encode()).hexdigest()[:4]
+            owner_user = ""  # no user link
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""INSERT INTO node_scores (node_id, owner_user, opted_in, first_seen, last_seen)
-                VALUES (?, ?, 1, ?, ?)
-                ON CONFLICT(node_id) DO UPDATE SET opted_in=1, owner_user=?""",
-                (node_id, owner_user, now, now, owner_user))
-        logger.info(f"Node {node_id} opted in (owner={owner_user})")
+            conn.execute("""INSERT INTO node_scores
+                (node_id, owner_user, opted_in, display_alias, anonymous, first_seen, last_seen)
+                VALUES (?, ?, 1, ?, ?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET opted_in=1, owner_user=?,
+                display_alias=?, anonymous=?""",
+                (node_id, owner_user, display_alias, 1 if anonymous else 0,
+                 now, now, owner_user, display_alias, 1 if anonymous else 0))
+        mode = "anonymous" if anonymous else f"owner={owner_user}"
+        logger.info(f"Node {node_id} opted in ({mode})")
 
     def opt_in_user(self, username: str, display_name: str = ""):
         """Opt a user into gamification."""
@@ -297,12 +315,15 @@ class GamificationEngine:
                     f"UPDATE node_scores SET {', '.join(updates)} WHERE node_id=?",
                     params)
 
-            # Activity feed
+            # Activity feed — use alias for anonymous nodes
             if score_add > 0 or event_type in ("achievement", "join", "ingest"):
+                is_anon = bool(row.get("anonymous", 0))
+                feed_node = row.get("display_alias") or node_id if is_anon else node_id
+                feed_user = "" if is_anon else row["owner_user"]
                 conn.execute("""INSERT INTO activity_feed
                     (timestamp, node_id, username, event_type, detail, score_delta)
                     VALUES (?, ?, ?, ?, ?, ?)""",
-                    (now, node_id, row["owner_user"], event_type, detail, score_add))
+                    (now, feed_node, feed_user, event_type, detail, score_add))
 
             # Check achievements
             self._check_achievements(conn, node_id, row["owner_user"])
@@ -441,11 +462,14 @@ class GamificationEngine:
             if board_type == "nodes":
                 rows = conn.execute("""SELECT node_id, owner_user, score,
                     items_ingested, bytes_stored, bytes_served, streak_days,
-                    uptime_seconds, max_peers
+                    uptime_seconds, max_peers, display_alias, anonymous
                     FROM node_scores WHERE opted_in=1
                     ORDER BY score DESC LIMIT ?""", (limit,)).fetchall()
-                return [{"rank": i+1, "node_id": r["node_id"],
-                         "owner": r["owner_user"], "score": r["score"],
+                return [{"rank": i+1,
+                         "node_id": r["display_alias"] if r["anonymous"] else r["node_id"],
+                         "owner": "" if r["anonymous"] else r["owner_user"],
+                         "anonymous": bool(r["anonymous"]),
+                         "score": r["score"],
                          "items": r["items_ingested"],
                          "gb_stored": round((r["bytes_stored"] or 0) / (1024**3), 1),
                          "gb_served": round((r["bytes_served"] or 0) / (1024**3), 1),
@@ -494,9 +518,11 @@ class GamificationEngine:
                 defn = next((x for x in ACHIEVEMENTS if x["id"] == a["achievement_id"]), None)
                 if defn:
                     ach_list.append({**defn, "earned_at": a["earned_at"]})
+            is_anon = bool(node.get("anonymous", 0))
             return {
-                "node_id": node["node_id"],
-                "owner": node["owner_user"],
+                "node_id": node.get("display_alias") or node["node_id"] if is_anon else node["node_id"],
+                "owner": "" if is_anon else node["owner_user"],
+                "anonymous": is_anon,
                 "group": node["group_id"],
                 "score": node["score"],
                 "items_ingested": node["items_ingested"],
