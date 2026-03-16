@@ -239,7 +239,7 @@ earthgrid docker update    # git pull + rebuild + restart
 
 | Flag | Description | Default |
 |---|---|---|
-| `--storage <GB>` | Storage limit | 50 GB |
+| `--storage <GB>` | Storage limit | 100 GB |
 | `--name <name>` | Node name | from config |
 | `--beacon` | Also act as beacon | no |
 | `--port <port>` | Port | 8400 |
