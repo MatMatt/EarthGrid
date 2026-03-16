@@ -1230,7 +1230,6 @@ def _cmd_docker(args):
         print(f"   Name:     {node_name}")
         print(f"   Storage:  {storage} GB")
         print(f"   Port:     {port}")
-    print(f"   Updates:  {auto_update}")
         print(f"   Beacon:   {'yes' if also_beacon else 'no'}")
         print(f"   Data:     {data_dir}")
         if public_url:
