@@ -409,14 +409,31 @@ earthgrid start</code></pre>
 </div>
 
 <script>
-// Auto-detect beacon URL from page location, fallback to localhost
-            const BEACON = (() => {
-                const loc = window.location;
-                if (loc.hostname !== 'localhost' && !loc.hostname.startsWith('127.')) {
-                    return loc.origin + loc.pathname.replace(/\/docs\/.*$|\/index\.html$/, '').replace(/\/$/, '');
-                }
-                return 'http://localhost:8400';
-            })();
+// Discover beacon from beacons.json (same repo), fallback to localhost
+let BEACON = 'http://localhost:8400';
+async function discoverBeacon() {
+    try {
+        // Try beacons.json relative to this page (works on GitHub Pages + local)
+        const base = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '');
+        const resp = await fetch(base + '/../beacons.json');
+        if (resp.ok) {
+            const data = await resp.json();
+            const peers = data.bootstrap_peers || data.beacons || [];
+            for (const p of peers) {
+                try {
+                    const h = await fetch(p.url.replace(/\/$/, '') + '/health', {signal: AbortSignal.timeout(5000)});
+                    if (h.ok) return p.url.replace(/\/$/, '');
+                } catch {}
+            }
+        }
+    } catch {}
+    // If on a non-GH-Pages host, try self
+    const loc = window.location;
+    if (loc.hostname !== 'localhost' && !loc.hostname.startsWith('127.') && !loc.hostname.endsWith('github.io')) {
+        return loc.origin;
+    }
+    return 'http://localhost:8400';
+}
 
 function sensorLabel(col) {
   // sentinel-2-l2a → Sentinel-2 L2A
@@ -590,8 +607,7 @@ async function load() {
     console.error('Load error:', e);
   }
 }
-load();
-setInterval(load, 30000);
+discoverBeacon().then(url => { BEACON = url; load(); setInterval(load, 30000); });
 </script>
 </body>
 </html>
