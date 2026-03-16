@@ -27,6 +27,7 @@ services:
       - EARTHGRID_STATS_DB=/data/stats.db
       - EARTHGRID_IDENTITY_KEY_PATH=/data/.node_key
       - EARTHGRID_USERS_DB=/data/users.db
+      - EARTHGRID_BEACON_DB=/data/beacon.db
       # Uncomment to also run as beacon:
       - EARTHGRID_ALSO_BEACON=true
       - EARTHGRID_PUBLIC_URL=https://mattiuzzi.zapto.org/earthgrid
