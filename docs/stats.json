@@ -1,11 +1,11 @@
 {
-  "updated": "2026-03-16T08:16:20Z",
+  "updated": "2026-03-16T08:20:01Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 1,
     "nodes_total": 1,
     "total_bytes": 15092776664,
-    "available_storage_gb": 100.0,
+    "available_storage_gb": 3000.0,
     "redundancy": 1.0
   },
   "coverage": {
@@ -196,14 +196,6 @@
           "field": "gb_served"
         },
         {
-          "id": "early_adopter",
-          "icon": "\ud83e\uddea",
-          "name": "Early Adopter",
-          "desc": "Among the first 100 users",
-          "threshold": 100,
-          "field": "user_rank"
-        },
-        {
           "id": "continental",
           "icon": "\ud83c\udf0d",
           "name": "Continental",
@@ -252,7 +244,7 @@
           "field": "gb_served"
         }
       ],
-      "total": 12
+      "total": 11
     },
     "feed": {
       "feed": []
