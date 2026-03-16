@@ -1,16 +1,16 @@
 {
-  "updated": "2026-03-16T07:40:01Z",
+  "updated": "2026-03-16T07:49:29Z",
   "version": "0.3.2",
   "network": {
-    "nodes_alive": 1,
-    "nodes_total": 1,
-    "total_bytes": 14683315928,
-    "available_storage_gb": 100.0,
+    "nodes_alive": 2,
+    "nodes_total": 2,
+    "total_bytes": 70480291168,
+    "available_storage_gb": 3050.0,
     "redundancy": 1.0
   },
   "coverage": {
     "sentinel-2-l2a": {
-      "items": 325,
+      "items": 775,
       "tiles": 2,
       "area_km2": 12056
     }
@@ -38,7 +38,7 @@
     "daily": []
   },
   "items": 325,
-  "chunks": 27950,
+  "chunks": 28306,
   "km2_requested": 0,
   "operations": [
     {
