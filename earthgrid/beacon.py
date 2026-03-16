@@ -588,6 +588,21 @@ async def node_heartbeat(
         updates["upload_mbps"] = upload_mbps
 
     await registry.heartbeat(node_id, **updates)
+
+    # Update gamification for this node
+    try:
+        from .gamification_endpoints import engine
+        node = registry.nodes.get(node_id)
+        if node and engine:
+            engine.ensure_node_registered(node_id, node_name=node.node_name)
+            engine.record_heartbeat(
+                node_id,
+                peers_count=0,
+                uptime_seconds=uptime_seconds or 0,
+            )
+    except Exception:
+        pass
+
     return {"status": "ok"}
 
 
