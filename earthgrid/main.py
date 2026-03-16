@@ -30,6 +30,8 @@ from .ratelimit import RateLimitMiddleware
 from .openeo_gateway import router as openeo_router, root_router, OpenEOGateway, set_gateway, _capabilities, API_VERSION, BACKEND_VERSION
 from .user_auth import UserAuth
 from .node_identity import NodeIdentity
+from .gamification import GamificationEngine
+from .gamification_endpoints import router as gamification_router, set_engine as set_gamification_engine
 
 app = FastAPI(
     title="EarthGrid Node",
@@ -117,6 +119,8 @@ replicator = Replicator(chunk_store, catalog)
 
 # New architecture components
 stats_engine = StatsEngine(Path(settings.stats_db))
+gamification_engine = GamificationEngine(Path(settings.stats_db).parent / "gamification.db")
+set_gamification_engine(gamification_engine)
 
 # User authentication (network-wide)
 user_auth = UserAuth(Path(settings.users_db))
@@ -273,6 +277,7 @@ def federation_import_users(
 
 app.include_router(openeo_router)   # legacy /openeo/* routes
 app.include_router(root_router)     # openEO API v1.2.0 root-level routes
+app.include_router(gamification_router)
 
 
 # --- Beacon Registration ---
