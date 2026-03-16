@@ -402,6 +402,63 @@ def _stop_daemon():
     pid_file.unlink(missing_ok=True)
 
 
+
+def _check_update_available():
+    """Check if a newer version is available. Returns description or None."""
+    import subprocess
+    project_root = Path(__file__).resolve().parent.parent
+    git_dir = project_root / ".git"
+    if not git_dir.exists():
+        return None  # pip install - can't easily check
+    try:
+        subprocess.run(["git", "fetch", "--quiet"], cwd=project_root,
+                       capture_output=True, timeout=10)
+        result = subprocess.run(
+            ["git", "log", "HEAD..origin/master", "--oneline"],
+            cwd=project_root, capture_output=True, text=True, timeout=5)
+        commits = result.stdout.strip()
+        if commits:
+            lines = commits.strip().split("\n")
+            return f"{len(lines)} new commit(s)"
+        return None
+    except Exception:
+        return None
+
+
+def _maybe_auto_update():
+    """Check auto_update setting and act accordingly."""
+    cfg_path = Path.home() / ".earthgrid" / "config.json"
+    auto = "no"
+    if cfg_path.exists():
+        import json
+        try:
+            cfg = json.loads(cfg_path.read_text())
+            auto = cfg.get("auto_update", "no")
+        except Exception:
+            pass
+
+    if auto == "no":
+        return
+
+    update_info = _check_update_available()
+    if not update_info:
+        return
+
+    if auto == "yes":
+        print(f"  \u2b06 Auto-updating ({update_info})...")
+        _update()
+    elif auto == "ask":
+        try:
+            answer = input(f"  \u2b06 Update available ({update_info}). Update now? [y/N] ").strip().lower()
+            if answer in ("y", "yes"):
+                _update()
+            else:
+                print("  Skipping update.")
+        except EOFError:
+            # Non-interactive (systemd), skip
+            print(f"  \u2b06 Update available ({update_info}). Run 'earthgrid update' to apply.")
+
+
 def _update():
     """Pull latest code, reinstall, restart."""
     import subprocess

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     admin_key: str = ""  # required for destructive operations (delete)
     require_auth_read: bool = False  # if True, reads also need api_key
 
+    # --- Auto Update ---
+    auto_update: str = "no"  # "yes" = auto-update on start, "ask" = check + prompt, "no" = skip
+
     # --- Replication Preferences ---
     replication_factor: int = 2  # min copies in network (0=disabled)
     preferred_collections: str = ""  # comma-separated (empty=all)
