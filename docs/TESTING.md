@@ -30,7 +30,7 @@ POST /seed/pull?source=http://other-node:8400
 docker run -p 8400:8400 earthgrid/node
 
 # 2. Pull test data from a seed node
-curl -X POST "http://localhost:8400/seed/pull?source=http://mattiuzzi.zapto.org:8400"
+curl -X POST "http://localhost:8400/seed/pull?source=<your-beacon-url>"
 
 # 3. Done — you have data + you're federated
 ```
@@ -43,7 +43,7 @@ A curated ~2 GB package containing:
 - Pre-computed NDVI derived product (tests derived product chain)
 
 ## Phase 3: Internet-Scale Testing
-- Public seed node at mattiuzzi.zapto.org:8400
+- Public seed node at <your-beacon>
 - GitHub README: "Run one command to join the network"
 - CI/CD: automated federation tests with GitHub Actions + cloud VMs
 - Geographic diversity: ask colleagues (Antonio in Malmö? EEA contacts?)

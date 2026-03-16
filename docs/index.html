@@ -176,7 +176,7 @@ plt.savefig("ndvi_timeseries.png", dpi=150)</code></pre>
 <div class="tab-content" id="tab-openeo-py">
 <pre><code>import openeo
 
-conn = openeo.connect("https://mattiuzzi.zapto.org/earthgrid")
+conn = openeo.connect("<your-earthgrid-url>")
 
 cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.7, "north": 55.75},
@@ -217,7 +217,7 @@ plot(ndvi, main = "NDVI — Copenhagen",
 <div class="tab-content" id="tab-openeo-r">
 <pre><code>library(openeo)
 
-con &lt;- connect("https://mattiuzzi.zapto.org/earthgrid")
+con &lt;- connect("<your-earthgrid-url>")
 p &lt;- processes()
 
 cube &lt;- p$load_collection("sentinel-2-l2a",
@@ -332,21 +332,21 @@ savefig("ndvi.png")</code></pre>
 
 <div class="tab-content" id="tab-curl">
 <pre><code># Search the STAC catalog
-curl -s "https://mattiuzzi.zapto.org/earthgrid/stac/search?bbox=12.4,55.6,12.7,55.75" | jq '.features[].id'
+curl -s "<your-earthgrid-url>/stac/search?bbox=12.4,55.6,12.7,55.75" | jq '.features[].id'
 
 # Download bands
-curl -o B04.tif "https://mattiuzzi.zapto.org/earthgrid/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B04"
-curl -o B08.tif "https://mattiuzzi.zapto.org/earthgrid/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B08"
+curl -o B04.tif "<your-earthgrid-url>/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B04"
+curl -o B08.tif "<your-earthgrid-url>/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B08"
 
 # Compute NDVI with GDAL
 gdal_calc.py -A B08.tif -B B04.tif --outfile=ndvi.tif \
   --calc="where((A+B)>0, (A.astype(float)-B)/(A+B), 0)" --type=Float32
 
 # List collections
-curl "https://mattiuzzi.zapto.org/earthgrid/collections"
+curl "<your-earthgrid-url>/collections"
 
 # Network status
-curl "https://mattiuzzi.zapto.org/earthgrid/nodes"</code></pre>
+curl "<your-earthgrid-url>/nodes"</code></pre>
 </div>
 
 </div>
@@ -378,7 +378,14 @@ earthgrid start</code></pre>
 </div>
 
 <script>
-const BEACON = 'https://mattiuzzi.zapto.org/earthgrid';
+// Auto-detect beacon URL from page location, fallback to localhost
+            const BEACON = (() => {
+                const loc = window.location;
+                if (loc.hostname !== 'localhost' && !loc.hostname.startsWith('127.')) {
+                    return loc.origin + loc.pathname.replace(/\/docs\/.*$|\/index\.html$/, '').replace(/\/$/, '');
+                }
+                return 'http://localhost:8400';
+            })();
 
 function sensorLabel(col) {
   // sentinel-2-l2a → Sentinel-2 L2A

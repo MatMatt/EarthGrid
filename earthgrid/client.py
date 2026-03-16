@@ -31,6 +31,14 @@ class Item:
         """Download reconstructed GeoTIFF."""
         return self._client.download(self, path)
 
+
+    @classmethod
+    def from_bootstrap(cls, timeout: float = 5) -> "Client":
+        """Create a Client connected to the first healthy bootstrap peer."""
+        from . import get_default_peer
+        url = get_default_peer()
+        return cls(url, timeout=timeout)
+
     def __repr__(self):
         return f"Item({self.id}, collection={self.collection})"
 
@@ -197,6 +205,14 @@ class Client:
                 )
                 resp.raise_for_status()
                 return resp.json()
+
+
+    @classmethod
+    def from_bootstrap(cls, timeout: float = 5) -> "Client":
+        """Create a Client connected to the first healthy bootstrap peer."""
+        from . import get_default_peer
+        url = get_default_peer()
+        return cls(url, timeout=timeout)
 
     def __repr__(self):
         return f"Client({self.url})"
