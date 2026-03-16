@@ -142,7 +142,7 @@ async def _delegate_item_to_node(
     if node.get("admin_key"):
         headers["Authorization"] = f"Bearer {node['admin_key']}"
 
-    async with httpx.AsyncClient(timeout=300) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         try:
             resp = await client.post(
                 f"{node['url']}/fetch",
@@ -150,6 +150,11 @@ async def _delegate_item_to_node(
                 headers=headers,
             )
             result = resp.json()
+            status = result.get("status", "")
+            if status == "accepted":
+                job_id = result.get("job_id", "?")
+                return [{"status": "delegated", "node": node["url"], "job_id": job_id,
+                         "message": f"Background fetch started on {node['node_name']} (job {job_id})"}]
             ingested = result.get("ingested", 0)
             return result.get("details", [{"status": "delegated", "node": node["url"], "ingested": ingested}])
         except Exception as e:

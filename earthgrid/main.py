@@ -752,8 +752,12 @@ def _require_grid_auth(request: Request, x_api_key: str = Depends(_api_key_heade
         return
     raise HTTPException(401, "Grid fetch requires admin key or LAN access")
 
+# Background fetch jobs tracker
+_fetch_jobs: dict[str, dict] = {}
+
 @app.post("/fetch", dependencies=[Depends(_require_grid_auth)])
 async def remote_fetch(
+    background_tasks: BackgroundTasks,
     bbox: str = Query(...),
     start: str = Query(None),
     end: str = Query(None),
@@ -763,33 +767,52 @@ async def remote_fetch(
     source: str = Query("element84"),
     collection: str = Query("sentinel-2-l2a"),
 ):
-    """Accept a fetch request from a remote node (grid delegation)."""
-    from .element84 import fetch_and_ingest_element84
+    """Accept a fetch request — runs in background, returns immediately."""
+    import uuid
+    job_id = str(uuid.uuid4())[:8]
     
     bbox_list = [float(x) for x in bbox.split(",")]
     band_list = [b.strip() for b in bands.split(",")] if bands else None
     
-    results = await fetch_and_ingest_element84(
-        chunk_store=chunk_store,
-        catalog=catalog,
-        bbox=bbox_list,
-        start_date=start,
-        end_date=end,
-        cloud_cover=cloud,
-        bands=band_list,
-        limit=limit,
-        earthgrid_collection=collection,
-        distribute=False,  # Never re-delegate from a delegated fetch
-    )
+    _fetch_jobs[job_id] = {"status": "running", "ingested": 0, "errors": 0}
     
-    ingested = [r for r in results if r.get("item_id") and not r.get("skipped")]
-    errors = [r for r in results if r.get("error")]
+    async def _do_fetch():
+        from .element84 import fetch_and_ingest_element84
+        try:
+            results = await fetch_and_ingest_element84(
+                chunk_store=chunk_store,
+                catalog=catalog,
+                bbox=bbox_list,
+                start_date=start,
+                end_date=end,
+                cloud_cover=cloud,
+                bands=band_list,
+                limit=limit,
+                earthgrid_collection=collection,
+                distribute=False,
+            )
+            ingested = [r for r in results if r.get("item_id") and not r.get("skipped")]
+            errors = [r for r in results if r.get("error")]
+            _fetch_jobs[job_id] = {"status": "done", "ingested": len(ingested), "errors": len(errors)}
+        except Exception as e:
+            _fetch_jobs[job_id] = {"status": "error", "error": str(e)}
+    
+    asyncio.create_task(_do_fetch())
+    
     return {
-        "status": "ok",
-        "ingested": len(ingested),
-        "errors": len(errors),
-        "details": results,
+        "status": "accepted",
+        "job_id": job_id,
+        "message": f"Fetch job {job_id} started in background",
+        "ingested": 0,
     }
+
+@app.get("/fetch/status/{job_id}")
+async def fetch_status(job_id: str):
+    """Check status of a background fetch job."""
+    job = _fetch_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
 
 @app.get("/health")
 def health():
