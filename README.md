@@ -592,13 +592,17 @@ items <- fromJSON(content(GET(paste0(base, "/stac/search"),
                collections = "sentinel-2-l2a", limit = 500)
 ), "text"))$features
 
-# Extract point values per date
+# Add band and date columns
+items$band <- sub(".*_", "", items$id)
+items$date <- as.Date(substr(items$properties$datetime, 1, 10))
+
+# Find dates with both B04 and B08
+dates <- unique(items$date)
 ndvi_df <- data.frame(date = as.Date(character()), ndvi = numeric())
-dates <- unique(substr(items$properties$datetime, 1, 10))
 
 for (dt in sort(dates)) {
-  b04 <- items[grepl("B04", items$id) & grepl(gsub("-","",dt), items$id), ]
-  b08 <- items[grepl("B08", items$id) & grepl(gsub("-","",dt), items$id), ]
+  b04 <- items[items$band == "B04" & items$date == dt, ]
+  b08 <- items[items$band == "B08" & items$date == dt, ]
   if (nrow(b04) == 0 || nrow(b08) == 0) next
   tryCatch({
     red <- fromJSON(content(GET(paste0(base, "/point/", b04$collection[1], "/", b04$id[1]),
@@ -606,7 +610,7 @@ for (dt in sort(dates)) {
     nir <- fromJSON(content(GET(paste0(base, "/point/", b08$collection[1], "/", b08$id[1]),
                     query = list(lon=lon, lat=lat)), "text"))$value
     if (!is.null(red) && !is.null(nir) && (nir + red) > 0)
-      ndvi_df <- rbind(ndvi_df, data.frame(date=as.Date(dt), ndvi=(nir-red)/(nir+red)))
+      ndvi_df <- rbind(ndvi_df, data.frame(date=dt, ndvi=(nir-red)/(nir+red)))
   }, error = function(e) NULL)
 }
 
