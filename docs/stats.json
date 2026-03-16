@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-16T06:50:01Z",
+  "updated": "2026-03-16T06:53:43Z",
   "version": "",
   "network": {
     "nodes_alive": 0,
@@ -8,7 +8,13 @@
     "available_storage_gb": 0,
     "redundancy": 1.0
   },
-  "coverage": {},
+  "coverage": {
+    "sentinel-2-l2a": {
+      "items": 325,
+      "tiles": 2,
+      "area_km2": 12056
+    }
+  },
   "uptake": {
     "report_type": "EarthGrid Uptake Statistics",
     "period_days": 365,
