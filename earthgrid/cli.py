@@ -581,7 +581,28 @@ def _load_config() -> dict:
     config_file = Path.home() / ".earthgrid" / "config.json"
     if config_file.exists():
         return json.loads(config_file.read_text())
-    return {}
+    # Fallback: build config from environment variables (Docker)
+    import os
+    env_cfg = {}
+    env_map = {
+        "EARTHGRID_STORE_PATH": "store_path",
+        "EARTHGRID_CATALOG_PATH": "catalog_path",
+        "EARTHGRID_STORAGE_LIMIT_GB": "storage_limit_gb",
+        "EARTHGRID_NODE_NAME": "node_name",
+        "EARTHGRID_PORT": "port",
+        "EARTHGRID_SOURCE_USERS_DB": "source_users_db",
+        "EARTHGRID_STATS_DB": "stats_db",
+    }
+    for env_key, cfg_key in env_map.items():
+        val = os.environ.get(env_key)
+        if val is not None:
+            if cfg_key in ("storage_limit_gb", "port"):
+                try:
+                    val = float(val) if cfg_key == "storage_limit_gb" else int(val)
+                except ValueError:
+                    pass
+            env_cfg[cfg_key] = val
+    return env_cfg
 
 
 def _save_config(cfg: dict):
