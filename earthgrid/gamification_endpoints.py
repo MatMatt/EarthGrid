@@ -99,7 +99,8 @@ async def list_achievements():
 
 @router.post("/opt-in")
 async def opt_in(req: OptInRequest):
-    """Opt in a user and/or node to gamification."""
+    """Update display preferences for a node/user.
+    All nodes participate by default (anonymous). Use this to set display name."""
     engine = _get_engine()
     if req.anonymous:
         # Anonymous: node participates but no traceable user link

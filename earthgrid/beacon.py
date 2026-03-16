@@ -475,6 +475,12 @@ def _human_bytes(b: int) -> str:
 
 @beacon_app.get("/health")
 def health():
+        # Auto-register in gamification
+    try:
+        from .gamification_endpoints import engine
+        engine.ensure_node_registered(node_id, node_name=node_name if 'node_name' in dir() else "")
+    except Exception:
+        pass
     return {"status": "ok", "role": "beacon"}
 
 

@@ -523,6 +523,19 @@ async def _speed_measure_loop():
 
 @app.on_event("startup")
 async def startup():
+    # Auto-register self in gamification (all nodes participate by default)
+    try:
+        from .gamification_endpoints import engine
+        engine.ensure_node_registered(settings.node_id, node_name=settings.node_name)
+        engine.record_heartbeat(
+            settings.node_id,
+            peers_count=len(federation.peers),
+            uptime_seconds=0,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger("earthgrid").debug(f"Gamification self-register: {e}")
+
     await _register_with_beacon()
     await _discover_peers_from_beacon()
     asyncio.create_task(_beacon_heartbeat_loop())

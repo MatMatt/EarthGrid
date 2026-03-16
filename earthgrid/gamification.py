@@ -6,7 +6,9 @@ and maintains leaderboards at three levels:
   - User: aggregated across all their nodes
   - Group: teams of users contributing together
 
-Privacy: fully opt-in. Non-opted-in nodes/users are invisible.
+Privacy: all nodes participate by default (anonymous).
+Display details (user name, node name) are opt-in.
+Node stats are always visible with node_id only.
 """
 from __future__ import annotations
 import logging
@@ -335,7 +337,7 @@ class GamificationEngine:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""UPDATE node_scores SET
                 last_seen=?, uptime_seconds=?, max_peers=MAX(max_peers, ?)
-                WHERE node_id=? AND opted_in=1""",
+                WHERE node_id=?""",
                 (now, uptime_seconds, peers_count, node_id))
             # Streak update
             today = time.strftime("%Y-%m-%d", time.gmtime())
@@ -454,6 +456,23 @@ class GamificationEngine:
 
     # --- Leaderboards ---
 
+
+    def ensure_node_registered(self, node_id: str, node_name: str = ""):
+        """Ensure node exists in gamification DB (auto-registered, anonymous by default)."""
+        now = int(time.time())
+        with sqlite3.connect(self.db_path) as conn:
+            existing = conn.execute("SELECT node_id FROM node_scores WHERE node_id=?",
+                                     (node_id,)).fetchone()
+            if not existing:
+                conn.execute("""INSERT INTO node_scores
+                    (node_id, opted_in, anonymous, display_alias, first_seen, last_seen)
+                    VALUES (?, 1, 1, ?, ?, ?)""",
+                    (node_id, node_name or node_id, now, now))
+                logger.info(f"Auto-registered node {node_id} in gamification")
+            elif node_name:
+                conn.execute("UPDATE node_scores SET display_alias=?, last_seen=? WHERE node_id=?",
+                             (node_name, now, node_id))
+
     def get_leaderboard(self, board_type: str = "nodes", limit: int = 20,
                         period: str = "all") -> list[dict]:
         """Get leaderboard. board_type: nodes|users|groups"""
@@ -463,11 +482,12 @@ class GamificationEngine:
                 rows = conn.execute("""SELECT node_id, owner_user, score,
                     items_ingested, bytes_stored, bytes_served, streak_days,
                     uptime_seconds, max_peers, display_alias, anonymous
-                    FROM node_scores WHERE opted_in=1
+                    FROM node_scores
                     ORDER BY score DESC LIMIT ?""", (limit,)).fetchall()
                 return [{"rank": i+1,
-                         "node_id": r["display_alias"] if r["anonymous"] else r["node_id"],
-                         "owner": "" if r["anonymous"] else r["owner_user"],
+                         "node_id": r["node_id"],
+                         "node_name": r["display_alias"] or r["node_id"],
+                         "owner": "" if r["anonymous"] else (r["owner_user"] or ""),
                          "anonymous": bool(r["anonymous"]),
                          "score": r["score"],
                          "items": r["items_ingested"],
@@ -506,7 +526,7 @@ class GamificationEngine:
     def get_node_profile(self, node_id: str) -> Optional[dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            node = conn.execute("SELECT * FROM node_scores WHERE node_id=? AND opted_in=1",
+            node = conn.execute("SELECT * FROM node_scores WHERE node_id=?",
                                 (node_id,)).fetchone()
             if not node:
                 return None
@@ -622,13 +642,13 @@ class GamificationEngine:
         """Aggregate gamification stats for the whole network."""
         with sqlite3.connect(self.db_path) as conn:
             nodes = conn.execute(
-                "SELECT COUNT(*) FROM node_scores WHERE opted_in=1").fetchone()[0]
+                "SELECT COUNT(*) FROM node_scores").fetchone()[0]
             users = conn.execute(
                 "SELECT COUNT(*) FROM user_scores WHERE opted_in=1").fetchone()[0]
             groups = conn.execute(
                 "SELECT COUNT(*) FROM groups").fetchone()[0]
             total_score = conn.execute(
-                "SELECT COALESCE(SUM(score), 0) FROM node_scores WHERE opted_in=1").fetchone()[0]
+                "SELECT COALESCE(SUM(score), 0) FROM node_scores").fetchone()[0]
             total_achs = conn.execute(
                 "SELECT COUNT(*) FROM achievements").fetchone()[0]
             return {
