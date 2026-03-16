@@ -92,6 +92,186 @@ a:hover { text-decoration:underline; }
 <div id="uptakeTrend" style="margin-top:1rem;"></div>
 </div>
 
+<!-- Gamification Dashboard Section — paste into index.html before footer -->
+
+<div class="section">
+<h2>🏆 Leaderboard</h2>
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+  <button class="tab-btn active" onclick="switchBoard('nodes',this)">Nodes</button>
+  <button class="tab-btn" onclick="switchBoard('users',this)">Users</button>
+  <button class="tab-btn" onclick="switchBoard('groups',this)">Groups</button>
+</div>
+<div id="leaderboard"><em style="color:var(--dim)">Loading...</em></div>
+</div>
+
+<div class="section">
+<h2>🎖️ Achievements</h2>
+<div id="achievementShowcase" style="display:flex;flex-wrap:wrap;gap:0.8rem"><em style="color:var(--dim)">Loading...</em></div>
+</div>
+
+<div class="section">
+<h2>📡 Live Activity</h2>
+<div id="activityFeed" style="max-height:300px;overflow-y:auto"><em style="color:var(--dim)">Loading...</em></div>
+</div>
+
+<style>
+.lb-table { width:100%; border-collapse:collapse; }
+.lb-table th { text-align:left; font-size:0.75rem; color:var(--dim); padding:0.4rem 0.5rem; border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:0.05em; }
+.lb-table td { padding:0.5rem; border-bottom:1px solid var(--border); font-size:0.9rem; }
+.lb-table tr:hover { background:rgba(88,166,255,0.04); }
+.lb-rank { font-weight:700; color:var(--accent); width:2rem; text-align:center; }
+.lb-rank-1 { color:#ffd700; }
+.lb-rank-2 { color:#c0c0c0; }
+.lb-rank-3 { color:#cd7f32; }
+.lb-name { font-weight:600; }
+.lb-score { color:var(--green); font-weight:700; font-variant-numeric:tabular-nums; }
+.lb-meta { font-size:0.8rem; color:var(--dim); }
+.ach-badge { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:0.6rem 1rem; text-align:center; min-width:100px; }
+.ach-badge .ach-icon { font-size:1.8rem; }
+.ach-badge .ach-name { font-size:0.8rem; font-weight:600; margin-top:2px; }
+.ach-badge .ach-desc { font-size:0.7rem; color:var(--dim); }
+.ach-badge.earned { border-color:var(--green); background:rgba(63,185,80,0.08); }
+.feed-item { display:flex; gap:0.8rem; padding:0.5rem 0; border-bottom:1px solid var(--border); align-items:flex-start; }
+.feed-time { font-size:0.75rem; color:var(--dim); min-width:5rem; font-variant-numeric:tabular-nums; }
+.feed-body { font-size:0.85rem; }
+.feed-score { color:var(--green); font-weight:600; font-size:0.8rem; }
+.streak-badge { display:inline-block; background:var(--orange); color:var(--bg); font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:8px; margin-left:4px; }
+</style>
+
+<script>
+
+// Detect API base from the page's stats.json source or fallback
+const EARTHGRID_API = (() => {
+  // If served alongside the API (same origin), use relative paths
+  // If on GitHub Pages or static hosting, discover from stats.json
+  try {
+    const meta = document.querySelector('meta[name="earthgrid-api"]');
+    if (meta) return meta.content.replace(/\/$/, '');
+  } catch(e) {}
+  // Default: same origin (works when served by the node itself or proxied)
+  return '';
+})();
+
+let currentBoard = 'nodes';
+
+function switchBoard(type, btn) {
+  currentBoard = type;
+  document.querySelectorAll('.section:has(#leaderboard) .tab-btn').forEach(b => b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  loadLeaderboard();
+}
+
+function rankClass(r) { return r <= 3 ? ' lb-rank-' + r : ''; }
+function rankIcon(r) { return r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : r; }
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  const now = Date.now();
+  const diff = (now - d.getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  return Math.floor(diff/86400) + 'd ago';
+}
+
+async function loadLeaderboard() {
+  try {
+    const r = await fetch(EARTHGRID_API + '/gamification/leaderboard?type=' + currentBoard + '&limit=20');
+    if (!r.ok) { document.getElementById('leaderboard').innerHTML = '<em style="color:var(--dim)">Not available</em>'; return; }
+    const data = await r.json();
+    const entries = data.entries || [];
+    if (entries.length === 0) {
+      document.getElementById('leaderboard').innerHTML = '<em style="color:var(--dim)">No participants yet. <code>POST /gamification/opt-in</code> to join!</em>';
+      return;
+    }
+
+    let html = '<table class="lb-table"><thead><tr><th>#</th><th>Name</th><th>Score</th>';
+    if (currentBoard === 'nodes') html += '<th>Items</th><th>Stored</th><th>Served</th><th>Streak</th>';
+    else if (currentBoard === 'users') html += '<th>Nodes</th><th>Items</th><th>Stored</th>';
+    else html += '<th>Members</th>';
+    html += '</tr></thead><tbody>';
+
+    for (const e of entries) {
+      html += '<tr>';
+      html += '<td class="lb-rank' + rankClass(e.rank) + '">' + rankIcon(e.rank) + '</td>';
+      if (currentBoard === 'nodes') {
+        html += '<td class="lb-name">' + e.node_id + ' <span class="lb-meta">(' + (e.owner||'?') + ')</span></td>';
+        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
+        html += '<td>' + (e.items||0).toLocaleString() + '</td>';
+        html += '<td>' + (e.gb_stored||0) + ' GB</td>';
+        html += '<td>' + (e.gb_served||0) + ' GB</td>';
+        html += '<td>' + (e.streak||0) + 'd' + (e.streak >= 7 ? '<span class="streak-badge">🔥</span>' : '') + '</td>';
+      } else if (currentBoard === 'users') {
+        html += '<td class="lb-name">' + (e.display_name || e.username) + '</td>';
+        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
+        html += '<td>' + (e.nodes||0) + '</td>';
+        html += '<td>' + (e.items||0).toLocaleString() + '</td>';
+        html += '<td>' + (e.gb_stored||0) + ' GB</td>';
+      } else {
+        html += '<td class="lb-name">' + e.group_name + '</td>';
+        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
+        html += '<td>' + (e.members||0) + '</td>';
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    document.getElementById('leaderboard').innerHTML = html;
+  } catch(e) { console.error('Leaderboard error:', e); }
+}
+
+async function loadAchievements() {
+  try {
+    const r = await fetch(EARTHGRID_API + '/gamification/achievements');
+    if (!r.ok) return;
+    const data = await r.json();
+    let html = '';
+    for (const a of (data.achievements || [])) {
+      html += '<div class="ach-badge">';
+      html += '<div class="ach-icon">' + a.icon + '</div>';
+      html += '<div class="ach-name">' + a.name + '</div>';
+      html += '<div class="ach-desc">' + a.desc + '</div>';
+      html += '</div>';
+    }
+    document.getElementById('achievementShowcase').innerHTML = html || '<em>None</em>';
+  } catch(e) { console.error('Achievements error:', e); }
+}
+
+async function loadFeed() {
+  try {
+    const r = await fetch(EARTHGRID_API + '/gamification/feed?limit=30');
+    if (!r.ok) return;
+    const data = await r.json();
+    const feed = data.feed || [];
+    if (feed.length === 0) {
+      document.getElementById('activityFeed').innerHTML = '<em style="color:var(--dim)">No activity yet</em>';
+      return;
+    }
+    let html = '';
+    for (const f of feed) {
+      html += '<div class="feed-item">';
+      html += '<span class="feed-time">' + fmtTime(f.timestamp) + '</span>';
+      html += '<span class="feed-body">';
+      if (f.event_type === 'achievement') {
+        html += '🎖️ <strong>' + (f.username || f.node_id) + '</strong> earned: ' + f.detail;
+      } else if (f.event_type === 'ingest') {
+        html += '📥 <strong>' + (f.username || f.node_id) + '</strong> ' + f.detail;
+      } else {
+        html += '<strong>' + (f.username || f.node_id) + '</strong> ' + f.detail;
+      }
+      if (f.score_delta > 0) html += ' <span class="feed-score">+' + f.score_delta + '</span>';
+      html += '</span></div>';
+    }
+    document.getElementById('activityFeed').innerHTML = html;
+  } catch(e) { console.error('Feed error:', e); }
+}
+
+// Load gamification data
+loadLeaderboard();
+loadAchievements();
+loadFeed();
+// Refresh every 60s
+setInterval(() => { loadLeaderboard(); loadFeed(); }, 60000);
+</script>
+
 <div class="section">
 <h2>⚡ Processing Operations</h2>
 <div id="opsList" class="ops"><em style="color:var(--dim)">Loading...</em></div>
@@ -412,172 +592,7 @@ earthgrid start</code></pre>
 <p style="color:var(--dim);font-size:0.85rem;margin-top:0.5rem;">Install from source and join the network. Storage, beacon URL, and sync are configured interactively.<br><code>pip install earthgrid</code> coming soon on PyPI.</p>
 </div>
 
-<!-- Gamification Dashboard Section — paste into index.html before footer -->
 
-<div class="section">
-<h2>🏆 Leaderboard</h2>
-<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
-  <button class="tab-btn active" onclick="switchBoard('nodes',this)">Nodes</button>
-  <button class="tab-btn" onclick="switchBoard('users',this)">Users</button>
-  <button class="tab-btn" onclick="switchBoard('groups',this)">Groups</button>
-</div>
-<div id="leaderboard"><em style="color:var(--dim)">Loading...</em></div>
-</div>
-
-<div class="section">
-<h2>🎖️ Achievements</h2>
-<div id="achievementShowcase" style="display:flex;flex-wrap:wrap;gap:0.8rem"><em style="color:var(--dim)">Loading...</em></div>
-</div>
-
-<div class="section">
-<h2>📡 Live Activity</h2>
-<div id="activityFeed" style="max-height:300px;overflow-y:auto"><em style="color:var(--dim)">Loading...</em></div>
-</div>
-
-<style>
-.lb-table { width:100%; border-collapse:collapse; }
-.lb-table th { text-align:left; font-size:0.75rem; color:var(--dim); padding:0.4rem 0.5rem; border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:0.05em; }
-.lb-table td { padding:0.5rem; border-bottom:1px solid var(--border); font-size:0.9rem; }
-.lb-table tr:hover { background:rgba(88,166,255,0.04); }
-.lb-rank { font-weight:700; color:var(--accent); width:2rem; text-align:center; }
-.lb-rank-1 { color:#ffd700; }
-.lb-rank-2 { color:#c0c0c0; }
-.lb-rank-3 { color:#cd7f32; }
-.lb-name { font-weight:600; }
-.lb-score { color:var(--green); font-weight:700; font-variant-numeric:tabular-nums; }
-.lb-meta { font-size:0.8rem; color:var(--dim); }
-.ach-badge { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:0.6rem 1rem; text-align:center; min-width:100px; }
-.ach-badge .ach-icon { font-size:1.8rem; }
-.ach-badge .ach-name { font-size:0.8rem; font-weight:600; margin-top:2px; }
-.ach-badge .ach-desc { font-size:0.7rem; color:var(--dim); }
-.ach-badge.earned { border-color:var(--green); background:rgba(63,185,80,0.08); }
-.feed-item { display:flex; gap:0.8rem; padding:0.5rem 0; border-bottom:1px solid var(--border); align-items:flex-start; }
-.feed-time { font-size:0.75rem; color:var(--dim); min-width:5rem; font-variant-numeric:tabular-nums; }
-.feed-body { font-size:0.85rem; }
-.feed-score { color:var(--green); font-weight:600; font-size:0.8rem; }
-.streak-badge { display:inline-block; background:var(--orange); color:var(--bg); font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:8px; margin-left:4px; }
-</style>
-
-<script>
-let currentBoard = 'nodes';
-
-function switchBoard(type, btn) {
-  currentBoard = type;
-  document.querySelectorAll('.section:has(#leaderboard) .tab-btn').forEach(b => b.classList.remove('active'));
-  if(btn) btn.classList.add('active');
-  loadLeaderboard();
-}
-
-function rankClass(r) { return r <= 3 ? ' lb-rank-' + r : ''; }
-function rankIcon(r) { return r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : r; }
-function fmtTime(ts) {
-  const d = new Date(ts * 1000);
-  const now = Date.now();
-  const diff = (now - d.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
-  return Math.floor(diff/86400) + 'd ago';
-}
-
-async function loadLeaderboard() {
-  try {
-    const r = await fetch('/gamification/leaderboard?type=' + currentBoard + '&limit=20');
-    if (!r.ok) { document.getElementById('leaderboard').innerHTML = '<em style="color:var(--dim)">Not available</em>'; return; }
-    const data = await r.json();
-    const entries = data.entries || [];
-    if (entries.length === 0) {
-      document.getElementById('leaderboard').innerHTML = '<em style="color:var(--dim)">No participants yet. <code>POST /gamification/opt-in</code> to join!</em>';
-      return;
-    }
-
-    let html = '<table class="lb-table"><thead><tr><th>#</th><th>Name</th><th>Score</th>';
-    if (currentBoard === 'nodes') html += '<th>Items</th><th>Stored</th><th>Served</th><th>Streak</th>';
-    else if (currentBoard === 'users') html += '<th>Nodes</th><th>Items</th><th>Stored</th>';
-    else html += '<th>Members</th>';
-    html += '</tr></thead><tbody>';
-
-    for (const e of entries) {
-      html += '<tr>';
-      html += '<td class="lb-rank' + rankClass(e.rank) + '">' + rankIcon(e.rank) + '</td>';
-      if (currentBoard === 'nodes') {
-        html += '<td class="lb-name">' + e.node_id + ' <span class="lb-meta">(' + (e.owner||'?') + ')</span></td>';
-        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.items||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.gb_stored||0) + ' GB</td>';
-        html += '<td>' + (e.gb_served||0) + ' GB</td>';
-        html += '<td>' + (e.streak||0) + 'd' + (e.streak >= 7 ? '<span class="streak-badge">🔥</span>' : '') + '</td>';
-      } else if (currentBoard === 'users') {
-        html += '<td class="lb-name">' + (e.display_name || e.username) + '</td>';
-        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.nodes||0) + '</td>';
-        html += '<td>' + (e.items||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.gb_stored||0) + ' GB</td>';
-      } else {
-        html += '<td class="lb-name">' + e.group_name + '</td>';
-        html += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
-        html += '<td>' + (e.members||0) + '</td>';
-      }
-      html += '</tr>';
-    }
-    html += '</tbody></table>';
-    document.getElementById('leaderboard').innerHTML = html;
-  } catch(e) { console.error('Leaderboard error:', e); }
-}
-
-async function loadAchievements() {
-  try {
-    const r = await fetch('/gamification/achievements');
-    if (!r.ok) return;
-    const data = await r.json();
-    let html = '';
-    for (const a of (data.achievements || [])) {
-      html += '<div class="ach-badge">';
-      html += '<div class="ach-icon">' + a.icon + '</div>';
-      html += '<div class="ach-name">' + a.name + '</div>';
-      html += '<div class="ach-desc">' + a.desc + '</div>';
-      html += '</div>';
-    }
-    document.getElementById('achievementShowcase').innerHTML = html || '<em>None</em>';
-  } catch(e) { console.error('Achievements error:', e); }
-}
-
-async function loadFeed() {
-  try {
-    const r = await fetch('/gamification/feed?limit=30');
-    if (!r.ok) return;
-    const data = await r.json();
-    const feed = data.feed || [];
-    if (feed.length === 0) {
-      document.getElementById('activityFeed').innerHTML = '<em style="color:var(--dim)">No activity yet</em>';
-      return;
-    }
-    let html = '';
-    for (const f of feed) {
-      html += '<div class="feed-item">';
-      html += '<span class="feed-time">' + fmtTime(f.timestamp) + '</span>';
-      html += '<span class="feed-body">';
-      if (f.event_type === 'achievement') {
-        html += '🎖️ <strong>' + (f.username || f.node_id) + '</strong> earned: ' + f.detail;
-      } else if (f.event_type === 'ingest') {
-        html += '📥 <strong>' + (f.username || f.node_id) + '</strong> ' + f.detail;
-      } else {
-        html += '<strong>' + (f.username || f.node_id) + '</strong> ' + f.detail;
-      }
-      if (f.score_delta > 0) html += ' <span class="feed-score">+' + f.score_delta + '</span>';
-      html += '</span></div>';
-    }
-    document.getElementById('activityFeed').innerHTML = html;
-  } catch(e) { console.error('Feed error:', e); }
-}
-
-// Load gamification data
-loadLeaderboard();
-loadAchievements();
-loadFeed();
-// Refresh every 60s
-setInterval(() => { loadLeaderboard(); loadFeed(); }, 60000);
-</script>
 
 <div class="footer">
   EarthGrid v<span id="ver">0.3.2</span> · <a href="https://github.com/MatMatt/EarthGrid">GitHub</a> · Built with 🌍 by the EO community

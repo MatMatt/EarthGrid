@@ -776,6 +776,28 @@ async def node_ui(request: Request):
     return HTMLResponse(content=ui_path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def public_dashboard():
+    """Serve the public EarthGrid dashboard (no auth required)."""
+    # Look for docs/index.html relative to project root
+    for candidate in [
+        Path(__file__).parent.parent / "docs" / "index.html",
+        Path("/data") / "docs" / "index.html",
+    ]:
+        if candidate.exists():
+            content = candidate.read_text(encoding="utf-8")
+            # Inject API base meta tag so JS can find the API
+            content = content.replace(
+                '<head>',
+                '<head>\n<meta name="earthgrid-api" content="">',
+            )
+            return HTMLResponse(content=content, headers={
+                "Cache-Control": "public, max-age=300",
+            })
+    return HTMLResponse("<h1>Dashboard not found</h1>", status_code=404)
+
 @app.get("/stats/coverage")
 def stats_coverage():
     """Spatial coverage per sensor collection (network-wide if beacon)."""
