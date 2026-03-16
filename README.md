@@ -163,7 +163,7 @@ EarthGrid can fetch from multiple upstream providers. **All data is stored as Cl
 
 | Provider | Account needed | Data | Notes |
 |---|---|---|---|
-| **Element84** (AWS) | ❌ No | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG — fastest ingest |
+| **Element84** (AWS) | ❌ No (built-in) | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG — fastest ingest |
 | **CDSE** (Copernicus) | ✅ Free | S1, S2, S3, S5P, CLMS, full archive | JP2000 → converted to COG on ingest |
 | **WEkEO** | 🔜 Coming soon | CLMS (legacy), CMEMS, C3S, CAMS | Climate, marine & atmosphere services |
 | *More sources* | | | *Coming soon (CMS, CDS..., etc.)* |
@@ -221,7 +221,6 @@ EarthGrid **redistributes** official data as-is (content-addressed, integrity-ve
 git clone https://github.com/MatMatt/EarthGrid.git
 cd EarthGrid
 pip install -e .
-earthgrid sources add --provider element84  # No auth needed (public)
 earthgrid docker start --storage 100 --beacon --name my-node
 ```
 
@@ -257,7 +256,6 @@ Config is stored in `~/.earthgrid/docker-compose.yml`. Subsequent `docker update
 git clone https://github.com/MatMatt/EarthGrid.git
 cd EarthGrid
 pip install -e .
-earthgrid sources add --provider element84  # No auth needed (public)
 earthgrid setup
 earthgrid start
 ```
@@ -321,7 +319,6 @@ These commands manage credentials for upstream data providers (CDSE, WEkEO, etc.
 earthgrid sources list                     # List source accounts (CDSE, WEkEO, etc.)
 earthgrid sources add --provider cdse --username me@copernicus.eu
 earthgrid sources add --provider wekeo --username me@wekeo.eu
-earthgrid sources add --provider element84  # No auth needed (public)
 earthgrid sources remove 1                 # Remove by ID
 ```
 
