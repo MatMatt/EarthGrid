@@ -16,6 +16,7 @@ services:
       - "8400:8400"
     volumes:
       - /mnt/sda/earthgrid:/data
+      - ../docs:/app/docs
     environment:
       - EARTHGRID_NODE_NAME=my-node
       - EARTHGRID_PORT=8400
