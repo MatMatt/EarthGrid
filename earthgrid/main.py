@@ -395,9 +395,10 @@ async def _beacon_heartbeat_loop():
                             discovered += 1
                         if discovered > 0:
                             log.info(f"Peer discovery: {discovered} peers from beacon")
-                except Exception:
-                    pass  # beacon may not support /nodes yet
-        except Exception:
+                except Exception as e:
+                    log.debug(f"Peer discovery from beacon failed: {e}")
+        except Exception as e:
+            log.debug(f"Heartbeat cycle error: {e}")
             pass
 
 
@@ -510,13 +511,16 @@ async def _auto_replication_loop():
 
 async def _discover_peers_from_beacon():
     """Query beacon for other nodes and add them as peers."""
-    if not settings.beacon_url:
+    beacon = settings.beacon_url
+    if settings.also_beacon:
+        beacon = f"http://localhost:{settings.port}"
+    if not beacon:
         return
     log = logging.getLogger("earthgrid")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{settings.beacon_url.rstrip('/')}/nodes",
+                f"{beacon.rstrip('/')}/nodes",
                 timeout=10,
             )
             if resp.status_code == 200:
@@ -567,6 +571,17 @@ async def _speed_measure_loop():
             log.debug(f"Speed test failed: {e}")
         await asyncio.sleep(6 * 3600)  # every 6 hours
 
+
+async def _delayed_startup_tasks():
+    """Run registration + discovery after server is fully up."""
+    await asyncio.sleep(3)  # wait for HTTP server to accept connections
+    await _register_with_beacon()
+    await _discover_peers_from_beacon()
+    asyncio.create_task(_beacon_heartbeat_loop())
+    asyncio.create_task(_speed_measure_loop())
+    asyncio.create_task(_auto_eviction_loop())
+    asyncio.create_task(_auto_replication_loop())
+
 @app.on_event("startup")
 async def startup():
     # Auto-register self in gamification (all nodes participate by default)
@@ -583,14 +598,7 @@ async def startup():
         import logging
         logging.getLogger("earthgrid").debug(f"Gamification self-register: {e}")
 
-    await _register_with_beacon()
-    await _discover_peers_from_beacon()
-    asyncio.create_task(_beacon_heartbeat_loop())
-    asyncio.create_task(_speed_measure_loop())
-    asyncio.create_task(_auto_eviction_loop())
-    asyncio.create_task(_auto_replication_loop())
-
-    # Mount beacon if enabled
+    # Mount beacon FIRST so /register and /nodes work for self-registration
     if settings.also_beacon:
         from .beacon import beacon_router, registry, _beacon_sync_loop
         app.include_router(beacon_router)
@@ -616,6 +624,8 @@ async def startup():
             for url in settings.beacon_peers:
                 await registry.add_peer_beacon(url)
             asyncio.create_task(_beacon_sync_loop())
+
+    asyncio.create_task(_delayed_startup_tasks())
 
 
 # --- Stats Middleware ---
@@ -1222,28 +1232,67 @@ def stac_collection_items(collection_id: str, limit: int = Query(100, le=1000)):
 
 
 @app.get("/stac/search")
-def stac_search(
+async def stac_search(
     collections: str = Query(None, description="Comma-separated collection IDs"),
     bbox: str = Query(None, description="west,south,east,north"),
     datetime: str = Query(None, description="RFC 3339 datetime or range (start/end)"),
     limit: int = Query(100, le=1000),
+    local_only: bool = Query(False, description="Skip federated search"),
 ):
-    """STAC item search with spatial and temporal filters."""
+    """STAC item search with spatial and temporal filters.
+    
+    Searches local catalog first, then fans out to known peers
+    if local results are insufficient. Remote results are tagged
+    with earthgrid:source_node so clients know where to fetch data.
+    """
     col_list = collections.split(",") if collections else None
     bbox_list = [float(x) for x in bbox.split(",")] if bbox else None
 
-    items = catalog.search(
+    # 1. Local search
+    local_items = catalog.search(
         collections=col_list,
         bbox=bbox_list,
         datetime_range=datetime,
         limit=limit,
     )
+    local_features = [i.to_stac() for i in local_items]
+    local_ids = {f["id"] for f in local_features}
+
+    # 2. Federated search (if peers exist and not disabled)
+    remote_features = []
+    if not local_only and federation.peers:
+        try:
+            remote_results = await federation.federated_search(
+                collections=col_list,
+                bbox=bbox_list,
+                datetime_range=datetime,
+                limit=limit,
+            )
+            # Deduplicate: skip items we already have locally
+            for f in remote_results:
+                if f.get("id") not in local_ids:
+                    remote_features.append(f)
+                    local_ids.add(f["id"])
+        except Exception as e:
+            logging.getLogger("earthgrid").warning(f"Federated search failed: {e}")
+
+    all_features = local_features + remote_features
+    # Sort by datetime descending (newest first)
+    all_features.sort(
+        key=lambda f: f.get("properties", {}).get("datetime", ""),
+        reverse=True,
+    )
+    all_features = all_features[:limit]
 
     return {
         "type": "FeatureCollection",
-        "numberMatched": len(items),
-        "numberReturned": len(items),
-        "features": [i.to_stac() for i in items],
+        "numberMatched": len(all_features),
+        "numberReturned": len(all_features),
+        "features": all_features,
+        "context": {
+            "local": len(local_features),
+            "remote": len(remote_features),
+        },
     }
 
 
@@ -1267,7 +1316,19 @@ async def point_extract(
 
     item = catalog.get_item(item_id)
     if not item:
-        raise HTTPException(404, f"Item {item_id} not found")
+        # Try federated: ask peers for this item
+        for peer in federation.list_peers():
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(
+                        f"{peer.url}/point/{collection_id}/{item_id}",
+                        params={"lon": lon, "lat": lat},
+                    )
+                    if resp.status_code == 200:
+                        return resp.json()
+            except Exception:
+                continue
+        raise HTTPException(404, f"Item {item_id} not found (local or remote)")
 
     props = item.properties
     bbox = item.bbox  # [west, south, east, north]
