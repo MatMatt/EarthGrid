@@ -511,6 +511,7 @@ LON, LAT = 12.57, 55.68  # Copenhagen — Frederiksberg Gardens
 # Search all Sentinel-2 scenes covering this point
 items = requests.get(f"{BASE}/stac/search", params={
     "bbox": f"{LON-0.01},{LAT-0.01},{LON+0.01},{LAT+0.01}",
+    "datetime": "2024-01-01/2024-12-31",
     "collections": "sentinel-2-l2a",
     "limit": 500,
 }).json()["features"]
@@ -590,6 +591,7 @@ lon <- 12.57; lat <- 55.68
 # Search all scenes
 items <- fromJSON(content(GET(paste0(base, "/stac/search"),
   query = list(bbox = paste(lon-0.01, lat-0.01, lon+0.01, lat+0.01, sep=","),
+               datetime = "2024-01-01/2024-12-31",
                collections = "sentinel-2-l2a", limit = 500)
 ), "text"))$features
 
@@ -633,7 +635,7 @@ const BASE = "http://localhost:8400";
 const [LON, LAT] = [12.57, 55.68];
 
 const resp = await fetch(
-  `${BASE}/stac/search?bbox=${LON-0.01},${LAT-0.01},${LON+0.01},${LAT+0.01}&collections=sentinel-2-l2a&limit=500`
+  `${BASE}/stac/search?bbox=${LON-0.01},${LAT-0.01},${LON+0.01},${LAT+0.01}&datetime=2024-01-01/2024-12-31&collections=sentinel-2-l2a&limit=500`
 );
 const items = (await resp.json()).features;
 
@@ -672,7 +674,7 @@ BASE="http://localhost:8400"
 LON=12.57; LAT=55.68
 
 # Search all scenes at point
-curl -s "$BASE/stac/search?bbox=$((LON-1))e-2,$((LAT-1))e-2,$((LON+1))e-2,$((LAT+1))e-2&collections=sentinel-2-l2a&limit=100" | \
+curl -s "$BASE/stac/search?bbox=$((LON-1))e-2,$((LAT-1))e-2,$((LON+1))e-2,$((LAT+1))e-2&datetime=2024-01-01/2024-12-31&collections=sentinel-2-l2a&limit=100" | \
   jq -r '.features[] | select(.id | contains("B04")) | .id' | while read ID; do
     DT=$(echo "$ID" | grep -oP '\d{8}')
     NIR_ID=$(echo "$ID" | sed 's/B04/B08/')
