@@ -169,6 +169,18 @@ class BeaconRegistry:
                     )
                     self._nodes_cache[node.node_id] = node
 
+                # Grace period: mark all persisted nodes as recently seen
+                # so they appear alive immediately after beacon restart.
+                # The regular heartbeat timeout (300s) takes over from here.
+                now = time.time()
+                if self._nodes_cache:
+                    log.info(f"Beacon startup: restoring {len(self._nodes_cache)} persisted nodes")
+                    for node in self._nodes_cache.values():
+                        node.last_seen = now
+                    # Update DB too
+                    conn.execute("UPDATE nodes SET last_seen=?", (now,))
+                    conn.commit()
+
                 for row in conn.execute("SELECT * FROM peer_beacons"):
                     peer = PeerBeacon(
                         url=row["url"],
