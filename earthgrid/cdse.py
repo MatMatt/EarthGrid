@@ -183,7 +183,7 @@ class CDSEClient:
                 # Build URL: base('SAFE.name')/Nodes('dir')/Nodes('subdir')/Nodes
                 url = base
                 for seg in path_segments:
-                    url += f"('{seg}')/Nodes"
+                    url += f"({seg})/Nodes"
                 r = await client.get(url, headers=headers)
                 r.raise_for_status()
                 children = r.json().get("result", r.json().get("value", []))
@@ -196,8 +196,8 @@ class CDSEClient:
                         # Build download URL
                         dl_url = base
                         for seg in path_segments:
-                            dl_url += f"('{seg}')/Nodes"
-                        dl_url += f"('{name}')/$value"
+                            dl_url += f"({seg})/Nodes"
+                        dl_url += f"({name})/$value"
                         all_files.append({
                             "name": name,
                             "size": child.get("ContentLength", 0),
