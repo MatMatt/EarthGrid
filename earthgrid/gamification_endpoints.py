@@ -164,3 +164,19 @@ async def network_stats():
     """Network-wide gamification statistics."""
     engine = _get_engine()
     return engine.network_stats()
+
+@router.get("/economy")
+async def network_economy():
+    """Network economy health indicator.
+    
+    Measures whether the P2P network is healthy enough to be useful:
+    - Storage: enough pledged capacity vs. data stored
+    - Availability: data redundancy across nodes
+    - Activity: active nodes contributing
+    - Efficiency: data reuse (served / stored ratio)
+    
+    Returns a composite score 0-100 with traffic-light status.
+    """
+    engine = _get_engine()
+    return engine.economy_health()
+

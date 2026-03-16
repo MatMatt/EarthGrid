@@ -52,6 +52,25 @@ a:hover { text-decoration:underline; }
 .trend-bar { background:var(--accent); border-radius:2px 2px 0 0; min-width:4px; flex:1; opacity:0.7; position:relative; }
 .trend-bar:hover { opacity:1; }
 .trend-bar:hover::after { content:attr(data-tip); position:absolute; bottom:100%; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.7rem; white-space:nowrap; color:var(--text); }
+
+/* Economy Health Indicator */
+.economy { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1.5rem; margin:2rem 0; }
+.economy-header { display:flex; align-items:center; gap:1rem; margin-bottom:1rem; }
+.economy-score { font-size:3rem; font-weight:800; line-height:1; }
+.economy-score.green { color:var(--green); }
+.economy-score.yellow { color:var(--orange); }
+.economy-score.red { color:#f85149; }
+.economy-label { font-size:1.1rem; font-weight:600; }
+.economy-sublabel { font-size:0.85rem; color:var(--dim); }
+.economy-bar-wrap { display:flex; gap:0.5rem; margin-bottom:0.3rem; align-items:center; }
+.economy-bar-label { font-size:0.8rem; color:var(--dim); width:130px; flex-shrink:0; }
+.economy-bar { flex:1; background:var(--border); border-radius:4px; height:8px; overflow:hidden; }
+.economy-bar-fill { height:100%; border-radius:4px; transition:width 0.5s ease; }
+.economy-bar-fill.green { background:var(--green); }
+.economy-bar-fill.yellow { background:var(--orange); }
+.economy-bar-fill.red { background:#f85149; }
+.economy-bar-val { font-size:0.75rem; color:var(--dim); width:35px; text-align:right; flex-shrink:0; }
+.economy-meta { display:flex; gap:2rem; flex-wrap:wrap; margin-top:0.8rem; font-size:0.8rem; color:var(--dim); }
 </style>
 </head>
 <body>
@@ -68,6 +87,22 @@ a:hover { text-decoration:underline; }
   <div class="stat loading" id="sUptakeGB"><div class="value" id="vUptakeGB">—</div><div class="label">GB Delivered (30d)</div></div>
   <div class="stat loading" id="sUptakeKm2"><div class="value" id="vUptakeKm2">—</div><div class="label">km² Queried (30d)</div></div>
   <div class="stat loading" id="sFetched"><div class="value" id="vFetched">—</div><div class="label">GB Fetched from Sources</div></div>
+</div>
+
+
+<div class="section">
+<h2>🌐 Network Economy</h2>
+<div class="economy" id="economyWidget">
+  <div class="economy-header">
+    <div class="economy-score" id="ecoScore">—</div>
+    <div>
+      <div class="economy-label" id="ecoLabel">Loading...</div>
+      <div class="economy-sublabel" id="ecoSublabel"></div>
+    </div>
+  </div>
+  <div id="ecoFactors"></div>
+  <div class="economy-meta" id="ecoMeta"></div>
+</div>
 </div>
 
 <div class="section">
@@ -136,6 +171,25 @@ a:hover { text-decoration:underline; }
 .feed-body { font-size:0.85rem; }
 .feed-score { color:var(--green); font-weight:600; font-size:0.8rem; }
 .streak-badge { display:inline-block; background:var(--orange); color:var(--bg); font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:8px; margin-left:4px; }
+
+/* Economy Health Indicator */
+.economy { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1.5rem; margin:2rem 0; }
+.economy-header { display:flex; align-items:center; gap:1rem; margin-bottom:1rem; }
+.economy-score { font-size:3rem; font-weight:800; line-height:1; }
+.economy-score.green { color:var(--green); }
+.economy-score.yellow { color:var(--orange); }
+.economy-score.red { color:#f85149; }
+.economy-label { font-size:1.1rem; font-weight:600; }
+.economy-sublabel { font-size:0.85rem; color:var(--dim); }
+.economy-bar-wrap { display:flex; gap:0.5rem; margin-bottom:0.3rem; align-items:center; }
+.economy-bar-label { font-size:0.8rem; color:var(--dim); width:130px; flex-shrink:0; }
+.economy-bar { flex:1; background:var(--border); border-radius:4px; height:8px; overflow:hidden; }
+.economy-bar-fill { height:100%; border-radius:4px; transition:width 0.5s ease; }
+.economy-bar-fill.green { background:var(--green); }
+.economy-bar-fill.yellow { background:var(--orange); }
+.economy-bar-fill.red { background:#f85149; }
+.economy-bar-val { font-size:0.75rem; color:var(--dim); width:35px; text-align:right; flex-shrink:0; }
+.economy-meta { display:flex; gap:2rem; flex-wrap:wrap; margin-top:0.8rem; font-size:0.8rem; color:var(--dim); }
 </style>
 
 <script>
@@ -316,11 +370,71 @@ async function loadFeed(fromStats) {
   } catch(e) { console.error('Feed error:', e); }
 }
 
+
+// --- Economy Health Indicator ---
+async function loadEconomy(fromStats) {
+  try {
+    let data;
+    if (fromStats && fromStats.gamification && fromStats.gamification.economy) {
+      data = fromStats.gamification.economy;
+    } else {
+      const r = await fetch(EARTHGRID_API + '/gamification/economy');
+      if (!r.ok) throw new Error('API error');
+      data = await r.json();
+    }
+    
+    const scoreEl = document.getElementById('ecoScore');
+    const labelEl = document.getElementById('ecoLabel');
+    const subEl = document.getElementById('ecoSublabel');
+    const factorsEl = document.getElementById('ecoFactors');
+    const metaEl = document.getElementById('ecoMeta');
+    
+    scoreEl.textContent = data.score;
+    scoreEl.className = 'economy-score ' + data.status;
+    labelEl.textContent = data.label;
+    
+    const utilPct = data.storage_utilization_pct || 0;
+    subEl.textContent = data.nodes_alive + ' of ' + data.nodes_total + ' nodes alive · ' +
+      utilPct.toFixed(1) + '% storage used · ' +
+      (data.estimated_replication_factor || 0).toFixed(1) + 'x replication';
+    
+    // Factor bars
+    const factorLabels = {
+      storage_headroom: '💾 Storage',
+      node_diversity: '🌍 Nodes',
+      data_redundancy: '🔄 Redundancy',
+      data_reuse: '📤 Data Reuse',
+    };
+    
+    let barsHtml = '';
+    for (const [key, info] of Object.entries(data.factors || {})) {
+      const s = info.score;
+      const color = s >= 70 ? 'green' : s >= 40 ? 'yellow' : 'red';
+      barsHtml += '<div class="economy-bar-wrap">' +
+        '<span class="economy-bar-label">' + (factorLabels[key] || key) + '</span>' +
+        '<div class="economy-bar"><div class="economy-bar-fill ' + color + '" style="width:' + s + '%"></div></div>' +
+        '<span class="economy-bar-val">' + s + '</span>' +
+        '</div>';
+    }
+    factorsEl.innerHTML = barsHtml;
+    
+    // Meta stats
+    metaEl.innerHTML = 
+      '<span>📦 ' + (data.storage_used_gb || 0).toFixed(1) + ' / ' + (data.storage_pledged_gb || 0).toFixed(0) + ' GB</span>' +
+      '<span>📤 ' + (data.data_served_gb || 0).toFixed(1) + ' GB served</span>';
+    
+  } catch (e) {
+    document.getElementById('ecoScore').textContent = '?';
+    document.getElementById('ecoLabel').textContent = 'Unavailable';
+  }
+}
+
 // Load gamification data
 // Gamification loaded from stats.json in load()
 // Refresh every 60s
 // Live refresh only when API available
-if (EARTHGRID_API) setInterval(() => { loadLeaderboard(); loadFeed(); }, 60000);
+if (EARTHGRID_API) setInterval(() => { loadLeaderboard();
+    loadEconomy(); loadFeed(); }, 60000);
 </script>
 
 <div class="section">
@@ -363,6 +477,25 @@ if (EARTHGRID_API) setInterval(() => { loadLeaderboard(); loadFeed(); }, 60000);
 .trend-bar { background:var(--accent); border-radius:2px 2px 0 0; min-width:4px; flex:1; opacity:0.7; position:relative; }
 .trend-bar:hover { opacity:1; }
 .trend-bar:hover::after { content:attr(data-tip); position:absolute; bottom:100%; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.7rem; white-space:nowrap; color:var(--text); }
+
+/* Economy Health Indicator */
+.economy { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1.5rem; margin:2rem 0; }
+.economy-header { display:flex; align-items:center; gap:1rem; margin-bottom:1rem; }
+.economy-score { font-size:3rem; font-weight:800; line-height:1; }
+.economy-score.green { color:var(--green); }
+.economy-score.yellow { color:var(--orange); }
+.economy-score.red { color:#f85149; }
+.economy-label { font-size:1.1rem; font-weight:600; }
+.economy-sublabel { font-size:0.85rem; color:var(--dim); }
+.economy-bar-wrap { display:flex; gap:0.5rem; margin-bottom:0.3rem; align-items:center; }
+.economy-bar-label { font-size:0.8rem; color:var(--dim); width:130px; flex-shrink:0; }
+.economy-bar { flex:1; background:var(--border); border-radius:4px; height:8px; overflow:hidden; }
+.economy-bar-fill { height:100%; border-radius:4px; transition:width 0.5s ease; }
+.economy-bar-fill.green { background:var(--green); }
+.economy-bar-fill.yellow { background:var(--orange); }
+.economy-bar-fill.red { background:#f85149; }
+.economy-bar-val { font-size:0.75rem; color:var(--dim); width:35px; text-align:right; flex-shrink:0; }
+.economy-meta { display:flex; gap:2rem; flex-wrap:wrap; margin-top:0.8rem; font-size:0.8rem; color:var(--dim); }
 </style>
 
 <div class="tabs" id="lang-tabs">
@@ -794,6 +927,7 @@ async function load() {
     window._lastStats = d;
     // Load gamification from stats.json data
     loadLeaderboard(d);
+    loadEconomy(d);
     loadAchievements(d);
     loadFeed(d);
 

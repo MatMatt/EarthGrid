@@ -696,6 +696,151 @@ class GamificationEngine:
                 "available_achievements": len(ACHIEVEMENTS),
             }
 
+
+    def economy_health(self) -> dict:
+        """Compute network economy health indicator.
+        
+        Factors:
+        1. Storage headroom (30%): pledged_total >> stored_total means room to grow
+        2. Node diversity (25%): more active nodes = more resilient
+        3. Data redundancy (25%): items replicated across multiple nodes
+        4. Data serving (20%): bytes_served > 0 means actual reuse
+        
+        Returns dict with score (0-100), status (green/yellow/red), and breakdown.
+        """
+        import time as _time
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT node_id, items_ingested, bytes_stored, bytes_served, "
+                "storage_pledged_gb, last_seen, uptime_seconds FROM node_scores"
+            ).fetchall()
+        
+        if not rows:
+            return {
+                "score": 0, "status": "red", "label": "No nodes",
+                "factors": {}, "nodes_total": 0, "nodes_alive": 0,
+            }
+        
+        now = _time.time()
+        alive_threshold = 300  # 5 min
+        
+        nodes_total = len(rows)
+        nodes_alive = sum(1 for r in rows if (now - r[5]) < alive_threshold)
+        
+        total_stored_gb = sum((r[2] or 0) for r in rows) / (1024**3)
+        total_pledged_gb = sum((r[4] or 0) for r in rows)
+        total_served_gb = sum((r[3] or 0) for r in rows) / (1024**3)
+        total_items = max(sum((r[1] or 0) for r in rows), 1)
+        
+        # -- Factor 1: Storage Headroom (30%) --
+        # Score high if plenty of room to grow
+        if total_pledged_gb <= 0:
+            storage_score = 0
+        else:
+            utilization = total_stored_gb / total_pledged_gb
+            if utilization < 0.01:
+                storage_score = 20  # barely used = not great either
+            elif utilization < 0.5:
+                storage_score = 100  # sweet spot: room to grow
+            elif utilization < 0.8:
+                storage_score = 70  # getting full
+            elif utilization < 0.95:
+                storage_score = 40  # tight
+            else:
+                storage_score = 10  # critically full
+        
+        # -- Factor 2: Node Diversity (25%) --
+        # More alive nodes = better. Scale: 1=poor, 3=ok, 5+=great
+        if nodes_alive <= 0:
+            diversity_score = 0
+        elif nodes_alive == 1:
+            diversity_score = 20  # single point of failure
+        elif nodes_alive == 2:
+            diversity_score = 50
+        elif nodes_alive <= 4:
+            diversity_score = 75
+        elif nodes_alive <= 10:
+            diversity_score = 90
+        else:
+            diversity_score = 100
+        
+        # -- Factor 3: Data Redundancy (25%) --
+        # How many nodes hold copies of the same items
+        # Approximate: count unique items across nodes vs. sum of items
+        # If sum >> unique, there's redundancy
+        items_per_node = [(r[1] or 0) for r in rows if (now - r[5]) < alive_threshold]
+        sum_items = sum(items_per_node)
+        if sum_items <= 0 or not items_per_node:
+            redundancy_score = 0
+        else:
+            max_unique = max(items_per_node)  # the node with most items
+            if max_unique <= 0:
+                redundancy_score = 0
+            else:
+                # replication factor estimate: sum_items / max_unique
+                est_replication = sum_items / max_unique
+                if est_replication >= 3:
+                    redundancy_score = 100
+                elif est_replication >= 2:
+                    redundancy_score = 80
+                elif est_replication >= 1.5:
+                    redundancy_score = 60
+                elif est_replication > 1:
+                    redundancy_score = 40
+                else:
+                    redundancy_score = 15  # no redundancy
+        
+        # -- Factor 4: Data Reuse / Serving (20%) --
+        # Any data being served = the network has value
+        if total_served_gb <= 0:
+            reuse_score = 5  # network exists but no one is using it yet
+        elif total_served_gb < 1:
+            reuse_score = 30
+        elif total_served_gb < total_stored_gb * 0.01:
+            reuse_score = 50
+        elif total_served_gb < total_stored_gb * 0.1:
+            reuse_score = 75
+        else:
+            reuse_score = 100  # great reuse
+        
+        # -- Composite Score --
+        score = round(
+            storage_score * 0.30 +
+            diversity_score * 0.25 +
+            redundancy_score * 0.25 +
+            reuse_score * 0.20
+        )
+        score = max(0, min(100, score))
+        
+        if score >= 70:
+            status = "green"
+            label = "Healthy"
+        elif score >= 40:
+            status = "yellow"
+            label = "Growing"
+        else:
+            status = "red"
+            label = "Needs attention"
+        
+        return {
+            "score": score,
+            "status": status,
+            "label": label,
+            "nodes_total": nodes_total,
+            "nodes_alive": nodes_alive,
+            "storage_pledged_gb": round(total_pledged_gb, 1),
+            "storage_used_gb": round(total_stored_gb, 1),
+            "storage_utilization_pct": round((total_stored_gb / total_pledged_gb * 100) if total_pledged_gb > 0 else 0, 1),
+            "data_served_gb": round(total_served_gb, 1),
+            "estimated_replication_factor": round(sum_items / max(max(items_per_node) if items_per_node else 1, 1), 2),
+            "factors": {
+                "storage_headroom": {"score": storage_score, "weight": 0.30},
+                "node_diversity": {"score": diversity_score, "weight": 0.25},
+                "data_redundancy": {"score": redundancy_score, "weight": 0.25},
+                "data_reuse": {"score": reuse_score, "weight": 0.20},
+            },
+        }
+
     def cleanup(self, retain_days: int = 90):
         """Remove old feed entries."""
         cutoff = time.time() - (retain_days * 86400)
