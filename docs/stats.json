@@ -1,11 +1,11 @@
 {
-  "updated": "2026-03-16T07:10:01Z",
+  "updated": "2026-03-16T07:12:07Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 1,
     "nodes_total": 1,
     "total_bytes": 14683315928,
-    "available_storage_gb": 0,
+    "available_storage_gb": 100.0,
     "redundancy": 1.0
   },
   "coverage": {
