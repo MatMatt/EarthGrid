@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     node_id: str = ""
-    node_name: str = "earthgrid-node"
+    node_name: str = ""  # auto-generated if empty
     store_path: Path = Path("./data/store")
     catalog_path: Path = Path("./data/catalog.db")
     host: str = "0.0.0.0"
@@ -79,6 +79,17 @@ class Settings(BaseSettings):
                     id_file.write_text(self.node_id)
                 except PermissionError:
                     fallback.write_text(self.node_id)
+
+        if not self.node_name:
+            # Generate a memorable random name (adjective-noun-XXXX)
+            _adj = ["swift", "bold", "calm", "dark", "fair", "keen", "wild",
+                     "warm", "cool", "free", "pure", "vast", "deep", "high",
+                     "blue", "gold", "iron", "jade", "onyx", "ruby"]
+            _noun = ["peak", "lake", "reef", "mesa", "vale", "cove", "dune",
+                     "glen", "rift", "ford", "cape", "isle", "arch", "dale",
+                     "knoll", "ridge", "brook", "cliff", "grove", "shore"]
+            import random
+            self.node_name = f"{random.choice(_adj)}-{random.choice(_noun)}-{self.node_id[:4]}"
 
     @property
     def base_url(self) -> str:

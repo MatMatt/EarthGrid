@@ -1359,8 +1359,9 @@ def _interactive_setup(args):
     store_path = Path(store_input) if store_input else default_store
 
     # Node name
-    import socket
-    default_name = socket.gethostname()
+    from .config import Settings as _S
+    _tmp = _S(node_name="")
+    default_name = _tmp.node_name  # auto-generated
     node_name = input(f"Name your node? [{default_name}]: ").strip()
     if not node_name:
         node_name = default_name
