@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -135,9 +136,20 @@ def ingest_cog(
         ]],
     }
 
+    # Parse acquisition date from item_id (e.g. S2C_33UUB_20250306_0_L2A_B04)
+    acq_date = None
+    if item_id:
+        m = re.search(r'_(\d{8})_', item_id)
+        if m:
+            try:
+                acq_date = datetime.strptime(m.group(1), "%Y%m%d").replace(
+                    tzinfo=timezone.utc).isoformat()
+            except ValueError:
+                pass
     now = datetime.now(timezone.utc).isoformat()
     properties = {
-        "datetime": now,
+        "datetime": acq_date or now,
+        "earthgrid:ingested": now,
         "earthgrid:crs": crs,
         "earthgrid:width": width,
         "earthgrid:height": height,
