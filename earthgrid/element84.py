@@ -535,6 +535,21 @@ async def fetch_and_ingest_element84(
                     cc = item["cloud_cover"]
                     print(f"  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
                     r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
+                    # Track ingest in stats
+                    for res in r:
+                        if isinstance(res, dict) and res.get("item_id") and not res.get("skipped"):
+                            try:
+                                from .stats import StatsEngine
+                                import os
+                                from pathlib import Path
+                                _stats_db = os.environ.get("EARTHGRID_STATS_DB", str(Path("data/stats.db")))
+                                _se = StatsEngine(Path(_stats_db))
+                                _se.record_download(
+                                    origin="source", collection_id=earthgrid_collection,
+                                    item_id=res["item_id"],
+                                    bytes_transferred=res.get("bytes", 0))
+                            except Exception:
+                                pass
                     if any(x.get("storage_full") for x in r if isinstance(x, dict)):
                         # Re-delegate this + remaining items to remote nodes
                         overflow = [item] + remaining
@@ -619,6 +634,21 @@ async def fetch_and_ingest_element84(
             print(f"\n  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
             try:
                 r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
+                # Track ingest in stats
+                for res in r:
+                    if isinstance(res, dict) and res.get("item_id") and not res.get("skipped"):
+                        try:
+                            from .stats import StatsEngine
+                            import os
+                            from pathlib import Path
+                            _stats_db = os.environ.get("EARTHGRID_STATS_DB", str(Path("data/stats.db")))
+                            _se = StatsEngine(Path(_stats_db))
+                            _se.record_download(
+                                origin="source", collection_id=earthgrid_collection,
+                                item_id=res["item_id"],
+                                bytes_transferred=res.get("bytes", 0))
+                        except Exception:
+                            pass
                 results.extend(r)
             except Exception as e:
                 logger.error(f"Failed to ingest {item['id']}: {e}")

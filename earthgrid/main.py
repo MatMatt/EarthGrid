@@ -757,7 +757,6 @@ _fetch_jobs: dict[str, dict] = {}
 
 @app.post("/fetch", dependencies=[Depends(_require_grid_auth)])
 async def remote_fetch(
-    background_tasks: BackgroundTasks,
     bbox: str = Query(...),
     start: str = Query(None),
     end: str = Query(None),
