@@ -1,16 +1,16 @@
 {
-  "updated": "2026-03-16T08:10:01Z",
+  "updated": "2026-03-16T08:14:43Z",
   "version": "0.3.2",
   "network": {
-    "nodes_alive": 2,
-    "nodes_total": 2,
-    "total_bytes": 70748258656,
-    "available_storage_gb": 3050.0,
+    "nodes_alive": 1,
+    "nodes_total": 1,
+    "total_bytes": 15092776664,
+    "available_storage_gb": 100.0,
     "redundancy": 1.0
   },
   "coverage": {
     "sentinel-2-l2a": {
-      "items": 775,
+      "items": 325,
       "tiles": 2,
       "area_km2": 12056
     }
@@ -126,7 +126,22 @@
     "leaderboard_nodes": {
       "type": "nodes",
       "period": "all",
-      "entries": []
+      "entries": [
+        {
+          "rank": 1,
+          "node_id": "8d1fac9217c3",
+          "node_name": "node-alpha",
+          "owner": "",
+          "anonymous": true,
+          "score": 3320,
+          "items": 325,
+          "gb_stored": 13.7,
+          "gb_served": 0.0,
+          "streak": 0,
+          "peers": 0,
+          "uptime_days": 0.0
+        }
+      ]
     },
     "leaderboard_users": {
       "type": "users",
