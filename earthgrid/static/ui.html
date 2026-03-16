@@ -554,6 +554,11 @@ function renderStorageInfo(info) {
     </div>
     <div id="resize-result" style="margin-top:6px"></div>`;
 
+  // Auto-update setting
+  const au = info.auto_update || 'no';
+  const auColor = au === 'yes' ? 'var(--green,#4caf50)' : au === 'ask' ? 'var(--yellow,#ff9800)' : 'var(--muted)';
+  html += `<div class="kv" style="margin-top:12px"><span class="kv-key">Auto-Update</span><span class="kv-val" style="color:${auColor}">${au}</span></div>`;
+
   setHtml('storage-info', html);
 }
 

@@ -308,6 +308,7 @@ async def _register_with_beacon():
                     "preferred_bbox": settings.preferred_bbox,
                     "replication_factor": settings.replication_factor,
                     "storage_limit_gb": settings.storage_limit_gb,
+        "auto_update": settings.auto_update,
                 },
             )
     except Exception as e:
@@ -652,6 +653,7 @@ def node_info_detail():
         "upload_mbps": getattr(app.state, '_upload_mbps', 0.0),
         "max_download_volume_gb": settings.max_download_volume_gb,
         "system": _system_info(),
+        "auto_update": settings.auto_update,
     }
 
 

@@ -1230,6 +1230,7 @@ def _cmd_docker(args):
         print(f"   Name:     {node_name}")
         print(f"   Storage:  {storage} GB")
         print(f"   Port:     {port}")
+    print(f"   Updates:  {auto_update}")
         print(f"   Beacon:   {'yes' if also_beacon else 'no'}")
         print(f"   Data:     {data_dir}")
         if public_url:
@@ -1370,6 +1371,14 @@ def _interactive_setup(args):
     if not beacon_url:
         beacon_url = DEFAULT_BEACON
 
+    # Auto-update
+    print("\nAuto-update on start?")
+    print("  [1] yes — always pull latest and restart")
+    print("  [2] ask — check and prompt (foreground only)")
+    print("  [3] no  — manual updates only")
+    au_input = input("Choose [1]: ").strip()
+    auto_update = {"1": "yes", "2": "ask", "3": "no"}.get(au_input, "yes")
+
     # Source data provider
     print("\n📡 Data Sources — where should your node fetch satellite data from?")
     print("  [1] CDSE (Copernicus) — full Sentinel archive, requires free account")
@@ -1421,6 +1430,7 @@ def _interactive_setup(args):
     }
     if beacon_url:
         config["beacon_url"] = beacon_url
+    config["auto_update"] = auto_update
 
     config_file.write_text(json.dumps(config, indent=2))
 
@@ -1475,6 +1485,7 @@ def _interactive_setup(args):
     print(f"   Beacon:   {'yes (also coordinator)' if also_beacon else 'no (data node only)'}")
     print(f"   Sources:  {', '.join(providers_str)}")
     print(f"   Port:     {port}")
+    print(f"   Updates:  {auto_update}")
     print(f"   Config:   {config_file}")
     if beacon_url:
         print(f"   Network:  {beacon_url}")
