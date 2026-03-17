@@ -1,12 +1,15 @@
 //! Peer registry for EarthGrid federation.
 //!
 //! Tracks known peer nodes with their URL, node-id, and last-seen timestamp.
-//! Provides federated STAC search by fanning out to all alive peers.
+//! Supports gossip-based peer discovery and failure tracking.
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+
+/// Maximum number of peers to track.
+pub const MAX_PEERS: usize = 50;
 
 // ---------------------------------------------------------------------------
 // Peer
@@ -21,6 +24,10 @@ pub struct Peer {
     pub last_seen: f64,
     pub collections: Vec<String>,
     pub item_count: usize,
+    #[serde(default)]
+    pub consecutive_failures: u32,
+    #[serde(default)]
+    pub marked_dead: bool,
 }
 
 impl Peer {
@@ -32,16 +39,28 @@ impl Peer {
             last_seen: now_secs(),
             collections: vec![],
             item_count: 0,
+            consecutive_failures: 0,
+            marked_dead: false,
         }
     }
 
-    /// Peer is considered alive if seen within last 5 minutes.
+    /// Peer is considered alive if seen within last 5 minutes and not marked dead.
     pub fn alive(&self) -> bool {
-        now_secs() - self.last_seen < 300.0
+        !self.marked_dead && now_secs() - self.last_seen < 300.0
     }
 
     pub fn touch(&mut self) {
         self.last_seen = now_secs();
+        self.consecutive_failures = 0;
+        self.marked_dead = false;
+    }
+
+    /// Record a sync failure. After 3 consecutive failures, mark dead.
+    pub fn record_failure(&mut self) {
+        self.consecutive_failures += 1;
+        if self.consecutive_failures >= 3 {
+            self.marked_dead = true;
+        }
     }
 }
 
@@ -69,9 +88,28 @@ impl PeerRegistry {
     }
 
     pub fn add(&mut self, url: &str, node_id: &str, node_name: &str) -> Peer {
+        let key = url.trim_end_matches('/').to_string();
+        if self.peers.len() >= MAX_PEERS && !self.peers.contains_key(&key) {
+            // At capacity — don't add new peers
+            return Peer::new(url, node_id, node_name);
+        }
         let peer = Peer::new(url, node_id, node_name);
-        self.peers.insert(peer.url.clone(), peer.clone());
+        self.peers.insert(key, peer.clone());
         peer
+    }
+
+    /// Add a peer only if we don't know it yet (gossip discovery).
+    /// Returns true if added.
+    pub fn add_if_new(&mut self, url: &str) -> bool {
+        let key = url.trim_end_matches('/').to_string();
+        if self.peers.contains_key(&key) {
+            return false;
+        }
+        if self.peers.len() >= MAX_PEERS {
+            return false;
+        }
+        self.peers.insert(key.clone(), Peer::new(&key, "", ""));
+        true
     }
 
     pub fn remove(&mut self, url: &str) {
@@ -82,8 +120,21 @@ impl PeerRegistry {
         self.peers.get(url.trim_end_matches('/'))
     }
 
+    pub fn get_mut(&mut self, url: &str) -> Option<&mut Peer> {
+        self.peers.get_mut(url.trim_end_matches('/'))
+    }
+
     pub fn list(&self) -> Vec<&Peer> {
         self.peers.values().collect()
+    }
+
+    pub fn count(&self) -> usize {
+        self.peers.len()
+    }
+
+    /// Get all peer URLs (for heartbeat iteration).
+    pub fn urls(&self) -> Vec<String> {
+        self.peers.keys().cloned().collect()
     }
 
     /// Update a peer after a successful sync.
@@ -95,6 +146,14 @@ impl PeerRegistry {
         peer.collections = info.collections.clone();
         peer.item_count = info.item_count;
         peer.touch();
+    }
+
+    /// Record a failure for a peer.
+    pub fn record_failure(&mut self, url: &str) {
+        let key = url.trim_end_matches('/').to_string();
+        if let Some(peer) = self.peers.get_mut(&key) {
+            peer.record_failure();
+        }
     }
 }
 
@@ -112,6 +171,25 @@ pub struct NodeInfo {
     pub collections: Vec<String>,
     #[serde(default)]
     pub item_count: usize,
+}
+
+// ---------------------------------------------------------------------------
+// GossipPeerList — response from GET /peers.json
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct GossipPeerList {
+    #[serde(default)]
+    pub peers: Vec<GossipPeerEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GossipPeerEntry {
+    pub url: String,
+    #[serde(default)]
+    pub node_id: String,
+    #[serde(default)]
+    pub node_name: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -171,5 +249,47 @@ mod tests {
     fn test_alive_freshly_added() {
         let peer = Peer::new("https://peer.example.com", "id", "name");
         assert!(peer.alive());
+    }
+
+    #[test]
+    fn test_failure_tracking() {
+        let mut peer = Peer::new("https://peer.example.com", "id", "name");
+        assert!(peer.alive());
+        peer.record_failure();
+        assert!(peer.alive()); // 1 failure
+        peer.record_failure();
+        assert!(peer.alive()); // 2 failures
+        peer.record_failure();
+        assert!(!peer.alive()); // 3 failures → dead
+    }
+
+    #[test]
+    fn test_touch_resets_failures() {
+        let mut peer = Peer::new("https://peer.example.com", "id", "name");
+        peer.record_failure();
+        peer.record_failure();
+        peer.touch();
+        assert_eq!(peer.consecutive_failures, 0);
+        assert!(!peer.marked_dead);
+    }
+
+    #[test]
+    fn test_add_if_new() {
+        let mut reg = PeerRegistry::new();
+        assert!(reg.add_if_new("https://peer1.example.com"));
+        assert!(!reg.add_if_new("https://peer1.example.com")); // duplicate
+        assert!(reg.add_if_new("https://peer2.example.com"));
+        assert_eq!(reg.count(), 2);
+    }
+
+    #[test]
+    fn test_max_peers() {
+        let mut reg = PeerRegistry::new();
+        for i in 0..MAX_PEERS {
+            reg.add_if_new(&format!("https://peer{}.example.com", i));
+        }
+        assert_eq!(reg.count(), MAX_PEERS);
+        assert!(!reg.add_if_new("https://overflow.example.com"));
+        assert_eq!(reg.count(), MAX_PEERS);
     }
 }

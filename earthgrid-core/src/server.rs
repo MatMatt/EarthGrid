@@ -22,7 +22,8 @@ use crate::{
     auth::AuthConfig,
     catalog::{Catalog, StacItem},
     chunk_store::ChunkStore,
-    peers::{NodeInfo, PeerRegistry},
+    ingest,
+    peers::{GossipPeerList, NodeInfo, PeerRegistry},
 };
 
 // ---------------------------------------------------------------------------
@@ -555,6 +556,79 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
     Ok(out)
 }
 
+
+/// GET /peers.json — gossip-friendly peer list for discovery
+async fn peers_json(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let registry = state.peers.lock().await;
+    let peers: Vec<serde_json::Value> = registry
+        .list()
+        .into_iter()
+        .map(|p| serde_json::json!({
+            "url": p.url,
+            "node_id": p.node_id,
+            "node_name": p.node_name,
+        }))
+        .collect();
+    Json(serde_json::json!({"peers": peers}))
+}
+
+/// POST /ingest/file — ingest a file from a local path on the server
+async fn ingest_file_endpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        state.audit.log("ingest_file", "auth_fail", "", false);
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    let file_path = match payload.get("path").and_then(|v| v.as_str()) {
+        Some(p) => std::path::PathBuf::from(p),
+        None => return err(StatusCode::BAD_REQUEST, "Missing 'path' field").into_response(),
+    };
+    let collection = payload.get("collection")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let chunk_size = payload.get("chunk_size")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(ingest::DEFAULT_CHUNK_SIZE);
+
+    if !file_path.exists() {
+        return err(StatusCode::BAD_REQUEST, &format!("File not found: {}", file_path.display())).into_response();
+    }
+
+    let mut store = state.store.lock().await;
+    let item = match ingest::ingest_file(&file_path, collection, chunk_size, &mut store) {
+        Ok(item) => item,
+        Err(e) => {
+            state.audit.log("ingest_file", &file_path.display().to_string(), "", false);
+            return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+        }
+    };
+    drop(store);
+
+    let item_id = item.id.clone();
+    let catalog = state.catalog.lock().await;
+    match catalog.add_item(&item) {
+        Ok(()) => {
+            state.audit.log("ingest_file", &item_id, "", true);
+            (StatusCode::CREATED, Json(serde_json::json!({
+                "status": "ok",
+                "id": item_id,
+                "chunks": item.chunk_hashes.len(),
+                "collection": collection,
+            }))).into_response()
+        }
+        Err(e) => {
+            state.audit.log("ingest_file", &item_id, "", false);
+            err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response()
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -585,6 +659,9 @@ pub fn router(state: AppState) -> Router {
         .route("/peers", post(register_peer))
         .route("/federation/sync", post(federation_sync))
         .route("/federation/search", get(federation_search))
+        // Gossip + file ingest
+        .route("/peers.json", get(peers_json))
+        .route("/ingest/file", post(ingest_file_endpoint))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -614,9 +691,12 @@ pub async fn serve(data_dir: std::path::PathBuf, host: String, port: u16) -> any
 
     // Initial peers from env: comma-separated URLs
     let mut peer_registry = PeerRegistry::new();
-    if let Ok(peers_env) = env::var("EARTHGRID_PEERS") {
-        for url in peers_env.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            peer_registry.add(url, "", "");
+    // Load peers from both env vars
+    for var in ["EARTHGRID_PEERS", "EARTHGRID_BOOTSTRAP_PEERS"] {
+        if let Ok(peers_env) = env::var(var) {
+            for url in peers_env.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                peer_registry.add(url, "", "");
+            }
         }
     }
 
@@ -631,6 +711,7 @@ pub async fn serve(data_dir: std::path::PathBuf, host: String, port: u16) -> any
         node_name: node_name.clone(),
     };
 
+    let hb_peers = state.peers.clone();
     let app = router(state);
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -640,6 +721,54 @@ pub async fn serve(data_dir: std::path::PathBuf, host: String, port: u16) -> any
         node_name,
         addr
     );
+    // Spawn heartbeat + gossip loop
+    
+    tokio::spawn(async move {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
+
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+            let urls: Vec<String> = {
+                let reg = hb_peers.lock().await;
+                reg.urls()
+            };
+
+            for url in &urls {
+                // 1. Sync node-info
+                let info_url = format!("{}/node-info", url);
+                match client.get(&info_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        if let Ok(info) = resp.json::<NodeInfo>().await {
+                            let mut reg = hb_peers.lock().await;
+                            reg.update_from_info(url, &info);
+                        }
+                    }
+                    _ => {
+                        let mut reg = hb_peers.lock().await;
+                        reg.record_failure(url);
+                    }
+                }
+
+                // 2. Gossip: fetch peers from this peer
+                let gossip_url = format!("{}/peers.json", url);
+                if let Ok(resp) = client.get(&gossip_url).send().await {
+                    if resp.status().is_success() {
+                        if let Ok(gossip) = resp.json::<GossipPeerList>().await {
+                            let mut reg = hb_peers.lock().await;
+                            for entry in &gossip.peers {
+                                reg.add_if_new(&entry.url);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     axum::serve(listener, app).await?;
     Ok(())
 }

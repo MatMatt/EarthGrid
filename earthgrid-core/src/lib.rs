@@ -5,5 +5,6 @@ pub mod auth;
 pub mod catalog;
 pub mod chunk_store;
 pub mod error;
+pub mod ingest;
 pub mod peers;
 pub mod server;
