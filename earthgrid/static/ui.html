@@ -391,6 +391,20 @@ input::placeholder { color: var(--muted); }
 
 <script>
 // ============================================================
+// API Base Path (handles reverse-proxy subpath like /earthgrid/)
+// ============================================================
+const API_BASE = (() => {
+  const path = window.location.pathname;
+  const markers = ['/ui', '/dashboard'];
+  for (const m of markers) {
+    const idx = path.indexOf(m);
+    if (idx >= 0) return path.slice(0, idx);
+  }
+  const lastSlash = path.lastIndexOf('/');
+  return lastSlash > 0 ? path.slice(0, lastSlash) : '';
+})();
+
+// ============================================================
 // State
 // ============================================================
 let currentTab = 'status';
@@ -442,7 +456,7 @@ async function apiFetch(path, opts={}) {
     opts.headers = opts.headers || {};
     if (!opts.headers['X-API-Key']) opts.headers['X-API-Key'] = key;
   }
-  const r = await fetch(path, opts);
+  const r = await fetch(API_BASE + path, opts);
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
   return r.json();
 }
