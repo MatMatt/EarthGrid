@@ -207,7 +207,7 @@ input::placeholder { color: var(--muted); }
   <!-- STATUS TAB -->
   <div class="tab-panel active" id="panel-status">
     <div class="grid grid-4" style="margin-bottom:16px" id="status-stats">
-      <div class="stat"><div class="stat-label">Node Name</div><div class="stat-value" id="s-name" style="font-size:16px">—</div><div class="stat-sub" id="s-id">—</div></div>
+      <div class="stat"><div class="stat-label">Node Name</div><div class="stat-value" id="s-name" style="font-size:16px;cursor:pointer" title="Click to rename" onclick="startNodeRename()">—</div><div class="stat-sub" id="s-id">—</div></div>
       <div class="stat"><div class="stat-label">Version</div><div class="stat-value" id="s-version" style="font-size:18px">—</div><div class="stat-sub" id="s-items">— items</div></div>
       <div class="stat"><div class="stat-label">Chunks</div><div class="stat-value" id="s-chunks">—</div><div class="stat-sub" id="s-chunks-bytes">—</div></div>
       <div class="stat"><div class="stat-label">Coverage</div><div class="stat-value" id="s-area">—</div><div class="stat-sub">km²</div></div>
@@ -1073,6 +1073,46 @@ function showScoreInfo() {
     </p>
   </div>`;
   document.body.appendChild(div);
+}
+
+
+// --- Node Rename (inline edit) ---
+function startNodeRename() {
+  const el = document.getElementById('s-name');
+  const current = el.textContent;
+  el.innerHTML = '<input id="rename-input" type="text" value="' + current + '" style="background:#1a1d23;border:1px solid #3b82f6;color:#e2e8f0;border-radius:4px;padding:2px 6px;font-size:16px;width:140px;font-family:inherit" maxlength="64">' +
+    ' <button onclick="submitNodeRename()" style="background:#3b82f6;color:#fff;border:none;border-radius:4px;padding:2px 10px;cursor:pointer;font-size:12px">Save</button>' +
+    ' <button onclick="cancelNodeRename(\''+current.replace(/'/g,"\\'")+'\' )" style="background:#374151;color:#9ca3af;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px">\u2715</button>';
+  const inp = document.getElementById('rename-input');
+  inp.focus();
+  inp.select();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitNodeRename();
+    if (e.key === 'Escape') cancelNodeRename(current);
+  });
+}
+function cancelNodeRename(old) {
+  const el = document.getElementById('s-name');
+  el.textContent = old;
+}
+async function submitNodeRename() {
+  const inp = document.getElementById('rename-input');
+  if (!inp) return;
+  const name = inp.value.trim();
+  if (!name) return;
+  try {
+    const res = await apiFetch('/node-name?name=' + encodeURIComponent(name), {method: 'PATCH'});
+    if (res.status === 'renamed') {
+      document.getElementById('s-name').textContent = res.new;
+      document.getElementById('header-node-name').textContent = res.new;
+    } else {
+      alert('Rename failed');
+      cancelNodeRename(res.old || name);
+    }
+  } catch(e) {
+    alert('Rename error: ' + e.message);
+    loadStatus();
+  }
 }
 
 </script>

@@ -80,6 +80,13 @@ class Settings(BaseSettings):
                 except PermissionError:
                     fallback.write_text(self.node_id)
 
+        # Load persisted node name from /data/.node_name (overrides env)
+        _name_file = Path("/data/.node_name")
+        if _name_file.exists():
+            _saved = _name_file.read_text().strip()
+            if _saved:
+                self.node_name = _saved
+
         if not self.node_name:
             # Generate a memorable random name (adjective-noun-XXXX)
             _adj = ["swift", "bold", "calm", "dark", "fair", "keen", "wild",

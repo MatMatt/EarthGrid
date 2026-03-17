@@ -745,6 +745,24 @@ async def resize_storage(size_gb: float = Query(..., gt=0)):
         config_file.write_text(_json.dumps(cfg, indent=2) + "\n")
     return {"old_gb": old, "new_gb": size_gb, "status": "resized"}
 
+
+@app.patch("/node-name", dependencies=[Depends(_require_admin_auth)])
+async def rename_node(name: str = Query(..., min_length=1, max_length=64)):
+    """Rename this node. Persists to .env."""
+    import re as _re
+    old = settings.node_name
+    clean = _re.sub(r"[^a-zA-Z0-9_\-]", "", name.strip())[:64]
+    if not clean:
+        from fastapi import HTTPException
+        raise HTTPException(400, "Invalid name")
+    settings.node_name = clean
+    # Persist to /data/.node_name (survives container restarts)
+    try:
+        Path("/data/.node_name").write_text(clean)
+    except Exception:
+        pass
+    return {"old": old, "new": clean, "status": "renamed"}
+
 @app.get("/")
 def node_info(request: Request):
     """Root endpoint — openEO capabilities merged with EarthGrid node info.
