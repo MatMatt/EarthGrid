@@ -149,20 +149,36 @@ function initCoverageMap() {
   const legend = L.control({position:'bottomright'});
   legend.onAdd = function() {
     const div = L.DomUtil.create('div','cov-legend');
-    div.innerHTML = '<strong>Coverage</strong><br>' +
-      '<i style="background:#3fb950"></i> 20+ dates<br>' +
-      '<i style="background:#58a6ff"></i> 10–19<br>' +
-      '<i style="background:#d29922"></i> 3–9<br>' +
-      '<i style="background:#f85149"></i> 1–2';
+    div.innerHTML = '<strong>Archive Coverage</strong><br>' +
+      '<i style="background:#3fb950"></i> &gt;50%<br>' +
+      '<i style="background:#58a6ff"></i> 20–50%<br>' +
+      '<i style="background:#d29922"></i> 5–20%<br>' +
+      '<i style="background:#f85149"></i> &lt;5%';
     return div;
   };
   legend.addTo(covMap);
 }
 
-function covColor(dateCount) {
-  if (dateCount >= 20) return '#3fb950';
-  if (dateCount >= 10) return '#58a6ff';
-  if (dateCount >= 3) return '#d29922';
+// Sensor start dates and revisit periods (days)
+const SENSOR_META = {
+  'sentinel-2-l2a': { start: '2015-06-23', revisit: 5 },
+  'sentinel-1-grd': { start: '2014-10-03', revisit: 6 },
+};
+
+function covPercent(dateCount, colId) {
+  const meta = SENSOR_META[colId] || { start: '2015-01-01', revisit: 5 };
+  const startMs = new Date(meta.start).getTime();
+  const nowMs = Date.now();
+  const totalDays = (nowMs - startMs) / 86400000;
+  const maxAcquisitions = Math.floor(totalDays / meta.revisit);
+  return maxAcquisitions > 0 ? (dateCount / maxAcquisitions * 100) : 0;
+}
+
+function covColor(dateCount, colId) {
+  const pct = covPercent(dateCount, colId);
+  if (pct >= 50) return '#3fb950';
+  if (pct >= 20) return '#58a6ff';
+  if (pct >= 5) return '#d29922';
   return '#f85149';
 }
 
@@ -182,8 +198,9 @@ function renderCoverageMap(data) {
 
     for (const cell of (colData.cells || [])) {
       const [w, s, e, n] = cell.bbox;
+      const pct = covPercent(cell.date_count, colId);
       const rect = L.rectangle([[s, w], [n, e]], {
-        color: covColor(cell.date_count),
+        color: covColor(cell.date_count, colId),
         weight: 1.5,
         fillOpacity: 0.25,
         opacity: 0.7,
@@ -193,7 +210,7 @@ function renderCoverageMap(data) {
 
       rect.bindTooltip(
         sensorLabel(colId) + '<br>' +
-        cell.date_count + ' dates · ' + cell.item_count + ' items',
+        pct.toFixed(1) + '% of archive · ' + cell.date_count + ' dates',
         {className:'', sticky:true}
       );
 
@@ -220,12 +237,13 @@ function showCoverageDetail(colId, cell) {
     months[m] = (months[m] || 0) + 1;
   }
 
-  // Build month range (fill gaps)
-  const sortedMonths = Object.keys(months).sort();
+  // Build month range from SENSOR START to now (full archive timeline)
+  const meta = SENSOR_META[colId] || { start: '2015-01-01', revisit: 5 };
   const allMonths = [];
-  if (sortedMonths.length > 0) {
-    let [y, m] = sortedMonths[0].split('-').map(Number);
-    const [ey, em] = sortedMonths[sortedMonths.length - 1].split('-').map(Number);
+  {
+    let [y, m] = meta.start.substring(0, 7).split('-').map(Number);
+    const now = new Date();
+    const ey = now.getFullYear(), em = now.getMonth() + 1;
     while (y < ey || (y === ey && m <= em)) {
       const key = y + '-' + String(m).padStart(2, '0');
       allMonths.push({month: key, count: months[key] || 0});
@@ -235,6 +253,7 @@ function showCoverageDetail(colId, cell) {
   }
 
   const maxCount = Math.max(...allMonths.map(m => m.count), 1);
+  const pct = covPercent(cell.date_count, colId);
 
   let barsHtml = '<div class="cov-temporal">';
   for (const m of allMonths) {
@@ -246,8 +265,21 @@ function showCoverageDetail(colId, cell) {
   barsHtml += '</div>';
 
   if (allMonths.length > 0) {
-    barsHtml += '<div class="cov-temporal-labels"><span>' + allMonths[0].month + '</span><span>' +
-      allMonths[allMonths.length - 1].month + '</span></div>';
+    // Show year labels at Jan of each year
+    const years = [...new Set(allMonths.map(m => m.month.substring(0,4)))];
+    let yearLabels = '<div style="display:flex;font-size:0.6rem;color:var(--dim);margin-top:1px">';
+    let prevYear = '';
+    for (const m of allMonths) {
+      const yr = m.month.substring(0,4);
+      if (yr !== prevYear && m.month.endsWith('-01')) {
+        yearLabels += '<div style="flex:1;min-width:6px;text-align:left">\'' + yr.substring(2) + '</div>';
+      } else {
+        yearLabels += '<div style="flex:1;min-width:6px"></div>';
+      }
+      prevYear = yr;
+    }
+    yearLabels += '</div>';
+    barsHtml += yearLabels;
   }
 
   const bandsHtml = cell.bands.length > 0
@@ -262,14 +294,16 @@ function showCoverageDetail(colId, cell) {
     '<button onclick="document.getElementById(\'coverageDetail\').style.display=\'none\'" ' +
     'style="background:none;border:none;color:var(--dim);font-size:1.2rem;cursor:pointer">✕</button></div>' +
     '<div style="display:flex;gap:2rem;margin:1rem 0;flex-wrap:wrap">' +
-    '<div><div style="font-size:1.8rem;font-weight:700;color:var(--green)">' + cell.date_count + '</div>' +
-    '<div style="font-size:0.8rem;color:var(--dim)">unique dates</div></div>' +
+    '<div><div style="font-size:1.8rem;font-weight:700;color:' + covColor(cell.date_count, colId) + '">' + pct.toFixed(1) + '%</div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">of archive</div></div>' +
+    '<div><div style="font-size:1.8rem;font-weight:700;color:var(--text)">' + cell.date_count + '</div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">dates ingested</div></div>' +
     '<div><div style="font-size:1.8rem;font-weight:700;color:var(--accent)">' + cell.item_count + '</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">items</div></div>' +
-    '<div><div style="font-size:0.85rem;color:var(--text)">' + (cell.first_date || '—') + '</div>' +
-    '<div style="font-size:0.8rem;color:var(--dim)">first acquisition</div></div>' +
+    '<div><div style="font-size:0.85rem;color:var(--text)">' + meta.start + '</div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">sensor start</div></div>' +
     '<div><div style="font-size:0.85rem;color:var(--text)">' + (cell.last_date || '—') + '</div>' +
-    '<div style="font-size:0.8rem;color:var(--dim)">last acquisition</div></div></div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">last ingested</div></div></div>' +
     '<div style="font-size:0.85rem;margin-bottom:6px"><strong>Temporal Coverage</strong></div>' +
     barsHtml +
     '<div style="font-size:0.85rem;margin-top:1rem"><strong>Bands:</strong> ' + bandsHtml + '</div>';
