@@ -55,6 +55,7 @@ stats = {
         'redundancy': round(redundancy, 1),
     },
     'coverage': coverage.get('sensors', {}),
+    'spatial_coverage': fetch('/coverage/spatial'),
     'uptake': uptake,
     'ingest': ingest,
     'items': eg.get('item_count', 0),

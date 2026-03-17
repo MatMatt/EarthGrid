@@ -107,8 +107,190 @@ a:hover { text-decoration:underline; }
 
 <div class="section">
 <h2>🛰️ Spatial Coverage</h2>
-<div id="coverageTable"><em style="color:var(--dim)">Loading...</em></div>
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+  <button class="tab-btn active" onclick="filterMap('all',this)">All</button>
+  <button class="tab-btn" onclick="filterMap('sentinel-2-l2a',this)">Sentinel-2</button>
+  <button class="tab-btn" onclick="filterMap('sentinel-1-grd',this)">Sentinel-1</button>
 </div>
+<div id="coverageMap" style="height:420px;border-radius:12px;border:1px solid var(--border);overflow:hidden"></div>
+<div id="coverageTable" style="margin-top:1rem"><em style="color:var(--dim)">Loading...</em></div>
+<div id="coverageDetail" style="display:none;margin-top:1rem;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem"></div>
+</div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+#coverageMap .leaflet-container { background: var(--bg) !important; }
+.cov-legend { background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:0.8rem;color:var(--text);line-height:1.6; }
+.cov-legend i { width:14px;height:14px;display:inline-block;margin-right:5px;border-radius:2px;vertical-align:middle;opacity:0.8; }
+.cov-popup { font-family:inherit; }
+.cov-popup h4 { margin:0 0 6px;font-size:0.95rem; }
+.cov-popup .cov-meta { font-size:0.8rem;color:#8b949e;margin-bottom:8px; }
+.cov-temporal { display:flex;align-items:flex-end;gap:1px;height:60px;margin-top:8px; }
+.cov-temporal .bar { flex:1;min-width:6px;border-radius:2px 2px 0 0;cursor:pointer;transition:opacity 0.2s; }
+.cov-temporal .bar:hover { opacity:1 !important; }
+.cov-temporal-labels { display:flex;justify-content:space-between;font-size:0.65rem;color:#8b949e;margin-top:2px; }
+</style>
+<script>
+let covMap, covLayers = [], covData = null, covFilter = 'all';
+
+function initCoverageMap() {
+  covMap = L.map('coverageMap', {
+    zoomControl: true,
+    attributionControl: false,
+  }).setView([50, 12], 4);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 18,
+    subdomains: 'abcd',
+  }).addTo(covMap);
+
+  // Legend
+  const legend = L.control({position:'bottomright'});
+  legend.onAdd = function() {
+    const div = L.DomUtil.create('div','cov-legend');
+    div.innerHTML = '<strong>Coverage</strong><br>' +
+      '<i style="background:#3fb950"></i> 20+ dates<br>' +
+      '<i style="background:#58a6ff"></i> 10–19<br>' +
+      '<i style="background:#d29922"></i> 3–9<br>' +
+      '<i style="background:#f85149"></i> 1–2';
+    return div;
+  };
+  legend.addTo(covMap);
+}
+
+function covColor(dateCount) {
+  if (dateCount >= 20) return '#3fb950';
+  if (dateCount >= 10) return '#58a6ff';
+  if (dateCount >= 3) return '#d29922';
+  return '#f85149';
+}
+
+function renderCoverageMap(data) {
+  if (!data || !data.collections) return;
+  covData = data;
+
+  // Clear old layers
+  covLayers.forEach(l => covMap.removeLayer(l));
+  covLayers = [];
+
+  const bounds = [];
+  const colColors = {'sentinel-2-l2a': '#3fb950', 'sentinel-1-grd': '#58a6ff'};
+
+  for (const [colId, colData] of Object.entries(data.collections)) {
+    if (covFilter !== 'all' && covFilter !== colId) continue;
+
+    for (const cell of (colData.cells || [])) {
+      const [w, s, e, n] = cell.bbox;
+      const rect = L.rectangle([[s, w], [n, e]], {
+        color: covColor(cell.date_count),
+        weight: 1.5,
+        fillOpacity: 0.25,
+        opacity: 0.7,
+      });
+
+      rect.on('click', () => showCoverageDetail(colId, cell));
+
+      rect.bindTooltip(
+        sensorLabel(colId) + '<br>' +
+        cell.date_count + ' dates · ' + cell.item_count + ' items',
+        {className:'', sticky:true}
+      );
+
+      rect.addTo(covMap);
+      covLayers.push(rect);
+      bounds.push([[s, w], [n, e]]);
+    }
+  }
+
+  if (bounds.length > 0) {
+    const all = bounds.flat();
+    covMap.fitBounds(all, {padding:[30,30], maxZoom:8});
+  }
+}
+
+function showCoverageDetail(colId, cell) {
+  const panel = document.getElementById('coverageDetail');
+  panel.style.display = 'block';
+
+  // Group dates by month for temporal chart
+  const months = {};
+  for (const d of cell.dates) {
+    const m = d.substring(0, 7); // YYYY-MM
+    months[m] = (months[m] || 0) + 1;
+  }
+
+  // Build month range (fill gaps)
+  const sortedMonths = Object.keys(months).sort();
+  const allMonths = [];
+  if (sortedMonths.length > 0) {
+    let [y, m] = sortedMonths[0].split('-').map(Number);
+    const [ey, em] = sortedMonths[sortedMonths.length - 1].split('-').map(Number);
+    while (y < ey || (y === ey && m <= em)) {
+      const key = y + '-' + String(m).padStart(2, '0');
+      allMonths.push({month: key, count: months[key] || 0});
+      m++;
+      if (m > 12) { m = 1; y++; }
+    }
+  }
+
+  const maxCount = Math.max(...allMonths.map(m => m.count), 1);
+
+  let barsHtml = '<div class="cov-temporal">';
+  for (const m of allMonths) {
+    const h = m.count > 0 ? Math.max(4, (m.count / maxCount) * 56) : 0;
+    const color = m.count > 0 ? covColor(m.count * 3) : 'var(--border)';
+    barsHtml += '<div class="bar" style="height:' + (h || 2) + 'px;background:' + color +
+      ';opacity:' + (m.count > 0 ? '0.8' : '0.2') + '" title="' + m.month + ': ' + m.count + ' acquisitions"></div>';
+  }
+  barsHtml += '</div>';
+
+  if (allMonths.length > 0) {
+    barsHtml += '<div class="cov-temporal-labels"><span>' + allMonths[0].month + '</span><span>' +
+      allMonths[allMonths.length - 1].month + '</span></div>';
+  }
+
+  const bandsHtml = cell.bands.length > 0
+    ? cell.bands.map(b => '<code style="margin:0 3px;font-size:0.8rem">' + b + '</code>').join('')
+    : '<em style="color:var(--dim)">unknown</em>';
+
+  panel.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:start">' +
+    '<div><h3 style="margin:0 0 4px;font-size:1.1rem">' + sensorLabel(colId) + '</h3>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">' +
+    cell.bbox.map(v => v.toFixed(1) + '°').join(', ') + '</div></div>' +
+    '<button onclick="document.getElementById(\'coverageDetail\').style.display=\'none\'" ' +
+    'style="background:none;border:none;color:var(--dim);font-size:1.2rem;cursor:pointer">✕</button></div>' +
+    '<div style="display:flex;gap:2rem;margin:1rem 0;flex-wrap:wrap">' +
+    '<div><div style="font-size:1.8rem;font-weight:700;color:var(--green)">' + cell.date_count + '</div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">unique dates</div></div>' +
+    '<div><div style="font-size:1.8rem;font-weight:700;color:var(--accent)">' + cell.item_count + '</div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">items</div></div>' +
+    '<div><div style="font-size:0.85rem;color:var(--text)">' + (cell.first_date || '—') + '</div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">first acquisition</div></div>' +
+    '<div><div style="font-size:0.85rem;color:var(--text)">' + (cell.last_date || '—') + '</div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">last acquisition</div></div></div>' +
+    '<div style="font-size:0.85rem;margin-bottom:6px"><strong>Temporal Coverage</strong></div>' +
+    barsHtml +
+    '<div style="font-size:0.85rem;margin-top:1rem"><strong>Bands:</strong> ' + bandsHtml + '</div>';
+
+  panel.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function filterMap(filter, btn) {
+  covFilter = filter;
+  document.querySelectorAll('.section:has(#coverageMap) .tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (covData) renderCoverageMap(covData);
+}
+
+// Init map after DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initCoverageMap);
+} else {
+  initCoverageMap();
+}
+</script>
 
 
 
@@ -831,6 +1013,18 @@ async function load() {
       }
       html += '</tbody></table>';
       document.getElementById('coverageTable').innerHTML = html;
+    }
+
+    // Spatial coverage map
+    const spatialCov = d.spatial_coverage || null;
+    if (spatialCov) {
+      renderCoverageMap(spatialCov);
+    } else {
+      // Try live endpoint if not in stats.json
+      try {
+        const scr = await fetch(EARTHGRID_API + '/coverage/spatial');
+        if (scr.ok) renderCoverageMap(await scr.json());
+      } catch(e) { console.log('No spatial coverage data'); }
     }
 
     // Operations

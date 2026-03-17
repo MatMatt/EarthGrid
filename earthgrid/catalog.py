@@ -211,6 +211,83 @@ class Catalog:
             result[col] = {"items": s["items"], "tiles": len(s["seen"]), "area_km2": area}
         return {"collections": result, "total_area_km2": round(total_area)}
 
+    def spatial_coverage(self) -> dict:
+        """Spatial coverage grouped by rounded bbox per collection.
+
+        Returns dict with per-collection cell data including dates and bands.
+        """
+        from collections import defaultdict
+        import re
+
+        rows = self.db.execute(
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, "
+            "properties_json FROM items"
+        ).fetchall()
+
+        # Group by collection → rounded bbox
+        collections: dict[str, dict[tuple, dict]] = defaultdict(dict)
+
+        for r in rows:
+            col = r["collection"]
+            # Round bbox to 1 decimal for grouping
+            key = (
+                round(r["bbox_west"], 1),
+                round(r["bbox_south"], 1),
+                round(r["bbox_east"], 1),
+                round(r["bbox_north"], 1),
+            )
+
+            if key not in collections[col]:
+                collections[col][key] = {
+                    "bbox": list(key),
+                    "item_count": 0,
+                    "dates": set(),
+                    "bands": set(),
+                }
+
+            cell = collections[col][key]
+            cell["item_count"] += 1
+
+            # Extract date from properties
+            props = json.loads(r["properties_json"])
+            dt = props.get("datetime", "")[:10]
+            if dt and dt != "None":
+                cell["dates"].add(dt)
+
+            # Extract band from item ID or properties
+            item_id = r["id"]
+            band_names = props.get("earthgrid:band_names", [])
+            if band_names:
+                for b in band_names:
+                    cell["bands"].add(b)
+            else:
+                # Try to extract from item ID (e.g. _B04, _VV, _VH)
+                m = re.search(r'_(B\d{2}|B8A|VV|VH|HH|HV|SCL|TCI|AOT|WVP)(?:_|$)',
+                              item_id, re.IGNORECASE)
+                if m:
+                    cell["bands"].add(m.group(1).upper())
+
+        # Convert sets to sorted lists
+        result = {}
+        for col, cells in collections.items():
+            cell_list = []
+            for key, cell in cells.items():
+                sorted_dates = sorted(cell["dates"])
+                cell_list.append({
+                    "bbox": cell["bbox"],
+                    "item_count": cell["item_count"],
+                    "date_count": len(sorted_dates),
+                    "dates": sorted_dates,
+                    "bands": sorted(cell["bands"]),
+                    "first_date": sorted_dates[0] if sorted_dates else None,
+                    "last_date": sorted_dates[-1] if sorted_dates else None,
+                })
+            # Sort cells by item count descending
+            cell_list.sort(key=lambda c: c["item_count"], reverse=True)
+            result[col] = {"cells": cell_list}
+
+        return {"collections": result}
+
     def summary(self) -> dict:
         """Quick summary for federation sync."""
         collections = self.list_collections()

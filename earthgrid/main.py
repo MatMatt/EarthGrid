@@ -960,6 +960,12 @@ async def peers_json():
             return data
     raise HTTPException(404, "peers.json not found")
 
+@app.get("/coverage/spatial")
+def coverage_spatial():
+    """Spatial coverage with per-cell detail (dates, bands, item counts)."""
+    return catalog.spatial_coverage()
+
+
 @app.get("/stats/coverage")
 def stats_coverage():
     """Spatial coverage per sensor collection (network-wide if beacon)."""
