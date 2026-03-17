@@ -471,7 +471,7 @@ class OpenEOGateway:
             import tempfile, rasterio
             downloaded = failed = 0
             errors = []
-            client = CDSEClient(username=user_creds.get("username",""), password=user_creds.get("password",""))
+            client = CDSEClient(username=user_creds.get("username",""), password=user_creds.get("password",""), bandwidth_manager=getattr(self, "_bw", None))
             for info in items:
                 try:
                     with tempfile.TemporaryDirectory() as tmpdir:
@@ -535,7 +535,7 @@ class OpenEOGateway:
         start_date = t[0] if t else None
         end_date   = t[1] if len(t) > 1 else None
 
-        client = CDSEClient(username=all_users[0].get("username",""), password=all_users[0].get("password",""))
+        client = CDSEClient(username=all_users[0].get("username",""), password=all_users[0].get("password",""), bandwidth_manager=getattr(self, "_bw", None))
         try:
             results = await fetch_and_ingest(
                 cdse_client=client, chunk_store=self.chunk_store, catalog=self.catalog,

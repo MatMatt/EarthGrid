@@ -346,6 +346,7 @@ async def _ingest_item_locally(
     chunk_store,
     catalog,
     collection: str,
+    bandwidth_manager=None,
 ) -> list[dict]:
     """Download and ingest a single item locally."""
     from .ingest import ingest_cog
@@ -373,6 +374,8 @@ async def _ingest_item_locally(
             try:
                 resp = await client.get(cog_url)
                 resp.raise_for_status()
+                if bandwidth_manager:
+                    await bandwidth_manager.acquire(len(resp.content), nice_level=10, stream_id=f"e84-{item['id'][:12]}")
 
                 with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
                     tmp.write(resp.content)
@@ -413,6 +416,7 @@ async def fetch_and_ingest_element84(
     earthgrid_collection: str = "sentinel-2-l2a",
     distribute: bool = True,
     local_node_id: str = "",
+    bandwidth_manager=None,
 ) -> list[dict]:
     """Search Element84 and distribute ingestion across the grid.
 
@@ -534,7 +538,7 @@ async def fetch_and_ingest_element84(
                     date_str = item["date"][:10] if item["date"] else "?"
                     cc = item["cloud_cover"]
                     print(f"  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
-                    r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
+                    r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection, bandwidth_manager=bandwidth_manager)
                     # Track ingest in stats
                     for res in r:
                         if isinstance(res, dict) and res.get("item_id") and not res.get("skipped"):
@@ -583,7 +587,7 @@ async def fetch_and_ingest_element84(
                         print(f"  \u21b3 No alternatives — trying local ingest")
                         for item in node_items:
                             try:
-                                r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
+                                r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection, bandwidth_manager=bandwidth_manager)
                                 node_results.extend(r)
                             except Exception as e:
                                 node_results.append({"error": str(e), "item_id": item.get("id", "")})
@@ -633,7 +637,7 @@ async def fetch_and_ingest_element84(
             cc = item["cloud_cover"]
             print(f"\n  \U0001f4e6 {item['id']}  ({date_str}, {cc:.0f}% cloud)")
             try:
-                r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection)
+                r = await _ingest_item_locally(item, target_bands, chunk_store, catalog, earthgrid_collection, bandwidth_manager=bandwidth_manager)
                 # Track ingest in stats
                 for res in r:
                     if isinstance(res, dict) and res.get("item_id") and not res.get("skipped"):

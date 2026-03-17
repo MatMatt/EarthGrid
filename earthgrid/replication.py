@@ -53,8 +53,9 @@ def _ensure_wgs84_bbox(bbox: list, properties: dict) -> list:
 class Replicator:
     """Replicate catalog and chunks from a remote peer."""
 
-    def __init__(self, chunk_store: ChunkStore, catalog: Catalog):
+    def __init__(self, chunk_store: ChunkStore, catalog: Catalog, bandwidth_manager=None):
         self.chunk_store = chunk_store
+        self._bw = bandwidth_manager
         self.catalog = catalog
 
     async def sync_from_peer(
@@ -219,6 +220,8 @@ class Replicator:
                     )
                     if resp.status_code == 200:
                         data = resp.content
+                        if self._bw:
+                            await self._bw.acquire(len(data), nice_level=10, stream_id=f"repl-{sha[:8]}")
                         try:
                             stored_sha = self.chunk_store.put(data)
                         except StorageLimitError:

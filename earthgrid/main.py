@@ -140,6 +140,7 @@ bandwidth_mgr = BandwidthManager(
     max_mbps=settings.bw_limit_mbps,
     schedule=settings.bw_schedule_dict,
 )
+replicator._bw = bandwidth_mgr
 openeo_gw = OpenEOGateway(
     catalog=catalog,
     chunk_store=chunk_store,

@@ -63,7 +63,8 @@ S2_SKIP_FILES = {"PVI", "preview", "qi"}  # Preview Vegetation Index, preview im
 class CDSEClient:
     """Client for CDSE OData API."""
 
-    def __init__(self, username: str = "", password: str = ""):
+    def __init__(self, username: str = "", password: str = "", bandwidth_manager=None):
+        self._bw = bandwidth_manager
         self.username = username
         self.password = password
         self._token: str = ""
@@ -327,6 +328,8 @@ class CDSEClient:
                             resp.raise_for_status()
                             with open(out_path, "wb") as f:
                                 async for chunk in resp.aiter_bytes(chunk_size=65536):
+                                    if self._bw:
+                                        await self._bw.acquire(len(chunk), nice_level=10, stream_id=f"cdse-band")
                                     f.write(chunk)
                         downloaded_files.append(out_path)
                         size_mb = out_path.stat().st_size / 1024 / 1024
@@ -353,6 +356,8 @@ class CDSEClient:
                 resp.raise_for_status()
                 with open(zip_path, "wb") as f:
                     async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        if self._bw:
+                            await self._bw.acquire(len(chunk), nice_level=10, stream_id=f"cdse-zip")
                         f.write(chunk)
 
         # Extract relevant bands from ZIP
