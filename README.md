@@ -446,6 +446,21 @@ Processing results are **ephemeral** — computed on-the-fly and returned direct
 | `GET /stats/uptake` | Anonymous uptake report (requests, GB, km²) |
 | `GET /stats/uptake/csv` | Uptake CSV export for reporting |
 
+## Supported Data
+
+Currently: **Sentinel-2 L2A** and **Sentinel-1 GRD** (COG/GeoTIFF, regular grid).
+
+S1 GRD files use GCPs instead of a geotransform — EarthGrid automatically runs
+`gdalwarp` during ingest to produce a properly georeferenced raster.
+
+**Not supported yet:** Sentinel-3 (OLCI, SLSTR, SRAL) — these come as swath data with
+irregular geometry (netCDF). EarthGrid's chunk system assumes regular grids. Ingesting
+ungridded swath data would break spatial queries, prevent meaningful mosaicking, and
+produce overlapping chunks. S3 support would require a reprojection/gridding step
+(e.g. via openEO or SNAP) that EarthGrid doesn't have yet.
+
+## EarthGrid stores ONLY official data
+
 ### Protected endpoints (API key required)
 
 | Endpoint | Auth | Description |

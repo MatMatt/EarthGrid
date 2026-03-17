@@ -8,9 +8,12 @@ per tile.  This enables:
 """
 from __future__ import annotations
 import hashlib
+import logging
 import math
 import os
 import re
+import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +26,8 @@ except ImportError:
 
 from .chunk_store import ChunkStore
 from .catalog import Catalog, STACItem, STACCollection
+
+logger = logging.getLogger(__name__)
 
 # Default chunk size: 512x512 pixels per band
 DEFAULT_TILE_SIZE = 512
@@ -51,6 +56,46 @@ def _detect_band_names(file_path: Path, n_bands: int) -> list[str]:
     return [f"B{i+1:02d}" for i in range(n_bands)]
 
 
+def _needs_gdalwarp(file_path: Path) -> bool:
+    """Check if a GeoTIFF has GCPs instead of a proper geotransform.
+
+    S1 GRD files use GCPs for georeferencing — they need gdalwarp
+    to create a properly georeferenced raster before chunking.
+    """
+    with rasterio.open(file_path) as src:
+        has_gcps = len(src.gcps[0]) > 0
+        # Identity transform = no real geotransform (just pixel coords)
+        t = src.transform
+        identity = (t.a == 1.0 and t.e == -1.0 and t.b == 0.0
+                    and t.d == 0.0 and t.c == 0.0)
+        return has_gcps and identity
+
+
+def _gdalwarp_to_geotiff(file_path: Path) -> Path:
+    """Warp a GCP-based GeoTIFF to a properly georeferenced COG.
+
+    Returns path to the warped file (caller must clean up).
+    """
+    suffix = file_path.suffix or ".tiff"
+    warped = Path(tempfile.mktemp(suffix=f"_warped{suffix}"))
+    cmd = [
+        "gdalwarp",
+        "-t_srs", "EPSG:4326",
+        "-co", "COMPRESS=LZW",
+        "-co", "TILED=YES",
+        str(file_path),
+        str(warped),
+    ]
+    logger.info("Auto-warping GCP-based raster: %s", file_path.name)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        warped.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"gdalwarp failed: {result.stderr.strip()}"
+        )
+    return warped
+
+
 def ingest_cog(
     file_path: Path,
     chunk_store: ChunkStore,
@@ -64,6 +109,9 @@ def ingest_cog(
     Chunk layout: each tile is a (n_bands, tile_h, tile_w) numpy array.
     chunk_hashes = ["sha1", "sha2", ...] — one per spatial tile, row-major order.
 
+    Automatically detects GCP-based files (e.g. Sentinel-1 GRD) and
+    runs gdalwarp to create a properly georeferenced raster before chunking.
+
     Returns the created STAC item.
     """
     if not HAS_RASTERIO:
@@ -76,6 +124,33 @@ def ingest_cog(
     if not item_id:
         item_id = file_path.stem
 
+    # Auto-warp GCP-based rasters (e.g. S1 GRD)
+    warped_path = None
+    if _needs_gdalwarp(file_path):
+        warped_path = _gdalwarp_to_geotiff(file_path)
+        ingest_source = warped_path
+    else:
+        ingest_source = file_path
+
+    try:
+        return _do_ingest(ingest_source, chunk_store, catalog,
+                          collection_id, item_id, tile_size,
+                          original_name=file_path.name)
+    finally:
+        if warped_path:
+            warped_path.unlink(missing_ok=True)
+
+
+def _do_ingest(
+    file_path: Path,
+    chunk_store: ChunkStore,
+    catalog: Catalog,
+    collection_id: str,
+    item_id: str,
+    tile_size: int,
+    original_name: str | None = None,
+) -> STACItem:
+    """Core ingest logic — file must be properly georeferenced."""
     with rasterio.open(file_path) as src:
         bounds = src.bounds
         crs = str(src.crs)
@@ -159,7 +234,7 @@ def ingest_cog(
         "earthgrid:tile_size": tile_size,
         "earthgrid:tile_cols": n_cols,
         "earthgrid:tile_rows": n_rows,
-        "earthgrid:source_file": file_path.name,
+        "earthgrid:source_file": original_name or file_path.name,
         "earthgrid:chunk_format": "spatial-tile",
     }
 

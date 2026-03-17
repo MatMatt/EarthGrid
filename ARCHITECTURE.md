@@ -115,6 +115,19 @@ Priority-based bandwidth allocation, inspired by Unix `nice`.
 - Time-based scheduling: full bandwidth off-peak, throttled during peak hours
 - Per-node bandwidth caps (respect upstream limits)
 
+### 6. Supported Data Formats
+
+**Supported:**
+- **Sentinel-2 L2A** — COG/GeoTIFF, regular grid, direct ingest
+- **Sentinel-1 GRD** — GeoTIFF with GCPs (SAR). Auto-warped via `gdalwarp` during ingest
+  to produce a properly georeferenced raster (EPSG:4326, LZW compressed, tiled)
+
+**Not supported (yet):**
+- **Sentinel-3** (OLCI, SLSTR, SRAL) — swath-based netCDF with irregular geometry.
+  Incompatible with EarthGrid's regular-grid chunk system. Would break spatial queries
+  (BBOX), prevent mosaicking, and produce overlapping chunks. Requires a
+  reprojection/gridding preprocessing step that EarthGrid doesn't currently have.
+
 ## Data Flow
 
 ```
