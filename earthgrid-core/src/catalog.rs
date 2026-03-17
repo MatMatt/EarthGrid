@@ -265,6 +265,7 @@ impl Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     fn now_str() -> String {
         Utc::now().to_rfc3339()

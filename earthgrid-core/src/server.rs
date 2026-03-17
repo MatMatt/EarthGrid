@@ -1,6 +1,7 @@
 //! Axum HTTP server for EarthGrid Core.
 //!
-//! Exposes a STAC-compatible REST API backed by ChunkStore, Catalog, Auth, and Audit.
+//! Phase 1: Core STAC/chunk API
+//! Phase 2: Peers + Federation (sync, federated search)
 
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use axum::{
     routing::{get, post},
     Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 
@@ -21,6 +22,7 @@ use crate::{
     auth::AuthConfig,
     catalog::{Catalog, StacItem},
     chunk_store::ChunkStore,
+    peers::{NodeInfo, PeerRegistry},
 };
 
 // ---------------------------------------------------------------------------
@@ -33,17 +35,18 @@ pub struct AppState {
     pub catalog: Arc<Mutex<Catalog>>,
     pub audit: Arc<AuditLog>,
     pub auth: AuthConfig,
+    pub peers: Arc<Mutex<PeerRegistry>>,
     pub version: String,
+    pub node_id: String,
+    pub node_name: String,
 }
 
 // ---------------------------------------------------------------------------
-// Helper: extract X-API-Key
+// Helpers
 // ---------------------------------------------------------------------------
 
 fn api_key(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
+    headers.get("x-api-key").and_then(|v| v.to_str().ok())
 }
 
 fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
@@ -51,13 +54,15 @@ fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 }
 
 // ---------------------------------------------------------------------------
-// Request/Response types
+// Query params
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
     pub collection: Option<String>,
-    pub bbox: Option<String>,   // "west,south,east,north"
+    pub collections: Option<String>,  // comma-separated
+    pub bbox: Option<String>,         // "west,south,east,north"
+    pub datetime: Option<String>,
     pub limit: Option<usize>,
 }
 
@@ -66,33 +71,42 @@ pub struct LimitQuery {
     pub limit: Option<usize>,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct IngestRequest {
-    pub item: StacItem,
-    pub chunks: std::collections::HashMap<String, String>, // filename → base64 data
+#[derive(Deserialize)]
+pub struct RegisterPeerQuery {
+    pub url: String,
+    pub node_id: Option<String>,
+    pub node_name: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// Core handlers
 // ---------------------------------------------------------------------------
 
-// GET /health
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
 }
 
-// GET /node-info
 async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     let store = state.store.lock().await;
     let catalog = state.catalog.lock().await;
     let stats = store.stats().clone();
     let item_count = catalog.item_count(None).unwrap_or(0);
+    let collections: Vec<String> = catalog
+        .list_collections()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
     Json(serde_json::json!({
         "version": state.version,
+        "node_id": state.node_id,
+        "node_name": state.node_name,
         "chunks": store.chunk_count(),
         "storage_bytes": store.total_bytes(),
         "storage_gb": store.total_bytes() as f64 / 1_073_741_824.0,
         "items": item_count,
+        "collections": collections,
+        "item_count": item_count,
         "auth_enabled": state.auth.is_enabled(),
         "chunks_served": stats.chunks_served,
         "bytes_served": stats.bytes_served,
@@ -100,7 +114,6 @@ async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-// GET /stats
 async fn stats(State(state): State<AppState>) -> Json<serde_json::Value> {
     let store = state.store.lock().await;
     let s = store.stats().clone();
@@ -116,23 +129,21 @@ async fn stats(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-// GET /stac/collections
 async fn list_collections(State(state): State<AppState>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     match catalog.list_collections() {
-        Ok(cols) => (StatusCode::OK, Json(serde_json::json!({
-            "collections": cols,
-            "numberMatched": cols.len(),
-        }))).into_response(),
+        Ok(cols) => {
+            let count = cols.len();
+            (StatusCode::OK, Json(serde_json::json!({
+                "collections": cols,
+                "numberMatched": count,
+            }))).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
 }
 
-// GET /stac/collections/:id
-async fn get_collection(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_collection(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     match catalog.get_collection(&id) {
         Ok(Some(col)) => (StatusCode::OK, Json(serde_json::to_value(col).unwrap())).into_response(),
@@ -141,7 +152,6 @@ async fn get_collection(
     }
 }
 
-// GET /stac/collections/:id/items
 async fn collection_items(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -150,41 +160,46 @@ async fn collection_items(
     let catalog = state.catalog.lock().await;
     let limit = q.limit.unwrap_or(50).min(1000);
     match catalog.search(Some(&id), None, limit) {
-        Ok(items) => (StatusCode::OK, Json(serde_json::json!({
-            "type": "FeatureCollection",
-            "features": items,
-            "numberMatched": items.len(),
-        }))).into_response(),
+        Ok(items) => {
+            let count = items.len();
+            (StatusCode::OK, Json(serde_json::json!({
+                "type": "FeatureCollection",
+                "features": items,
+                "numberMatched": count,
+            }))).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
 }
 
-// GET /stac/search
-async fn stac_search(
-    State(state): State<AppState>,
-    Query(q): Query<SearchQuery>,
-) -> impl IntoResponse {
+async fn stac_search(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     let limit = q.limit.unwrap_or(50).min(1000);
+
+    // Support both `collection` and `collections` params
+    let collection = q.collection.as_deref().or(
+        q.collections.as_deref().and_then(|s| s.split(',').next())
+    );
+
     let bbox = q.bbox.as_deref().and_then(|s| {
         let parts: Vec<f64> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
         if parts.len() == 4 { Some([parts[0], parts[1], parts[2], parts[3]]) } else { None }
     });
-    match catalog.search(q.collection.as_deref(), bbox, limit) {
-        Ok(items) => (StatusCode::OK, Json(serde_json::json!({
-            "type": "FeatureCollection",
-            "features": items,
-            "numberMatched": items.len(),
-        }))).into_response(),
+
+    match catalog.search(collection, bbox, limit) {
+        Ok(items) => {
+            let count = items.len();
+            (StatusCode::OK, Json(serde_json::json!({
+                "type": "FeatureCollection",
+                "features": items,
+                "numberMatched": count,
+            }))).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
 }
 
-// GET /chunks/:sha
-async fn get_chunk(
-    State(state): State<AppState>,
-    Path(sha): Path<String>,
-) -> impl IntoResponse {
+async fn get_chunk(State(state): State<AppState>, Path(sha): Path<String>) -> impl IntoResponse {
     let mut store = state.store.lock().await;
     match store.get(&sha) {
         Ok(Some(data)) => (StatusCode::OK, data).into_response(),
@@ -193,19 +208,15 @@ async fn get_chunk(
     }
 }
 
-// GET /chunks
-async fn list_chunks(
-    State(state): State<AppState>,
-    Query(q): Query<LimitQuery>,
-) -> impl IntoResponse {
+async fn list_chunks(State(state): State<AppState>, Query(q): Query<LimitQuery>) -> impl IntoResponse {
     let store = state.store.lock().await;
     let limit = q.limit.unwrap_or(100).min(10000);
     let mut chunks = store.list_chunks();
     chunks.truncate(limit);
-    Json(serde_json::json!({"chunks": chunks, "count": chunks.len()}))
+    let count = chunks.len();
+    Json(serde_json::json!({"chunks": chunks, "count": count}))
 }
 
-// POST /ingest  (requires write auth)
 async fn ingest(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -217,7 +228,9 @@ async fn ingest(
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
-    let item: StacItem = match serde_json::from_value(payload.get("item").cloned().unwrap_or_default()) {
+    let item: StacItem = match serde_json::from_value(
+        payload.get("item").cloned().unwrap_or_default()
+    ) {
         Ok(i) => i,
         Err(e) => return err(StatusCode::BAD_REQUEST, &format!("Invalid item: {}", e)).into_response(),
     };
@@ -228,17 +241,13 @@ async fn ingest(
             let mut store = state.store.lock().await;
             for (_name, data_val) in chunks_map {
                 if let Some(b64) = data_val.as_str() {
-                    use std::io::Read;
-                    let decoded: Vec<u8> = {
-                        let mut buf = Vec::new();
-                        let mut dec = base64_decode_reader(b64);
-                        if dec.read_to_end(&mut buf).is_err() {
-                            return err(StatusCode::BAD_REQUEST, "Invalid base64 in chunks").into_response();
+                    match base64_decode(b64) {
+                        Ok(decoded) => {
+                            if let Err(e) = store.put(&decoded) {
+                                return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+                            }
                         }
-                        buf
-                    };
-                    if let Err(e) = store.put(&decoded) {
-                        return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+                        Err(_) => return err(StatusCode::BAD_REQUEST, "Invalid base64 in chunks").into_response(),
                     }
                 }
             }
@@ -259,35 +268,7 @@ async fn ingest(
     }
 }
 
-// Simple base64 decoder (no external dep — use standard decode)
-fn base64_decode_reader(s: &str) -> std::io::Cursor<Vec<u8>> {
-    // Manual base64 decode
-    let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = Vec::new();
-    let clean: String = s.chars().filter(|c| *c != '=' && *c != '\n' && *c != '\r').collect();
-    let bytes: Vec<u8> = clean
-        .chars()
-        .filter_map(|c| alphabet.find(c).map(|i| i as u8))
-        .collect();
-    let mut i = 0;
-    while i + 3 < bytes.len() {
-        let b0 = bytes[i];
-        let b1 = bytes[i + 1];
-        let b2 = bytes[i + 2];
-        let b3 = bytes[i + 3];
-        output.push((b0 << 2) | (b1 >> 4));
-        output.push(((b1 & 0x0f) << 4) | (b2 >> 2));
-        output.push(((b2 & 0x03) << 6) | b3);
-        i += 4;
-    }
-    std::io::Cursor::new(output)
-}
-
-// GET /verify/:item_id
-async fn verify_item(
-    State(state): State<AppState>,
-    Path(item_id): Path<String>,
-) -> impl IntoResponse {
+async fn verify_item(State(state): State<AppState>, Path(item_id): Path<String>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     let item = match catalog.get_item(&item_id) {
         Ok(Some(i)) => i,
@@ -317,17 +298,12 @@ async fn verify_item(
     (
         if ok { StatusCode::OK } else { StatusCode::UNPROCESSABLE_ENTITY },
         Json(serde_json::json!({
-            "item_id": item_id,
-            "total": total,
-            "valid": valid,
-            "missing": missing,
-            "corrupted": corrupted,
-            "ok": ok,
+            "item_id": item_id, "total": total,
+            "valid": valid, "missing": missing, "corrupted": corrupted, "ok": ok,
         })),
     ).into_response()
 }
 
-// GET /audit  (requires admin auth)
 async fn audit_log(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -339,7 +315,244 @@ async fn audit_log(
     }
     let limit = q.limit.unwrap_or(50).min(500);
     let entries = state.audit.recent(limit);
-    Json(serde_json::json!({"entries": entries, "count": entries.len()})).into_response()
+    let count = entries.len();
+    Json(serde_json::json!({"entries": entries, "count": count})).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Peers + Federation handlers
+// ---------------------------------------------------------------------------
+
+/// GET /peers — list all known peers
+async fn list_peers(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let registry = state.peers.lock().await;
+    let peers: Vec<serde_json::Value> = registry
+        .list()
+        .into_iter()
+        .map(|p| serde_json::json!({
+            "url": p.url,
+            "node_id": p.node_id,
+            "node_name": p.node_name,
+            "alive": p.alive(),
+            "last_seen": p.last_seen,
+            "collections": p.collections,
+            "item_count": p.item_count,
+        }))
+        .collect();
+    let count = peers.len();
+    Json(serde_json::json!({"peers": peers, "count": count}))
+}
+
+/// POST /peers?url=...&node_id=...&node_name=... — register a peer
+async fn register_peer(
+    State(state): State<AppState>,
+    Query(q): Query<RegisterPeerQuery>,
+) -> impl IntoResponse {
+    if q.url.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "url is required").into_response();
+    }
+    let mut registry = state.peers.lock().await;
+    let peer = registry.add(
+        &q.url,
+        q.node_id.as_deref().unwrap_or(""),
+        q.node_name.as_deref().unwrap_or(""),
+    );
+    (StatusCode::CREATED, Json(serde_json::json!({
+        "status": "registered",
+        "url": peer.url,
+        "node_id": peer.node_id,
+    }))).into_response()
+}
+
+/// POST /federation/sync — sync with all known peers (fetch their node-info)
+async fn federation_sync(State(state): State<AppState>) -> impl IntoResponse {
+    let peer_urls: Vec<String> = {
+        let registry = state.peers.lock().await;
+        registry.list().into_iter().map(|p| p.url.clone()).collect()
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    let mut synced = 0usize;
+    let mut failed = 0usize;
+    let mut results = vec![];
+
+    for url in &peer_urls {
+        // Try /node-info first, then fall back to /
+        let info_url = format!("{}/node-info", url);
+        match client.get(&info_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(info) = resp.json::<NodeInfo>().await {
+                    let mut registry = state.peers.lock().await;
+                    registry.update_from_info(url, &info);
+                    results.push(serde_json::json!({
+                        "url": url,
+                        "node_id": info.node_id,
+                        "node_name": info.node_name,
+                        "status": "synced",
+                    }));
+                    synced += 1;
+                } else {
+                    results.push(serde_json::json!({"url": url, "status": "parse_error"}));
+                    failed += 1;
+                }
+            }
+            _ => {
+                results.push(serde_json::json!({"url": url, "status": "unreachable"}));
+                failed += 1;
+            }
+        }
+    }
+
+    Json(serde_json::json!({
+        "synced": synced,
+        "failed": failed,
+        "peers": results,
+    }))
+}
+
+/// GET /federation/search — federated STAC search across all alive peers + local
+async fn federation_search(
+    State(state): State<AppState>,
+    Query(q): Query<SearchQuery>,
+) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(100).min(1000);
+
+    // 1. Local search
+    let local_items = {
+        let catalog = state.catalog.lock().await;
+        let collection = q.collection.as_deref().or(
+            q.collections.as_deref().and_then(|s| s.split(',').next())
+        );
+        let bbox = q.bbox.as_deref().and_then(|s| {
+            let parts: Vec<f64> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+            if parts.len() == 4 { Some([parts[0], parts[1], parts[2], parts[3]]) } else { None }
+        });
+        catalog.search(collection, bbox, limit).unwrap_or_default()
+    };
+
+    // 2. Build params for peer queries
+    let peer_urls: Vec<String> = {
+        let registry = state.peers.lock().await;
+        registry.list().into_iter()
+            .filter(|p| p.alive())
+            .map(|p| p.url.clone())
+            .collect()
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+
+    let mut all_items: Vec<serde_json::Value> = local_items
+        .into_iter()
+        .map(|i| {
+            let mut v = serde_json::to_value(i).unwrap_or_default();
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("earthgrid:source_node".to_string(), serde_json::json!("local"));
+            }
+            v
+        })
+        .collect();
+
+    // Fan out to peers concurrently
+    let mut handles = vec![];
+    for url in peer_urls {
+        let client = client.clone();
+        let q_bbox = q.bbox.clone();
+        let q_col = q.collection.clone().or(q.collections.clone());
+        let q_dt = q.datetime.clone();
+        handles.push(tokio::spawn(async move {
+            let mut params = vec![("limit", limit.to_string())];
+            if let Some(c) = &q_col { params.push(("collections", c.clone())); }
+            if let Some(b) = &q_bbox { params.push(("bbox", b.clone())); }
+            if let Some(d) = &q_dt { params.push(("datetime", d.clone())); }
+
+            let resp = client
+                .get(format!("{}/stac/search", url))
+                .query(&params)
+                .send()
+                .await;
+
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(data) = r.json::<serde_json::Value>().await {
+                        let features = data.get("features")
+                            .and_then(|f| f.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        // Tag each with source node
+                        features.into_iter().map(|mut f| {
+                            if let Some(obj) = f.as_object_mut() {
+                                obj.insert("earthgrid:source_node".to_string(), serde_json::json!(url));
+                            }
+                            f
+                        }).collect::<Vec<_>>()
+                    } else { vec![] }
+                }
+                _ => vec![],
+            }
+        }));
+    }
+
+    for handle in handles {
+        if let Ok(items) = handle.await {
+            all_items.extend(items);
+        }
+    }
+
+    // Deduplicate by item id
+    let mut seen = std::collections::HashSet::new();
+    let deduped: Vec<_> = all_items.into_iter()
+        .filter(|item| {
+            let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if id.is_empty() { return true; }
+            seen.insert(id)
+        })
+        .take(limit)
+        .collect();
+
+    let count = deduped.len();
+    Json(serde_json::json!({
+        "type": "FeatureCollection",
+        "numberMatched": count,
+        "numberReturned": count,
+        "features": deduped,
+        "context": {"source": "federation"},
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Base64 decode helper
+// ---------------------------------------------------------------------------
+
+fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut table = [255u8; 256];
+    for (i, &c) in alphabet.iter().enumerate() {
+        table[c as usize] = i as u8;
+    }
+    let clean: Vec<u8> = s.bytes()
+        .filter(|&c| c != b'=' && c != b'\n' && c != b'\r' && c != b' ')
+        .collect();
+    let mapped: Vec<u8> = clean.iter()
+        .map(|&c| table[c as usize])
+        .collect();
+    if mapped.iter().any(|&v| v == 255) { return Err(()); }
+
+    let mut out = Vec::with_capacity((mapped.len() * 3) / 4);
+    let mut i = 0;
+    while i + 3 < mapped.len() {
+        out.push((mapped[i] << 2) | (mapped[i+1] >> 4));
+        out.push(((mapped[i+1] & 0x0f) << 4) | (mapped[i+2] >> 2));
+        out.push(((mapped[i+2] & 0x03) << 6) | mapped[i+3]);
+        i += 4;
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -348,18 +561,30 @@ async fn audit_log(
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        // Core
         .route("/health", get(health))
         .route("/node-info", get(node_info))
+        .route("/", get(node_info))   // alias for peer sync compatibility
         .route("/stats", get(stats))
+        // STAC
         .route("/stac/collections", get(list_collections))
         .route("/stac/collections/{id}", get(get_collection))
         .route("/stac/collections/{id}/items", get(collection_items))
         .route("/stac/search", get(stac_search))
+        // Chunks
         .route("/chunks", get(list_chunks))
         .route("/chunks/{sha}", get(get_chunk))
+        // Write
         .route("/ingest", post(ingest))
+        // Integrity
         .route("/verify/{item_id}", get(verify_item))
+        // Admin
         .route("/audit", get(audit_log))
+        // Federation (Phase 2)
+        .route("/peers", get(list_peers))
+        .route("/peers", post(register_peer))
+        .route("/federation/sync", post(federation_sync))
+        .route("/federation/search", get(federation_search))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -369,6 +594,8 @@ pub fn router(state: AppState) -> Router {
 // ---------------------------------------------------------------------------
 
 pub async fn serve(data_dir: std::path::PathBuf, host: String, port: u16) -> anyhow::Result<()> {
+    use std::env;
+
     let store_path = data_dir.join("store");
     let catalog_path = data_dir.join("catalog.db");
     let audit_path = data_dir.join("audit.jsonl");
@@ -378,18 +605,41 @@ pub async fn serve(data_dir: std::path::PathBuf, host: String, port: u16) -> any
     let audit = AuditLog::new(&audit_path);
     let auth = AuthConfig::from_env();
 
+    // Node identity from env
+    let node_id = env::var("EARTHGRID_NODE_ID").unwrap_or_else(|_| {
+        uuid::Uuid::new_v4().to_string()
+    });
+    let node_name = env::var("EARTHGRID_NODE_NAME")
+        .unwrap_or_else(|_| "earthgrid-node".to_string());
+
+    // Initial peers from env: comma-separated URLs
+    let mut peer_registry = PeerRegistry::new();
+    if let Ok(peers_env) = env::var("EARTHGRID_PEERS") {
+        for url in peers_env.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            peer_registry.add(url, "", "");
+        }
+    }
+
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         catalog: Arc::new(Mutex::new(catalog)),
         audit: Arc::new(audit),
         auth,
+        peers: Arc::new(Mutex::new(peer_registry)),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        node_id,
+        node_name: node_name.clone(),
     };
 
     let app = router(state);
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("🌍 EarthGrid Core v{} listening on {}", env!("CARGO_PKG_VERSION"), addr);
+    println!(
+        "🌍 EarthGrid Core v{} ({}) listening on {}",
+        env!("CARGO_PKG_VERSION"),
+        node_name,
+        addr
+    );
     axum::serve(listener, app).await?;
     Ok(())
 }
