@@ -322,7 +322,10 @@ input::placeholder { color: var(--muted); }
   <!-- ACCOUNTS TAB -->
   <div class="tab-panel" id="panel-accounts">
     <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Add User</div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="card-title">Add User</div>
+        <button class="btn btn-sm" onclick="promptAdminKey()" style="font-size:12px;padding:4px 10px">🔑 Set Admin Key</button>
+      </div>
       <div class="form-row">
         <div class="form-group">
           <label>Username</label>
@@ -424,7 +427,21 @@ function fmt_bbox(b) {
   return b.map(v => v.toFixed(2)).join(', ');
 }
 
+// Admin key stored in sessionStorage (set via UI prompt)
+function getAdminKey() { return sessionStorage.getItem('eg_admin_key') || ''; }
+function setAdminKey(k) { sessionStorage.setItem('eg_admin_key', k); }
+
+function promptAdminKey() {
+  var k = prompt('Enter Admin API Key:', getAdminKey());
+  if (k !== null) { setAdminKey(k); loadAccounts(); }
+}
+
 async function apiFetch(path, opts={}) {
+  const key = getAdminKey();
+  if (key) {
+    opts.headers = opts.headers || {};
+    if (!opts.headers['X-API-Key']) opts.headers['X-API-Key'] = key;
+  }
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
   return r.json();
