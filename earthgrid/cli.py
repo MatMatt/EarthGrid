@@ -878,7 +878,7 @@ def _cmd_fetch(args):
                 cloud_cover=args.cloud,
                 bands=band_list,
                 limit=args.limit,
-                earthgrid_collection=None,  # auto-resolve from CDSE collection+product_type
+                earthgrid_collection=args.collection,
                 distribute=distribute,
             ))
         except KeyboardInterrupt:
@@ -898,7 +898,7 @@ def _cmd_fetch(args):
                 bands=band_list,
                 product_type=args.product_type,
                 limit=args.limit,
-                earthgrid_collection=None,  # auto-resolve from CDSE collection+product_type
+                earthgrid_collection=args.collection,
             ))
         except KeyboardInterrupt:
             print("\n\n⚠️  Interrupted — partial results saved. Already ingested data is safe.")
