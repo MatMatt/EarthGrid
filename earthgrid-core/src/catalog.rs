@@ -2,11 +2,10 @@
 //!
 //! Stores STAC Items and Collections with chunk hash references.
 
-use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{EarthGridError, Result};
+use crate::error::Result;
 
 /// A STAC Collection.
 #[derive(Debug, Clone, Serialize, Deserialize)]

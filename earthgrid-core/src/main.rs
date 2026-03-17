@@ -1,4 +1,4 @@
-//! EarthGrid Core CLI.
+//! EarthGrid Core CLI + HTTP Server.
 
 use std::path::PathBuf;
 
@@ -39,6 +39,17 @@ enum Commands {
         #[arg(long, default_value = "50")]
         limit: usize,
     },
+
+    /// Start the HTTP server
+    Serve {
+        /// Host to bind
+        #[arg(long, default_value = "0.0.0.0")]
+        host: String,
+
+        /// Port to listen on
+        #[arg(long, default_value = "8400")]
+        port: u16,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -46,12 +57,11 @@ fn main() -> anyhow::Result<()> {
     let store_path = cli.data_dir.join("store");
     let catalog_path = cli.data_dir.join("catalog.db");
 
-    let store = ChunkStore::new(&store_path, 0.0)?;
-    let catalog = Catalog::new(&catalog_path)?;
-    let auth = AuthConfig::from_env();
-
     match cli.command {
         Commands::Info => {
+            let store = ChunkStore::new(&store_path, 0.0)?;
+            let catalog = Catalog::new(&catalog_path)?;
+            let auth = AuthConfig::from_env();
             let stats = store.stats();
             println!("🌍 EarthGrid Core v{}", env!("CARGO_PKG_VERSION"));
             println!("   Store:    {}", store_path.display());
@@ -67,6 +77,8 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Verify { item_id } => {
+            let store = ChunkStore::new(&store_path, 0.0)?;
+            let catalog = Catalog::new(&catalog_path)?;
             let item = catalog
                 .get_item(&item_id)?
                 .ok_or_else(|| anyhow::anyhow!("Item not found: {}", item_id))?;
@@ -103,6 +115,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::List { collection, limit } => {
+            let catalog = Catalog::new(&catalog_path)?;
             let items = catalog.search(collection.as_deref(), None, limit)?;
             if items.is_empty() {
                 println!("No items found.");
@@ -118,6 +131,11 @@ fn main() -> anyhow::Result<()> {
                 }
                 println!("\n{} items", items.len());
             }
+        }
+
+        Commands::Serve { host, port } => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(earthgrid_core::server::serve(cli.data_dir, host, port))?;
         }
     }
 

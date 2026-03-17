@@ -6,9 +6,11 @@
 //! - [`auth`] — API key authentication
 //! - [`audit`] — Mutation audit log
 //! - [`error`] — Error types
+//! - [`server`] — Axum HTTP server
 
 pub mod audit;
 pub mod auth;
 pub mod catalog;
 pub mod chunk_store;
 pub mod error;
+pub mod server;
