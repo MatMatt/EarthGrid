@@ -571,13 +571,11 @@ class OpenEOGateway:
         Returns the band name (e.g. "B04") or None if not detectable.
         """
         import re
-        # Match _(B\w+)_?(\d+m)?$ or _TCI at end of id
-        m = re.search(r"_(B\w+?)(?:_\d+m)?$", item_id)
+        # Match band names at end of item ID:
+        #   _B02, _B08, _B8A, _SCL, _TCI, _AOT, _WVP, _VV, _VH, _HH, _HV
+        m = re.search(r"_(B\d{2}|B8A|SCL|TCI|AOT|WVP|VV|VH|HH|HV)(?:_\d+m)?$", item_id, re.IGNORECASE)
         if m:
-            return m.group(1)
-        m = re.search(r"_(TCI)(?:_\d+m)?$", item_id)
-        if m:
-            return m.group(1)
+            return m.group(1).upper()
         return None
 
 
