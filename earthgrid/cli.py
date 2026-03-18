@@ -1359,13 +1359,9 @@ def _interactive_setup(args):
     mode_input = input("Choose [1]: ").strip()
     also_beacon = mode_input != "2"
 
-    # Beacon URL (only if beacon mode)
-    beacon_url = ""
-    if also_beacon:
-        from . import get_default_peer; DEFAULT_BEACON = get_default_peer()
-        beacon_url = input(f"Beacon URL to join? [{DEFAULT_BEACON}]: ").strip()
-        if not beacon_url:
-            beacon_url = DEFAULT_BEACON
+    # Beacon URL — auto-discover via bootstrap peers
+    from . import get_default_peer
+    beacon_url = get_default_peer()
 
     # Ingest capability — always enabled, install rasterio if missing
     try:
