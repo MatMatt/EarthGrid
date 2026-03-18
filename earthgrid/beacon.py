@@ -933,6 +933,100 @@ def seed_nodes():
     }
 
 
+
+
+# ---------------------------------------------------------------------------
+# openEO Job Proxy — routes openEO requests to nodes that have the data
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+
+def _extract_collections_from_graph(process_graph: dict) -> list:
+    collections = []
+    def _walk(obj):
+        if isinstance(obj, dict):
+            if obj.get("process_id") == "load_collection":
+                cid = obj.get("arguments", {}).get("id")
+                if cid:
+                    collections.append(cid)
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+    _walk(process_graph)
+    return list(set(collections))
+
+
+def _pick_best_node(nodes: list):
+    if not nodes:
+        return None
+    return max(nodes, key=lambda n: n.item_count)
+
+
+async def _proxy_openeo(method: str, path: str, body, node_url: str, timeout: int = 300):
+    import httpx
+    from fastapi.responses import Response as _Resp
+    target = node_url.rstrip("/") + path
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if method == "POST":
+            r = await client.post(target, json=body)
+        else:
+            r = await client.request(method, target, json=body)
+    return _Resp(
+        content=r.content,
+        status_code=r.status_code,
+        media_type=r.headers.get("content-type", "application/json"),
+    )
+
+
+async def beacon_openeo_result(request: Request):
+    from fastapi import HTTPException
+    from earthgrid.config import settings as _s
+    if not _s.also_beacon:
+        raise HTTPException(404, "Not a beacon node")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+    pg = body.get("process", {}).get("process_graph") or body.get("process_graph", {})
+    if not pg:
+        raise HTTPException(400, "Missing process_graph")
+    collections = _extract_collections_from_graph(pg)
+    if not collections:
+        raise HTTPException(400, "No load_collection found in process graph")
+    collection = collections[0]
+    nodes = registry.find_nodes_for_collection(collection)
+    own_id = getattr(_s, "node_id", None)
+    candidates = [n for n in nodes if n.node_id != own_id] or nodes
+    node = _pick_best_node(candidates)
+    if not node:
+        raise HTTPException(503, f"No node available for collection '{collection}'")
+    return await _proxy_openeo("POST", "/result", body, node.url)
+
+
+async def beacon_openeo_jobs(request: Request):
+    from fastapi import HTTPException
+    from earthgrid.config import settings as _s
+    if not _s.also_beacon:
+        raise HTTPException(404, "Not a beacon node")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+    pg = body.get("process", {}).get("process_graph") or body.get("process_graph", {})
+    collections = _extract_collections_from_graph(pg) if pg else []
+    collection = collections[0] if collections else None
+    nodes = registry.find_nodes_for_collection(collection) if collection else registry.get_alive_nodes()
+    own_id = getattr(_s, "node_id", None)
+    candidates = [n for n in nodes if n.node_id != own_id] or nodes
+    node = _pick_best_node(candidates)
+    if not node:
+        raise HTTPException(503, f"No node available")
+    return await _proxy_openeo("POST", "/jobs", body, node.url)
+
+
 # --- APIRouter for mounting into a Node app (--also-beacon) ---
 
 beacon_router = APIRouter(tags=["beacon"])
@@ -949,3 +1043,5 @@ beacon_router.add_api_route("/seed/nodes", seed_nodes, methods=["GET"])
 beacon_router.add_api_route("/replication/health", replication_health, methods=["GET"])
 beacon_router.add_api_route("/replication/tasks/{node_id}", replication_tasks, methods=["GET"])
 beacon_router.add_api_route("/replication/report", report_items, methods=["POST"])
+beacon_router.add_api_route("/result", beacon_openeo_result, methods=["POST"])
+beacon_router.add_api_route("/jobs", beacon_openeo_jobs, methods=["POST"])
