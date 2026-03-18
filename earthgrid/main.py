@@ -318,6 +318,110 @@ def admin_set_node_name(name: str = Query(..., min_length=1, max_length=64), req
     return {"status": "renamed", "node_name": name.strip()}
 
 
+@app.get("/admin/activity", dependencies=[Depends(_require_admin_auth)])
+def admin_activity(
+    request: Request,
+    days: int = Query(7, ge=1, le=90),
+):
+    """Node activity overview: ongoing + past fetch/openEO jobs and downloads.
+    No personal details (IPs) exposed. Localhost/admin only."""
+    client_ip = request.client.host if request.client else ""
+    if client_ip not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(403, "Activity dashboard is only accessible from localhost")
+
+    import sqlite3 as _sql
+    cutoff = time.time() - (days * 86400)
+
+    # 1. Ongoing fetch jobs
+    ongoing_fetches = []
+    for jid, info in _fetch_jobs.items():
+        ongoing_fetches.append({
+            "job_id": jid,
+            "type": "fetch",
+            "status": info.get("status", "unknown"),
+            "ingested": info.get("ingested", 0),
+            "errors": info.get("errors", 0),
+            "error_msg": info.get("error", ""),
+        })
+
+    # 2. OpenEO jobs (if gateway active)
+    openeo_jobs = []
+    try:
+        from earthgrid.openeo_gateway import _gateway_instance
+        gw = _gateway_instance
+        if gw:
+            for jid, jr in gw._jobs.items():
+                if jid.endswith("_data"):
+                    continue
+                openeo_jobs.append({
+                    "job_id": jr.job_id,
+                    "type": "openeo",
+                    "status": jr.status,
+                    "progress": jr.progress,
+                    "title": getattr(jr, "title", ""),
+                })
+    except Exception:
+        pass
+
+    # 3. Recent downloads from stats DB (no IPs!)
+    downloads = []
+    try:
+        with _sql.connect(stats_engine.db_path) as conn:
+            conn.row_factory = _sql.Row
+            rows = conn.execute(
+                """SELECT timestamp, origin, provider, collection_id, item_id,
+                   bytes_transferred
+                   FROM download_log
+                   WHERE timestamp > ?
+                   ORDER BY timestamp DESC
+                   LIMIT 200""",
+                (cutoff,)
+            ).fetchall()
+            for r in rows:
+                downloads.append({
+                    "timestamp": r["timestamp"],
+                    "origin": r["origin"],
+                    "provider": r["provider"] or "",
+                    "collection": r["collection_id"] or "",
+                    "item_id": r["item_id"] or "",
+                    "bytes": r["bytes_transferred"] or 0,
+                })
+    except Exception:
+        pass
+
+    # 4. Download summary by day
+    daily_summary = []
+    try:
+        with _sql.connect(stats_engine.db_path) as conn:
+            conn.row_factory = _sql.Row
+            rows = conn.execute(
+                """SELECT date(timestamp, 'unixepoch') as day, origin,
+                   COUNT(*) as count,
+                   SUM(bytes_transferred) as bytes
+                   FROM download_log WHERE timestamp > ?
+                   GROUP BY day, origin
+                   ORDER BY day DESC""",
+                (cutoff,)
+            ).fetchall()
+            for r in rows:
+                daily_summary.append({
+                    "day": r["day"],
+                    "origin": r["origin"],
+                    "count": r["count"],
+                    "bytes": r["bytes"] or 0,
+                })
+    except Exception:
+        pass
+
+    return {
+        "period_days": days,
+        "ongoing_fetches": ongoing_fetches,
+        "openeo_jobs": openeo_jobs,
+        "recent_downloads": downloads,
+        "daily_summary": daily_summary,
+    }
+
+
 # --- Federation User Sync ---
 @app.get("/federation/users")
 def federation_export_users(

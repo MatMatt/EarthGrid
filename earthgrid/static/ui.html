@@ -209,6 +209,7 @@ code:hover::after { opacity: 0.8; }
   <div class="tab" onclick="switchTab('data')">🗂 Data</div>
   <div class="tab" onclick="switchTab('network')">🌐 Network</div>
   <div class="tab" onclick="switchTab('accounts')">👤 Accounts</div>
+  <div class="tab" onclick="switchTab('activity')">⚡ Activity</div>
   <div class="tab" onclick="switchTab('logs')">📋 Logs</div>
 </div>
 
@@ -358,6 +359,41 @@ code:hover::after { opacity: 0.8; }
       <div class="card-title">Users</div>
       <div id="users-list">
         <div class="loading"><div class="spinner"></div> Loading users…</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ACTIVITY TAB -->
+  <div class="tab-panel" id="panel-activity">
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Ongoing Jobs</div>
+      <div id="activity-ongoing">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Daily Summary</div>
+      <div id="activity-daily">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Recent Downloads</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <div class="form-group">
+          <label>Period</label>
+          <select id="activity-days" onchange="loadActivity()">
+            <option value="1">Today</option>
+            <option value="7" selected>7 days</option>
+            <option value="30">30 days</option>
+          </select>
+        </div>
+      </div>
+      <div id="activity-downloads" style="max-height:400px;overflow-y:auto">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
       </div>
     </div>
   </div>
@@ -1156,6 +1192,95 @@ async function submitNodeRename() {
   }
 }
 
+
+
+// ============================================================
+// ACTIVITY TAB
+// ============================================================
+async function loadActivity() {
+  const days = parseInt(document.getElementById('activity-days').value) || 7;
+  try {
+    const data = await apiFetch('/admin/activity?days=' + days);
+    renderOngoingJobs(data);
+    renderDailySummary(data.daily_summary || []);
+    renderRecentDownloads(data.recent_downloads || []);
+  } catch(e) {
+    setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">⚠️</div>' + e.message + '</div>');
+  }
+}
+
+function renderOngoingJobs(data) {
+  const fetches = data.ongoing_fetches || [];
+  const openeo = data.openeo_jobs || [];
+  if (!fetches.length && !openeo.length) {
+    setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">😴</div>No active jobs</div>');
+    return;
+  }
+  let html = '';
+  for (const j of fetches) {
+    const statusColor = j.status === 'running' ? 'var(--yellow)' : j.status === 'done' ? 'var(--green)' : 'var(--red)';
+    html += `<div class="kv">
+      <span class="kv-key">📥 Fetch <code>${j.job_id}</code></span>
+      <span class="kv-val" style="color:${statusColor}">${j.status}${j.ingested ? ' · ' + j.ingested + ' ingested' : ''}${j.errors ? ' · ' + j.errors + ' errors' : ''}</span>
+    </div>`;
+  }
+  for (const j of openeo) {
+    const statusColor = j.status === 'finished' ? 'var(--green)' : j.status === 'running' ? 'var(--yellow)' : 'var(--muted)';
+    html += `<div class="kv">
+      <span class="kv-key">🧮 OpenEO <code>${j.job_id}</code></span>
+      <span class="kv-val" style="color:${statusColor}">${j.status}${j.progress ? ' · ' + j.progress + '%' : ''}${j.title ? ' · ' + j.title : ''}</span>
+    </div>`;
+  }
+  setHtml('activity-ongoing', html);
+}
+
+function renderDailySummary(daily) {
+  if (!daily.length) {
+    setHtml('activity-daily', '<div class="empty"><div class="empty-icon">📭</div>No activity in period</div>');
+    return;
+  }
+  // Group by day
+  const byDay = {};
+  for (const d of daily) {
+    if (!byDay[d.day]) byDay[d.day] = { source: {count:0, bytes:0}, user: {count:0, bytes:0} };
+    byDay[d.day][d.origin] = { count: d.count, bytes: d.bytes };
+  }
+  let html = '<div class="table-wrap"><table><thead><tr><th>Date</th><th>Source DL</th><th>User DL</th><th>Total</th></tr></thead><tbody>';
+  for (const [day, info] of Object.entries(byDay)) {
+    const total = (info.source.bytes || 0) + (info.user.bytes || 0);
+    html += `<tr>
+      <td>${day}</td>
+      <td>${info.source.count} (${fmt_bytes(info.source.bytes || 0)})</td>
+      <td>${info.user.count} (${fmt_bytes(info.user.bytes || 0)})</td>
+      <td style="font-weight:600">${fmt_bytes(total)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  setHtml('activity-daily', html);
+}
+
+function renderRecentDownloads(downloads) {
+  if (!downloads.length) {
+    setHtml('activity-downloads', '<div class="empty"><div class="empty-icon">📭</div>No downloads in period</div>');
+    return;
+  }
+  let html = '<div class="table-wrap"><table><thead><tr><th>Time</th><th>Type</th><th>Collection</th><th>Item</th><th>Size</th></tr></thead><tbody>';
+  for (const d of downloads) {
+    const t = new Date(d.timestamp * 1000);
+    const timeStr = t.toLocaleDateString() + ' ' + t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    const origin = d.origin === 'source' ? '📥 Source' : '👤 User';
+    const itemShort = d.item_id ? (d.item_id.length > 30 ? d.item_id.slice(0,27) + '…' : d.item_id) : '—';
+    html += `<tr>
+      <td style="white-space:nowrap">${timeStr}</td>
+      <td>${origin}${d.provider ? ' (' + d.provider + ')' : ''}</td>
+      <td>${d.collection || '—'}</td>
+      <td title="${d.item_id || ''}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${itemShort}</td>
+      <td style="text-align:right">${fmt_bytes(d.bytes || 0)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  setHtml('activity-downloads', html);
+}
 
 // --- Copy to clipboard for <code> elements ---
 function copyText(text, feedbackEl) {
