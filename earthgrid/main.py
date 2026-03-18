@@ -280,6 +280,38 @@ def admin_delete_user(
     raise HTTPException(404, "User not found")
 
 
+# --- Admin: Collection & Node Name Management ---
+
+@app.delete("/admin/collections/{collection_id}", dependencies=[Depends(_require_admin_auth)])
+def admin_delete_collection(collection_id: str, request: Request):
+    """Delete a collection and all its items from this node. Requires admin key."""
+    col = catalog.get_collection(collection_id)
+    if not col:
+        raise HTTPException(404, f"Collection not found: {collection_id}")
+    item_count = catalog.item_count(collection_id)
+    catalog.db.execute("DELETE FROM items WHERE collection = ?", (collection_id,))
+    catalog.db.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
+    catalog.db.commit()
+    _audit("collection_delete", f"collection={collection_id} items={item_count}",
+           ip=request.client.host if request.client else "", success=True)
+    return {"status": "deleted", "collection": collection_id, "items_removed": item_count}
+
+
+@app.patch("/admin/node/name", dependencies=[Depends(_require_admin_auth)])
+def admin_set_node_name(name: str = Query(..., min_length=1, max_length=64), request: Request = None):
+    """Rename this node. Persists to /data/.node_name. Requires admin key."""
+    from pathlib import Path
+    name_file = Path("/data/.node_name")
+    try:
+        name_file.write_text(name.strip())
+    except Exception as e:
+        raise HTTPException(500, f"Could not write node name: {e}")
+    settings.node_name = name.strip()
+    _audit("node_rename", f"new_name={name}",
+           ip=request.client.host if request.client else "", success=True)
+    return {"status": "renamed", "node_name": name.strip()}
+
+
 # --- Federation User Sync ---
 @app.get("/federation/users")
 def federation_export_users(
