@@ -1359,6 +1359,14 @@ def _interactive_setup(args):
     mode_input = input("Choose [1]: ").strip()
     also_beacon = mode_input != "2"
 
+    # Beacon URL (only if beacon mode)
+    beacon_url = ""
+    if also_beacon:
+        from . import get_default_peer; DEFAULT_BEACON = get_default_peer()
+        beacon_url = input(f"Beacon URL to join? [{DEFAULT_BEACON}]: ").strip()
+        if not beacon_url:
+            beacon_url = DEFAULT_BEACON
+
     # Ingest capability — always enabled, install rasterio if missing
     try:
         import rasterio
@@ -1388,12 +1396,6 @@ def _interactive_setup(args):
     node_name = input(f"Name your node? [{default_name}]: ").strip()
     if not node_name:
         node_name = default_name
-
-    # Beacon URL (to connect to the network)
-    from . import get_default_peer; DEFAULT_BEACON = get_default_peer()
-    beacon_url = input(f"Beacon URL to join? [{DEFAULT_BEACON}]: ").strip()
-    if not beacon_url:
-        beacon_url = DEFAULT_BEACON
 
     # Auto-update
     print("\nAuto-update on start?")
