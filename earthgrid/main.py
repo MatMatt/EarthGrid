@@ -147,6 +147,10 @@ replicator = Replicator(chunk_store, catalog)
 
 # New architecture components
 stats_engine = StatsEngine(Path(settings.stats_db))
+
+# Node load tracker (active downloads/processing + daily/monthly stats)
+from .stats import NodeLoadTracker
+load_tracker = NodeLoadTracker(db_path=Path(settings.stats_db))
 gamification_engine = GamificationEngine(Path(settings.stats_db).parent / "gamification.db")
 set_gamification_engine(gamification_engine)
 
@@ -528,6 +532,11 @@ async def _beacon_heartbeat_loop():
                         "uptime_seconds": _uptime_s,
                         "download_mbps": _dl_mbps,
                         "upload_mbps": _ul_mbps,
+                        "active_downloads": load_tracker.active_downloads,
+                        "active_processing": load_tracker.active_processing,
+                        "cpu_percent": load_tracker.get_cpu_percent(),
+                        "stats_today": __import__('json').dumps(load_tracker.stats_for_date(load_tracker._today())),
+                        "stats_month": __import__('json').dumps(load_tracker.stats_for_month(load_tracker._month())),
                     },
                 )
                 # Report items for replication tracking

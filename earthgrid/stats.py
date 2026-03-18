@@ -586,3 +586,137 @@ class StatsEngine:
             c3 = conn.execute("DELETE FROM bandwidth_log WHERE timestamp < ?", (cutoff,)).rowcount
             c4 = conn.execute("DELETE FROM uptake_log WHERE timestamp < ?", (cutoff,)).rowcount
         logger.info(f"Stats cleanup: removed {c1} chunk + {c2} collection + {c3} bandwidth + {c4} uptake records (>{retain_days}d)")
+
+
+class NodeLoadTracker:
+    """Track current node load and daily/monthly statistics."""
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self._active_downloads = 0
+        self._active_processing = 0
+        self._lock = __import__('threading').Lock()
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS load_stats (
+                date TEXT NOT NULL,
+                downloads_count INTEGER DEFAULT 0,
+                downloads_gb REAL DEFAULT 0.0,
+                processing_count INTEGER DEFAULT 0,
+                processing_seconds REAL DEFAULT 0.0,
+                served_requests INTEGER DEFAULT 0,
+                served_gb REAL DEFAULT 0.0,
+                PRIMARY KEY (date)
+            )""")
+
+    def _today(self) -> str:
+        import datetime
+        return datetime.date.today().isoformat()
+
+    def _month(self) -> str:
+        import datetime
+        return datetime.date.today().strftime("%Y-%m")
+
+    # --- Active load tracking ---
+
+    def download_started(self):
+        with self._lock:
+            self._active_downloads += 1
+
+    def download_finished(self, gb: float = 0.0):
+        with self._lock:
+            self._active_downloads = max(0, self._active_downloads - 1)
+        self._increment(self._today(), downloads_count=1, downloads_gb=gb)
+
+    def processing_started(self):
+        with self._lock:
+            self._active_processing += 1
+
+    def processing_finished(self, seconds: float = 0.0):
+        with self._lock:
+            self._active_processing = max(0, self._active_processing - 1)
+        self._increment(self._today(), processing_count=1, processing_seconds=seconds)
+
+    def request_served(self, gb: float = 0.0):
+        self._increment(self._today(), served_requests=1, served_gb=gb)
+
+    def _increment(self, date: str, **kwargs):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO load_stats (date) VALUES (?)
+                   ON CONFLICT(date) DO NOTHING""", (date,))
+            for col, val in kwargs.items():
+                if val:
+                    conn.execute(
+                        f"UPDATE load_stats SET {col} = {col} + ? WHERE date = ?",
+                        (val, date))
+
+    # --- Snapshot for heartbeat ---
+
+    @property
+    def active_downloads(self) -> int:
+        return self._active_downloads
+
+    @property
+    def active_processing(self) -> int:
+        return self._active_processing
+
+    def get_cpu_percent(self) -> float:
+        try:
+            import os
+            load1, _, _ = os.getloadavg()
+            cpus = os.cpu_count() or 1
+            return round(min(load1 / cpus * 100, 100.0), 1)
+        except Exception:
+            return 0.0
+
+    def get_disk_io_mbps(self) -> float:
+        try:
+            import psutil
+            counters = psutil.disk_io_counters()
+            if counters:
+                return round((counters.read_bytes + counters.write_bytes) / 1e6, 1)
+        except Exception:
+            pass
+        return 0.0
+
+    def stats_for_date(self, date: str) -> dict:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM load_stats WHERE date = ?", (date,)).fetchone()
+        if not row:
+            return {"downloads_count": 0, "downloads_gb": 0.0,
+                    "processing_count": 0, "processing_seconds": 0.0,
+                    "served_requests": 0, "served_gb": 0.0}
+        return {k: row[k] for k in row.keys() if k != "date"}
+
+    def stats_for_month(self, month: str) -> dict:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT
+                    SUM(downloads_count) as downloads_count,
+                    SUM(downloads_gb) as downloads_gb,
+                    SUM(processing_count) as processing_count,
+                    SUM(processing_seconds) as processing_seconds,
+                    SUM(served_requests) as served_requests,
+                    SUM(served_gb) as served_gb
+                FROM load_stats WHERE date LIKE ?""", (month + "%",)).fetchone()
+        if not row or row["downloads_count"] is None:
+            return {"downloads_count": 0, "downloads_gb": 0.0,
+                    "processing_count": 0, "processing_seconds": 0.0,
+                    "served_requests": 0, "served_gb": 0.0}
+        return {k: round(row[k] or 0, 2) for k in row.keys()}
+
+    def heartbeat_snapshot(self) -> dict:
+        """Return current load + stats for heartbeat reporting."""
+        return {
+            "active_downloads": self.active_downloads,
+            "active_processing": self.active_processing,
+            "cpu_percent": self.get_cpu_percent(),
+            "stats_today": self.stats_for_date(self._today()),
+            "stats_month": self.stats_for_month(self._month()),
+        }

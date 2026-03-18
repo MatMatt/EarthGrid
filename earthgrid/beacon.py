@@ -45,6 +45,12 @@ class RegisteredNode:
     uptime_seconds: int = 0
     download_mbps: float = 0.0
     upload_mbps: float = 0.0
+    active_downloads: int = 0
+    active_processing: int = 0
+    cpu_percent: float = 0.0
+    disk_io_mbps: float = 0.0
+    stats_today: dict = field(default_factory=dict)
+    stats_month: dict = field(default_factory=dict)
     last_seen: float = 0.0
     bbox_index: list[list[float]] = field(default_factory=list)  # per-collection bboxes
 
@@ -71,6 +77,12 @@ class RegisteredNode:
             "uptime_hours": round(self.uptime_seconds / 3600, 1),
             "download_mbps": self.download_mbps,
             "upload_mbps": self.upload_mbps,
+            "active_downloads": self.active_downloads,
+            "active_processing": self.active_processing,
+            "cpu_percent": self.cpu_percent,
+            "disk_io_mbps": self.disk_io_mbps,
+            "stats_today": self.stats_today,
+            "stats_month": self.stats_month,
             "alive": self.alive,
             "reachable": self.url is not None or self.reachable_via_ws,
             "last_seen": self.last_seen,
@@ -582,6 +594,12 @@ async def node_heartbeat(
     uptime_seconds: int = Query(None),
     download_mbps: float = Query(None),
     upload_mbps: float = Query(None),
+    active_downloads: int = Query(None),
+    active_processing: int = Query(None),
+    cpu_percent: float = Query(None),
+    disk_io_mbps: float = Query(None),
+    stats_today: str = Query(None),
+    stats_month: str = Query(None),
 ):
     """Heartbeat from a data node — keeps it alive in the registry."""
     updates = {}
@@ -601,6 +619,24 @@ async def node_heartbeat(
         updates["download_mbps"] = download_mbps
     if upload_mbps is not None:
         updates["upload_mbps"] = upload_mbps
+    if active_downloads is not None:
+        updates["active_downloads"] = active_downloads
+    if active_processing is not None:
+        updates["active_processing"] = active_processing
+    if cpu_percent is not None:
+        updates["cpu_percent"] = cpu_percent
+    if disk_io_mbps is not None:
+        updates["disk_io_mbps"] = disk_io_mbps
+    if stats_today is not None:
+        try:
+            updates["stats_today"] = json.loads(stats_today)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if stats_month is not None:
+        try:
+            updates["stats_month"] = json.loads(stats_month)
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     await registry.heartbeat(node_id, **updates)
 
