@@ -1201,6 +1201,20 @@ async def nodes_proxy(alive_only: bool = Query(True)):
     except Exception:
         return {"count": 0, "nodes": []}
 
+
+@app.delete("/nodes/{node_id}", dependencies=[Depends(_require_admin_auth)])
+async def delete_node(node_id: str):
+    """Remove a node from the beacon registry."""
+    if settings.also_beacon:
+        from .beacon import registry
+        await registry.unregister(node_id)
+        return {"status": "removed", "node_id": node_id}
+    if not settings.beacon_url:
+        raise HTTPException(400, "No beacon configured")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.delete(f"{settings.beacon_url.rstrip('/')}/nodes/{node_id}")
+        return resp.json()
+
 @app.get("/coverage/spatial")
 def coverage_spatial():
     """Spatial coverage with per-cell detail (dates, bands, item counts)."""
