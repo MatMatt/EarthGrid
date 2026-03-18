@@ -1508,15 +1508,14 @@ def _interactive_setup(args):
     print(f"   Config:   {config_file}")
     if beacon_url:
         print(f"   Network:  {beacon_url}")
-    print(f"\n🚀 Start with:")
-    if also_beacon:
-        print(f"   earthgrid start --also-beacon")
-    else:
-        print(f"   earthgrid start")
     print(f"\n🌐 WebUI: http://localhost:{port}/ui")
     print(f"\n📊 Manage source accounts later:")
     print(f"   earthgrid users list")
     print(f"   earthgrid users add --provider cdse --username your@email.com")
+
+    # Auto-start as systemd service (survives reboot)
+    print(f"\n🚀 Starting EarthGrid...")
+    _ensure_service("0.0.0.0", port)
 
 
 if __name__ == "__main__":
