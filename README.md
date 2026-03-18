@@ -7,7 +7,17 @@ Distributed storage and openEO processing for Earth observation data.
 [![Live Dashboard](https://img.shields.io/badge/dashboard-live-brightgreen)](https://matmatt.github.io/EarthGrid/)
 [![Python](https://img.shields.io/badge/python-≥3.9-blue)](https://github.com/MatMatt/EarthGrid)
 [![License](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSE)
-> ⚠️ **Early development** — disruptive changes might occur. Code review and consolidation needed. Planned: UDF support (openEO user-defined functions).
+> ## 🚧 Early Stage — Test Phase
+>
+> **Do not install if you expect a functioning service.**
+>
+> EarthGrid is in active development and test phase. Things break, APIs change, data may be lost. It is not ready for production use.
+>
+> **We are looking for a few early testers:**
+> - 🔦 **1–3 more beacon operators** — a small VPS (~€4/month) is enough. [How to run a beacon →](docs/beacon-guide.md)
+> - 📦 **A handful of data nodes** — spare disk space (50–500 GB) and a stable connection
+>
+> Not looking for mass adoption yet — a small, stable test network first.
 
 ## What is EarthGrid?
 
