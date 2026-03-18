@@ -168,7 +168,12 @@ def reconstruct_geotiff(
     band_names_out = list(band_data.keys())
     stack = np.stack([band_data[b] for b in band_names_out], axis=0)
 
-    transform = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], width, height)
+    native_tf = props.get("earthgrid:transform")
+    if native_tf and len(native_tf) == 6:
+        from rasterio.transform import Affine
+        transform = Affine(*native_tf)
+    else:
+        transform = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], width, height)
 
     buffer = io.BytesIO()
     with rasterio.open(

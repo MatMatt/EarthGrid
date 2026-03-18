@@ -175,6 +175,7 @@ def _do_ingest(
         else:
             bbox = [bounds.left, bounds.bottom, bounds.right, bounds.top]
         width, height = src.width, src.height
+        native_transform = list(src.transform)[:6]  # [a, b, c, d, e, f] affine params
         n_bands = src.count
         dtype = str(src.dtypes[0])
 
@@ -247,6 +248,7 @@ def _do_ingest(
         "earthgrid:tile_rows": n_rows,
         "earthgrid:source_file": original_name or file_path.name,
         "earthgrid:chunk_format": "spatial-tile",
+        "earthgrid:transform": native_transform,
     }
 
     assets = {
