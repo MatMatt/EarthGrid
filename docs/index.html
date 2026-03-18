@@ -311,7 +311,7 @@ function showCoverageDetail(colId, cell) {
     '<div><div style="font-size:1.8rem;font-weight:700;color:var(--text)">' + cell.date_count + '</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">dates ingested</div></div>' +
     '<div><div style="font-size:1.8rem;font-weight:700;color:var(--accent)">' + cell.item_count + '</div>' +
-    '<div style="font-size:0.8rem;color:var(--dim)">items</div></div>' +
+    '<div style="font-size:0.8rem;color:var(--dim)">dates</div></div>' +
     '<div><div style="font-size:0.85rem;color:var(--text)">' + meta.start + '</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">sensor start</div></div>' +
     '<div><div style="font-size:0.85rem;color:var(--text)">' + (cell.last_date || '—') + '</div>' +
@@ -1051,7 +1051,7 @@ async function load() {
     // Coverage table
     const sensors = d.coverage || {};
     if (Object.keys(sensors).length > 0) {
-      let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">Tiles</th><th class="num">Items</th></tr></thead><tbody>';
+      let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">Tiles</th><th class="num">Dates</th></tr></thead><tbody>';
       for (const [col, s] of Object.entries(sensors).sort((a,b) => (b[1].items||0) - (a[1].items||0))) {
         html += '<tr><td class="sensor">' + sensorLabel(col) + '</td>';
         html += '<td class="num">' + (s.tiles||0) + '</td>';

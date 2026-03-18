@@ -284,7 +284,13 @@ def admin_delete_user(
 
 @app.delete("/admin/collections/{collection_id}", dependencies=[Depends(_require_admin_auth)])
 def admin_delete_collection(collection_id: str, request: Request):
-    """Delete a collection and all its items from this node. Requires admin key."""
+    """Delete a collection and all its items from this node. Requires admin key + localhost only."""
+    # Destructive ops: localhost only — never allow remote nodes to trigger collection deletes
+    client_ip = request.client.host if request.client else ""
+    if client_ip not in ("127.0.0.1", "::1", "localhost"):
+        _audit("collection_delete_blocked", f"remote_ip={client_ip} collection={collection_id}",
+               ip=client_ip, success=False)
+        raise HTTPException(403, "Collection delete is only allowed from localhost")
     col = catalog.get_collection(collection_id)
     if not col:
         raise HTTPException(404, f"Collection not found: {collection_id}")
