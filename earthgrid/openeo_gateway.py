@@ -750,6 +750,57 @@ class OpenEOGateway:
                 dt = _item_date(item)
                 date_band_items.setdefault(dt, {}).setdefault(bname, []).append(item)
 
+        # Check if needed bands at sufficient resolution are available per date.
+        # If not, trigger self-fill for the missing data before processing.
+        MIN_WIDTH = 5000  # ~10m for S2 (10980) or ~20m (5490) — not 60m (1830)
+        missing_bands_detected = False
+        if need_bands and self.source_users:
+            for dt in list(date_band_items.keys()):
+                for bname in (need_bands or []):
+                    items_for_band = date_band_items.get(dt, {}).get(bname, [])
+                    best_width = max(
+                        (it.properties.get("earthgrid:width", 0) for it in items_for_band),
+                        default=0
+                    )
+                    if best_width < MIN_WIDTH:
+                        missing_bands_detected = True
+                        logger.info(
+                            f"Band {bname} @ {dt} missing or low-res (max_width={best_width}). "
+                            f"Triggering self-fill for collection={collection_id}."
+                        )
+
+            if missing_bands_detected:
+                logger.info(f"Self-filling missing bands: {need_bands} for {collection_id}")
+                fill = await self.search_and_acquire(req)
+                if fill.get("downloaded", 0) > 0:
+                    logger.info(f"Self-fill downloaded {fill['downloaded']} items. Re-scanning catalog.")
+                    # Re-scan catalog for fresh items
+                    resolved = await self.resolve_chunks(req)
+                    new_items = resolved.get("items", [])
+                    if not new_items and self.catalog:
+                        new_items = self.catalog.search(
+                            collections=[collection_id], limit=500
+                        )
+                    if new_items:
+                        # Rebuild band_items and date_band_items with fresh data
+                        items = new_items
+                        band_items = {}
+                        for item in items:
+                            if any(x in item.id.upper() for x in ("MSK_QUALIT", "MSK_DETFOO", "MSK_CLASSI", "MSK_SNWPRB", "MSK_CLDPRB")):
+                                continue
+                            bname = _item_band(item)
+                            if bname:
+                                band_items.setdefault(bname, []).append(item)
+                        date_band_items = {}
+                        for bname, item_list in band_items.items():
+                            if need_bands and bname not in need_bands:
+                                continue
+                            for item in item_list:
+                                dt = _item_date(item)
+                                date_band_items.setdefault(dt, {}).setdefault(bname, []).append(item)
+                else:
+                    logger.warning(f"Self-fill returned no new items: {fill.get('error', fill.get('errors', 'unknown'))}")
+
         dates_sorted = sorted(date_band_items.keys())
         logger.info(f"Found {len(dates_sorted)} timesteps: {dates_sorted}")
 
