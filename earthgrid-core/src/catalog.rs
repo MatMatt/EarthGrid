@@ -63,17 +63,17 @@ impl Catalog {
             );
             CREATE TABLE IF NOT EXISTS items (
                 id TEXT PRIMARY KEY,
-                collection_id TEXT NOT NULL,
+                collection TEXT NOT NULL,
                 bbox_west REAL NOT NULL,
                 bbox_south REAL NOT NULL,
                 bbox_east REAL NOT NULL,
                 bbox_north REAL NOT NULL,
-                properties TEXT NOT NULL DEFAULT '{}',
-                chunk_hashes TEXT NOT NULL DEFAULT '[]',
+                properties_json TEXT NOT NULL DEFAULT '{}',
+                chunk_hashes_json TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (collection_id) REFERENCES collections(id)
+                FOREIGN KEY (collection) REFERENCES collections(id)
             );
-            CREATE INDEX IF NOT EXISTS idx_items_collection ON items(collection_id);
+            CREATE INDEX IF NOT EXISTS idx_items_collection ON items(collection);
             CREATE INDEX IF NOT EXISTS idx_items_bbox ON items(bbox_west, bbox_south, bbox_east, bbox_north);",
         )?;
         Ok(())
@@ -145,7 +145,7 @@ impl Catalog {
         let props_json = serde_json::to_string(&item.properties)?;
 
         self.conn.execute(
-            "INSERT OR REPLACE INTO items (id, collection_id, bbox_west, bbox_south, bbox_east, bbox_north, properties, chunk_hashes, created_at)
+            "INSERT OR REPLACE INTO items (id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 item.id,
@@ -165,7 +165,7 @@ impl Catalog {
     /// Get an item by ID.
     pub fn get_item(&self, id: &str) -> Result<Option<StacItem>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, collection_id, bbox_west, bbox_south, bbox_east, bbox_north, properties, chunk_hashes, created_at
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at
              FROM items WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
@@ -195,12 +195,12 @@ impl Catalog {
         limit: usize,
     ) -> Result<Vec<StacItem>> {
         let mut sql = String::from(
-            "SELECT id, collection_id, bbox_west, bbox_south, bbox_east, bbox_north, properties, chunk_hashes, created_at FROM items WHERE 1=1",
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at FROM items WHERE 1=1",
         );
         let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(col) = collection {
-            sql.push_str(" AND collection_id = ?");
+            sql.push_str(" AND collection = ?");
             params_vec.push(Box::new(col.to_string()));
         }
 
@@ -243,7 +243,7 @@ impl Catalog {
         let (sql, count) = if let Some(col) = collection {
             let mut stmt = self
                 .conn
-                .prepare("SELECT COUNT(*) FROM items WHERE collection_id = ?1")?;
+                .prepare("SELECT COUNT(*) FROM items WHERE collection = ?1")?;
             let c: i64 = stmt.query_row(params![col], |row| row.get(0))?;
             (String::new(), c as usize)
         } else {
