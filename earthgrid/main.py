@@ -287,7 +287,7 @@ def admin_delete_collection(collection_id: str, request: Request):
     """Delete a collection and all its items from this node. Requires admin key + localhost only."""
     # Destructive ops: localhost only — never allow remote nodes to trigger collection deletes
     client_ip = request.client.host if request.client else ""
-    if client_ip not in ("127.0.0.1", "::1", "localhost"):
+    if not _is_local_ip(client_ip):
         _audit("collection_delete_blocked", f"remote_ip={client_ip} collection={collection_id}",
                ip=client_ip, success=False)
         raise HTTPException(403, "Collection delete is only allowed from localhost")
@@ -326,7 +326,7 @@ def admin_activity(
     """Node activity overview: ongoing + past fetch/openEO jobs and downloads.
     No personal details (IPs) exposed. Localhost/admin only."""
     client_ip = request.client.host if request.client else ""
-    if client_ip not in ("127.0.0.1", "::1", "localhost"):
+    if not _is_local_ip(client_ip):
         raise HTTPException(403, "Activity dashboard is only accessible from localhost")
 
     import sqlite3 as _sql
