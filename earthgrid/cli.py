@@ -687,7 +687,7 @@ def _cmd_status():
     if not cfg:
         print("No config found. Run 'earthgrid setup' first.")
         sys.exit(1)
-    store_path = Path(cfg.get("store_path", "./data/store"))
+    store_path = Path(cfg.get("store_path", str(Path.home() / ".earthgrid" / "data" / "store")))
     limit_gb = cfg.get("storage_limit_gb", 50.0)
     limit_bytes = int(limit_gb * 1024**3)
     used, chunks = _store_usage(store_path)
@@ -715,7 +715,7 @@ def _cmd_resize(new_gb: float, force: bool):
         print("No config found. Run 'earthgrid setup' first.")
         sys.exit(1)
     old_gb = cfg.get("storage_limit_gb", 50.0)
-    store_path = Path(cfg.get("store_path", "./data/store"))
+    store_path = Path(cfg.get("store_path", str(Path.home() / ".earthgrid" / "data" / "store")))
     used, _ = _store_usage(store_path)
     used_gb = used / 1024**3
 
@@ -761,8 +761,8 @@ def _cmd_process(args):
     from .processing import Processor
 
     cfg = _load_config()
-    store_path = Path(cfg.get("store_path", "./data/store"))
-    catalog_path = Path(cfg.get("catalog_path", "./data/catalog.db"))
+    store_path = Path(cfg.get("store_path", str(Path.home() / ".earthgrid" / "data" / "store")))
+    catalog_path = Path(cfg.get("catalog_path", str(Path.home() / ".earthgrid" / "data" / "catalog.db")))
 
     cs = ChunkStore(store_path, limit_gb=cfg.get("storage_limit_gb", 50.0))
     cat = Catalog(catalog_path)
@@ -853,8 +853,8 @@ def _cmd_fetch(args):
         return
 
     # Fetch and ingest
-    store_path = Path(cfg.get("store_path", "./data/store"))
-    catalog_path = Path(cfg.get("catalog_path", "./data/catalog.db"))
+    store_path = Path(cfg.get("store_path", str(Path.home() / ".earthgrid" / "data" / "store")))
+    catalog_path = Path(cfg.get("catalog_path", str(Path.home() / ".earthgrid" / "data" / "catalog.db")))
     cs = ChunkStore(store_path, limit_gb=cfg.get("storage_limit_gb", 50.0))
     cat = Catalog(catalog_path)
 
@@ -931,8 +931,8 @@ def _cmd_sync(args):
     from .replication import Replicator
 
     cfg = _load_config()
-    store_path = Path(cfg.get("store_path", "./data/store"))
-    catalog_path = Path(cfg.get("catalog_path", "./data/catalog.db"))
+    store_path = Path(cfg.get("store_path", str(Path.home() / ".earthgrid" / "data" / "store")))
+    catalog_path = Path(cfg.get("catalog_path", str(Path.home() / ".earthgrid" / "data" / "catalog.db")))
 
     cs = ChunkStore(store_path, limit_gb=cfg.get("storage_limit_gb", 50.0))
     cat = Catalog(catalog_path)
@@ -1028,8 +1028,8 @@ def _cmd_verify(args):
     from .catalog import Catalog
 
     cfg = _load_config()
-    store_path = Path(cfg.get("store_path", "./data/store"))
-    catalog_path = Path(cfg.get("catalog_path", "./data/catalog.db"))
+    store_path = Path(cfg.get("store_path", str(Path.home() / ".earthgrid" / "data" / "store")))
+    catalog_path = Path(cfg.get("catalog_path", str(Path.home() / ".earthgrid" / "data" / "catalog.db")))
 
     cs = ChunkStore(store_path, limit_gb=cfg.get("storage_limit_gb", 50.0))
     cat = Catalog(catalog_path)

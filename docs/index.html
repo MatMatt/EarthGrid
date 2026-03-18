@@ -804,7 +804,7 @@ plt.savefig("ndvi_timeseries.png", dpi=150)</code></pre>
 <div class="tab-content" id="tab-openeo-py">
 <pre><code>import openeo
 
-conn = openeo.connect("<your-earthgrid-url>")
+conn = openeo.connect("http://localhost:8400")
 
 cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.7, "north": 55.75},
@@ -845,7 +845,7 @@ plot(ndvi, main = "NDVI — Copenhagen",
 <div class="tab-content" id="tab-openeo-r">
 <pre><code>library(openeo)
 
-con &lt;- connect("<your-earthgrid-url>")
+con &lt;- connect("http://localhost:8400")
 p &lt;- processes()
 
 cube &lt;- p$load_collection("sentinel-2-l2a",
@@ -960,21 +960,21 @@ savefig("ndvi.png")</code></pre>
 
 <div class="tab-content" id="tab-curl">
 <pre><code># Search the STAC catalog
-curl -s "<your-earthgrid-url>/stac/search?bbox=12.4,55.6,12.7,55.75" | jq '.features[].id'
+curl -s "http://localhost:8400/stac/search?bbox=12.4,55.6,12.7,55.75" | jq '.features[].id'
 
 # Download bands
-curl -o B04.tif "<your-earthgrid-url>/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B04"
-curl -o B08.tif "<your-earthgrid-url>/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B08"
+curl -o B04.tif "http://localhost:8400/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B04"
+curl -o B08.tif "http://localhost:8400/download/sentinel-2-l2a/S2C_33UUB_20250614_0_L2A_B08"
 
 # Compute NDVI with GDAL
 gdal_calc.py -A B08.tif -B B04.tif --outfile=ndvi.tif \
   --calc="where((A+B)>0, (A.astype(float)-B)/(A+B), 0)" --type=Float32
 
 # List collections
-curl "<your-earthgrid-url>/collections"
+curl "http://localhost:8400/collections"
 
 # Network status
-curl "<your-earthgrid-url>/nodes"</code></pre>
+curl "http://localhost:8400/nodes"</code></pre>
 </div>
 
 </div>
