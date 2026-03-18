@@ -273,15 +273,48 @@ Config is stored in `~/.earthgrid/docker-compose.yml`. Subsequent `docker update
 
 ### From source *(recommended)*
 
+**Prerequisites:**
+
+| Requirement | Version | Why |
+|---|---|---|
+| Python | ≥ 3.9 | Core application |
+| Rust | ≥ 1.70 | Rust core (P2P, storage engine) |
+| GDAL | ≥ 3.4 | Raster I/O (`libgdal-dev` on Debian/Ubuntu) |
+| git | any | Clone the repository |
+
+**Install prerequisites (Debian/Ubuntu):**
+
+```bash
+# Python + GDAL
+sudo apt update && sudo apt install -y python3 python3-pip libgdal-dev git
+
+# Rust (if not installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source ~/.cargo/env
+```
+
+**Install EarthGrid:**
+
 ```bash
 git clone https://github.com/MatMatt/EarthGrid.git
 cd EarthGrid
+
+# Build the Rust core
+cd earthgrid-core && cargo build --release && cd ..
+
+# Install Python package
 pip install -e .
+
+# Setup and start
 earthgrid setup
 earthgrid start
 ```
 
-Requires Python ≥ 3.9.
+The `earthgrid setup` wizard will ask for:
+- **Node name** — a friendly name for your node
+- **Storage path** — where to store data (e.g. `/mnt/data/earthgrid`)
+- **Storage limit** — how much disk space to use (in GB)
+- **Source accounts** — optional credentials for CDSE, WEkEO, etc.
 
 ### pip *(coming soon)*
 

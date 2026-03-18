@@ -1408,31 +1408,28 @@ def _interactive_setup(args):
     auto_update = {"1": "yes", "2": "ask", "3": "no"}.get(au_input, "yes")
 
     # Source data provider
-    print("\n📡 Data Sources — where should your node fetch satellite data from?")
-    print("  [1] CDSE (Copernicus) — full Sentinel archive, requires free account")
-    print("  [2] Element84 (AWS) — S2/S1/Landsat mirror, no account needed")
-    print("  [3] Both (recommended)")
-    print("  [4] None — redistribute data from other nodes only")
-    provider_input = input("Choose [3]: ").strip()
-    if not provider_input:
-        provider_input = "3"
+    print("\n📡 Data Sources")
+    print("  ✓ Element84 (AWS) — always enabled (no account needed)")
+    add_element84 = True
+
+    print("\n  Add CDSE credentials? (full Sentinel archive, free account)")
+    print("  [1] Yes — register at https://dataspace.copernicus.eu")
+    print("  [2] Skip")
+    cdse_input = input("Choose [1]: ").strip()
+    if not cdse_input:
+        cdse_input = "1"
 
     cdse_username = ""
     cdse_password = ""
-    add_element84 = False
 
-    if provider_input in ("1", "3"):
+    if cdse_input == "1":
         print("\n  🔑 CDSE — Register free at: https://dataspace.copernicus.eu")
         cdse_username = input("  CDSE email: ").strip()
         if cdse_username:
             import getpass
             cdse_password = getpass.getpass("  CDSE password: ")
-        elif provider_input == "1":
+        else:
             print("  ⚠ No CDSE email — skipping CDSE")
-
-    if provider_input in ("2", "3"):
-        add_element84 = True
-        print("  ✓ Element84 (no credentials needed)")
 
     # Port
     port = args.port
