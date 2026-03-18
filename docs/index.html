@@ -391,10 +391,12 @@ if (document.readyState === 'loading') {
 </div>
 
 <style>
-.lb-table { width:100%; border-collapse:collapse; }
-.lb-table th { text-align:left; font-size:0.75rem; color:var(--dim); padding:0.4rem 0.5rem; border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:0.05em; }
-.lb-table td { padding:0.5rem; border-bottom:1px solid var(--border); font-size:0.9rem; }
+.lb-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin:0 -0.5rem; padding:0 0.5rem; }
+.lb-table { width:100%; border-collapse:collapse; white-space:nowrap; }
+.lb-table th { text-align:left; font-size:0.7rem; color:var(--dim); padding:0.4rem 0.4rem; border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:0.05em; }
+.lb-table td { padding:0.5rem 0.4rem; border-bottom:1px solid var(--border); font-size:0.85rem; }
 .lb-table tr:hover { background:rgba(88,166,255,0.04); }
+@media (max-width:600px) { .lb-table th, .lb-table td { padding:0.3rem 0.25rem; font-size:0.75rem; } .lb-name { max-width:80px; overflow:hidden; text-overflow:ellipsis; } }
 .lb-rank { font-weight:700; color:var(--accent); width:2rem; text-align:center; }
 .lb-rank-1 { color:#ffd700; }
 .lb-rank-2 { color:#c0c0c0; }
@@ -506,7 +508,7 @@ function renderLeaderboard(data) {
     h += '</tr>';
   }
   h += '</tbody></table>';
-  document.getElementById('leaderboard').innerHTML = h;
+  document.getElementById('leaderboard').innerHTML = '<div class="lb-wrap">' + h + '</div>';
 }
 
 function renderAchievements(data) {
