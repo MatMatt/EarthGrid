@@ -318,6 +318,11 @@ class OpenEOGateway:
         self.stats = stats_engine
         self.bandwidth = bandwidth_manager
         self._jobs: dict[str, JobResult] = {}
+        try:
+            from .config import settings as _s
+            self._port = _s.port
+        except Exception:
+            self._port = 8400
 
     # ------------------------------------------------------------------
     # Process graph helpers
@@ -801,6 +806,72 @@ class OpenEOGateway:
 
         dates_sorted = sorted(date_band_items.keys())
         logger.info(f"Found {len(dates_sorted)} timesteps: {dates_sorted}")
+
+        if not dates_sorted:
+            # Auto-fetch: trigger grid fetch for missing data
+            logger.info(f"No matching bands locally. Triggering auto-fetch for {collection_id} bbox={req.bbox}")
+            try:
+                import httpx as _httpx
+                bbox_str = ",".join(str(v) for v in req.bbox) if req.bbox else ""
+                fetch_params = {
+                    "bbox": bbox_str,
+                    "limit": 30,
+                    "collection": collection_id,
+                }
+                if req.temporal_extent:
+                    fetch_params["start"] = req.temporal_extent[0]
+                    if len(req.temporal_extent) > 1:
+                        fetch_params["end"] = req.temporal_extent[1]
+                if need_bands:
+                    fetch_params["bands"] = ",".join(need_bands)
+
+                # Call local /fetch endpoint which distributes across grid
+                async with _httpx.AsyncClient(timeout=300) as _fc:
+                    _fr = await _fc.post(
+                        f"http://localhost:{self._port}/fetch",
+                        params=fetch_params,
+                    )
+                    if _fr.status_code == 200:
+                        job = _fr.json()
+                        logger.info(f"Auto-fetch triggered: job {job.get('job_id')}")
+                        # Wait for fetch to complete (poll status)
+                        job_id = job.get("job_id", "")
+                        import asyncio as _aio
+                        for _ in range(60):  # max 5 min
+                            await _aio.sleep(5)
+                            sr = await _fc.get(f"http://localhost:{self._port}/fetch/status/{job_id}")
+                            if sr.status_code == 200:
+                                st = sr.json()
+                                if st.get("status") in ("done", "error"):
+                                    logger.info(f"Auto-fetch completed: {st}")
+                                    break
+                        # Re-scan catalog
+                        if self.catalog:
+                            items = self.catalog.search(
+                                collections=[collection_id],
+                                bbox=req.bbox,
+                                datetime_range=(req.temporal_extent[0], req.temporal_extent[1]) if req.temporal_extent and len(req.temporal_extent) > 1 else None,
+                                limit=500,
+                            )
+                            # Rebuild band_items and date_band_items
+                            band_items = {}
+                            for item in items:
+                                if any(x in item.id.upper() for x in ("MSK_QUALIT", "MSK_DETFOO", "MSK_CLASSI", "MSK_SNWPRB", "MSK_CLDPRB")):
+                                    continue
+                                bname = _item_band(item)
+                                if bname:
+                                    band_items.setdefault(bname, []).append(item)
+                            date_band_items = {}
+                            for bname, item_list in band_items.items():
+                                if need_bands and bname not in need_bands:
+                                    continue
+                                for item in item_list:
+                                    dt = _item_date(item)
+                                    date_band_items.setdefault(dt, {}).setdefault(bname, []).append(item)
+                            dates_sorted = sorted(date_band_items.keys())
+                            logger.info(f"After auto-fetch: {len(dates_sorted)} timesteps")
+            except Exception as e:
+                logger.warning(f"Auto-fetch failed: {e}")
 
         if not dates_sorted:
             available_bands = list(band_items.keys())
