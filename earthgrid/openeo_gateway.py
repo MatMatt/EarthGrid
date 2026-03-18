@@ -732,6 +732,9 @@ class OpenEOGateway:
 
         band_items: dict[str, list] = {}
         for item in items:
+            # Skip mask/quality items (MSK_QUALIT, MSK_DETFOO, SCL, etc.)
+            if any(x in item.id.upper() for x in ("MSK_QUALIT", "MSK_DETFOO", "MSK_CLASSI", "MSK_SNWPRB", "MSK_CLDPRB")):
+                continue
             bname = _item_band(item)
             if bname:
                 band_items.setdefault(bname, []).append(item)
@@ -761,10 +764,15 @@ class OpenEOGateway:
             )
 
         def _pick_best_item(item_list):
-            """Pick highest-resolution item (largest width)."""
+            """Pick best item: prefer uint16 (real data), then highest resolution."""
             if len(item_list) == 1:
                 return item_list[0]
-            return max(item_list, key=lambda it: it.properties.get("earthgrid:width", 0))
+            def _score(it):
+                p = it.properties
+                dtype_prio = 1 if p.get("earthgrid:dtype", "") == "uint16" else 0
+                width = p.get("earthgrid:width", 0)
+                return (dtype_prio, width)
+            return max(item_list, key=_score)
 
         def _find_band(target, data):
             """Flexible band lookup with fallback aliases."""
