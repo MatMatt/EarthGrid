@@ -720,8 +720,16 @@ class OpenEOGateway:
             # Fall back to extracting from item ID
             return self._extract_band_from_item_id(item.id)
 
-        # Group items by their detected band name.
-        # For each needed band, pick the highest-resolution item.
+        # Group items by band name AND acquisition date for multi-temporal support.
+        # Item IDs contain date: S2C_33UUB_20250614_0_L2A_B04 → 20250614
+        def _item_date(item) -> str:
+            """Extract acquisition date from item properties or ID."""
+            dt = item.properties.get("datetime", "")
+            if dt and dt != "None":
+                return dt[:10]  # YYYY-MM-DD
+            m = re.search(r"_(\d{8})_", item.id)
+            return m.group(1) if m else "unknown"
+
         band_items: dict[str, list] = {}
         for item in items:
             bname = _item_band(item)
@@ -730,74 +738,35 @@ class OpenEOGateway:
 
         logger.info(f"Detected bands in catalog: {list(band_items.keys())}")
 
-        def _pick_best_item(item_list):
-            """Pick highest-resolution item (smallest tile size / largest width)."""
-            if len(item_list) == 1:
-                return item_list[0]
-            def _width(it):
-                return it.properties.get("earthgrid:width", 0)
-            return max(item_list, key=_width)
-
-        # Reconstruct each needed band from its dedicated item
+        # Group by date: {date: {band: [items]}}
+        date_band_items: dict[str, dict[str, list]] = {}
         for bname, item_list in band_items.items():
-            # Skip if we don't need this band
             if need_bands and bname not in need_bands:
                 continue
-            item = _pick_best_item(item_list)
-            try:
-                # Each item is a single-band file; reconstruct_bands returns
-                # {"B01": array} (generic name) — rename to the actual band name.
-                bd = reconstruct_bands(
-                    item_id=item.id,
-                    collection_id=collection_id,
-                    catalog=self.catalog,
-                    chunk_store=self.chunk_store,
-                    bands=None,  # load all (it's just one band)
-                )
-                if bd:
-                    # bd keys are generic ("B01") — replace with actual band name
-                    arr = next(iter(bd.values()))
-                    all_band_data[bname] = arr
-                    if reference_item is None:
-                        reference_item = item
-                    logger.info(f"Reconstructed band {bname} from {item.id}: shape={arr.shape}")
-            except Exception as e:
-                logger.warning(f"Could not reconstruct {item.id} ({bname}): {e}")
+            for item in item_list:
+                dt = _item_date(item)
+                date_band_items.setdefault(dt, {}).setdefault(bname, []).append(item)
 
-        # If band-name detection failed (no band in item ID), try generic reconstruct
-        # on a multi-band item using user-specified band names.
-        if not all_band_data:
-            logger.info("Band-from-ID detection yielded nothing; trying generic multi-band reconstruct")
-            for item in items[:10]:  # limit to first 10 items
-                try:
-                    bd = reconstruct_bands(
-                        item_id=item.id,
-                        collection_id=collection_id,
-                        catalog=self.catalog,
-                        chunk_store=self.chunk_store,
-                        bands=need_bands,
-                    )
-                    if bd:
-                        all_band_data.update(bd)
-                        if reference_item is None:
-                            reference_item = item
-                except Exception as e:
-                    logger.warning(f"Generic reconstruct failed for {item.id}: {e}")
+        dates_sorted = sorted(date_band_items.keys())
+        logger.info(f"Found {len(dates_sorted)} timesteps: {dates_sorted}")
 
-        if not all_band_data:
+        if not dates_sorted:
             available_bands = list(band_items.keys())
             raise HTTPException(
                 422,
-                f"Failed to reconstruct band data. "
+                f"Failed to find matching data. "
                 f"Needed bands: {need_bands}. "
                 f"Available in catalog: {available_bands}. "
                 f"Items checked: {len(items)}."
             )
 
-        logger.info(f"Reconstructed bands: {list(all_band_data.keys())}")
+        def _pick_best_item(item_list):
+            """Pick highest-resolution item (largest width)."""
+            if len(item_list) == 1:
+                return item_list[0]
+            return max(item_list, key=lambda it: it.properties.get("earthgrid:width", 0))
 
-        # 4. Apply operation
-        def _find_band(target: str, data: dict) -> np.ndarray:
+        def _find_band(target, data):
             """Flexible band lookup with fallback aliases."""
             if target in data:
                 return data[target].astype(np.float32)
@@ -808,45 +777,84 @@ class OpenEOGateway:
             for fb in aliases.get(target, []):
                 if fb in data:
                     return data[fb].astype(np.float32)
-            raise KeyError(f"Band '{target}' not found; available: {list(data.keys())}")
+            raise KeyError(f"Band \'{target}\' not found; available: {list(data.keys())}")
 
-        if op == "ndvi":
-            try:
-                nir_arr = _find_band(nir_name, all_band_data)
-                red_arr = _find_band(red_name, all_band_data)
-            except KeyError as e:
-                raise HTTPException(422, str(e))
+        def _align_shape(a, b):
+            """Resize arrays to matching shape if needed."""
+            if a.shape == b.shape:
+                return a, b
+            target_shape = (max(a.shape[0], b.shape[0]), max(a.shape[1], b.shape[1]))
+            from PIL import Image as _PILImage
+            def _rsz(arr, shape):
+                img = _PILImage.fromarray(arr)
+                return np.array(img.resize((shape[1], shape[0]), _PILImage.NEAREST))
+            if a.shape != target_shape:
+                a = _rsz(a, target_shape)
+            if b.shape != target_shape:
+                b = _rsz(b, target_shape)
+            return a, b
 
-            # Align shapes if they differ (e.g. different resolutions ingested)
-            if nir_arr.shape != red_arr.shape:
-                # Resize to match the larger array using nearest-neighbor
-                target_shape = (
-                    max(nir_arr.shape[0], red_arr.shape[0]),
-                    max(nir_arr.shape[1], red_arr.shape[1]),
-                )
-                from PIL import Image as _PILImage
-                def _resize(arr, shape):
-                    img = _PILImage.fromarray(arr)
-                    return np.array(img.resize((shape[1], shape[0]), _PILImage.NEAREST))
-                if nir_arr.shape != target_shape:
-                    nir_arr = _resize(nir_arr, target_shape)
-                if red_arr.shape != target_shape:
-                    red_arr = _resize(red_arr, target_shape)
+        # 4. Process each timestep
+        output_layers = []
+        output_band_names = []
+        reference_item = None
 
-            with np.errstate(divide="ignore", invalid="ignore"):
-                ndvi = np.where(
-                    (nir_arr + red_arr) == 0, np.float32(0),
-                    (nir_arr - red_arr) / (nir_arr + red_arr)
-                )
-            ndvi = np.nan_to_num(ndvi.astype(np.float32), nan=0.0, posinf=1.0, neginf=-1.0)
-            output_data = ndvi[np.newaxis, :, :]
-            output_band_names = ["ndvi"]
-            output_dtype = "float32"
-        else:
-            band_names_out = list(all_band_data.keys())
-            output_data = np.stack([all_band_data[b] for b in band_names_out], axis=0)
-            output_band_names = band_names_out
-            output_dtype = str(output_data.dtype)
+        for dt in dates_sorted:
+            bands_for_date = date_band_items[dt]
+            band_data: dict[str, np.ndarray] = {}
+
+            for bname, item_list in bands_for_date.items():
+                item = _pick_best_item(item_list)
+                try:
+                    bd = reconstruct_bands(
+                        item_id=item.id,
+                        collection_id=collection_id,
+                        catalog=self.catalog,
+                        chunk_store=self.chunk_store,
+                        bands=None,
+                    )
+                    if bd:
+                        arr = next(iter(bd.values()))
+                        band_data[bname] = arr
+                        if reference_item is None:
+                            reference_item = item
+                        logger.info(f"Reconstructed {bname} @ {dt} from {item.id}: shape={arr.shape}")
+                except Exception as e:
+                    logger.warning(f"Could not reconstruct {item.id} ({bname} @ {dt}): {e}")
+
+            if not band_data:
+                logger.warning(f"No band data for timestep {dt}, skipping")
+                continue
+
+            if op == "ndvi":
+                try:
+                    nir_arr = _find_band(nir_name, band_data)
+                    red_arr = _find_band(red_name, band_data)
+                except KeyError as e:
+                    logger.warning(f"Missing band for NDVI @ {dt}: {e}, skipping")
+                    continue
+                nir_arr, red_arr = _align_shape(nir_arr, red_arr)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    ndvi = np.where(
+                        (nir_arr + red_arr) == 0, np.float32(0),
+                        (nir_arr - red_arr) / (nir_arr + red_arr)
+                    )
+                ndvi = np.nan_to_num(ndvi.astype(np.float32), nan=0.0, posinf=1.0, neginf=-1.0)
+                output_layers.append(ndvi)
+                output_band_names.append(f"ndvi_{dt}")
+            else:
+                # No operation: stack all requested bands for this timestep
+                for bname in sorted(band_data.keys()):
+                    output_layers.append(band_data[bname])
+                    output_band_names.append(f"{bname}_{dt}")
+
+        if not output_layers:
+            raise HTTPException(422, "No valid timesteps could be processed")
+
+        # Stack all layers: shape = (n_layers, height, width)
+        output_data = np.stack(output_layers, axis=0)
+        output_dtype = "float32" if op == "ndvi" else str(output_data.dtype)
+        logger.info(f"Multi-temporal output: {len(output_layers)} layers, shape={output_data.shape}")
 
         # 5. Write GeoTIFF to memory buffer
         props = reference_item.properties
