@@ -809,10 +809,13 @@ class OpenEOGateway:
 
         if not dates_sorted:
             # Auto-fetch: trigger grid fetch for missing data
-            logger.info(f"No matching bands locally. Triggering auto-fetch for {collection_id} bbox={req.bbox}")
+            logger.info(f"No matching bands locally. Triggering auto-fetch for {collection_id}")
             try:
                 import httpx as _httpx
-                bbox_str = ",".join(str(v) for v in req.bbox) if req.bbox else ""
+                _ext = req.spatial_extent
+                bbox_str = ""
+                if _ext:
+                    bbox_str = ",".join(str(_ext.get(k, "")) for k in ("west", "south", "east", "north"))
                 fetch_params = {
                     "bbox": bbox_str,
                     "limit": 30,
