@@ -852,7 +852,7 @@ class OpenEOGateway:
                         if self.catalog:
                             items = self.catalog.search(
                                 collections=[collection_id],
-                                bbox=req.bbox,
+                                bbox=[req.spatial_extent.get(k) for k in ("west","south","east","north")] if req.spatial_extent else None,
                                 datetime_range=(req.temporal_extent[0], req.temporal_extent[1]) if req.temporal_extent and len(req.temporal_extent) > 1 else None,
                                 limit=500,
                             )
