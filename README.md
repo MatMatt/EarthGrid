@@ -169,14 +169,12 @@ rm -rf ~/EarthGrid ~/.earthgrid
 
 **Node** — Stores and serves data chunks. Every chunk is identified by its SHA-256 hash (content-addressed). Nodes auto-sync data between each other.
 
-**Source Node** — A node that has credentials to download from official sources (CDSE, WEkEO, Element84, CMEMS). When the network needs data that doesn't exist yet, a source node fetches it. Credentials never leave the node.
-
 ### How Data Flows
 
 1. Someone requests EO data for an area (any sensor/provider)
 2. Beacon checks which nodes have it
 3. If cached → served directly from the nearest node
-4. If not cached → a source node fetches it from the appropriate provider, stores it, and serves it
+4. If not cached → any node fetches it from the provider (Element84, CDSE, etc.), stores it, and serves it
 5. Other nodes automatically replicate the new data
 
 ### Bootstrap & Discovery
