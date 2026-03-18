@@ -34,6 +34,8 @@ async def _rust_proxy(request: "Request", path: str) -> "Response":
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(url)
+            if resp.status_code == 404:
+                return None  # endpoint not in Rust, fall back to Python
             return Response(
                 content=resp.content,
                 status_code=resp.status_code,
@@ -694,7 +696,7 @@ async def stats_middleware(request: Request, call_next):
 
 # --- Rust Core Proxy Middleware ---
 RUST_PROXY_PATHS = {
-    "/health", "/node-info", "/stats", "/stats.json",
+    "/health", "/node-info", "/stats",
     "/stac/collections", "/stac/search",
     "/chunks", "/peers", "/peers.json",
     "/verify/", "/federation/search",
