@@ -48,12 +48,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             del self.windows[ip]
 
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for health checks
+        # Skip rate limiting for health checks and LAN clients
         if request.url.path in ("/health", "/"):
             return await call_next(request)
 
-        now = time.monotonic()
         ip = self._client_ip(request)
+        # Exempt LAN and localhost from rate limiting
+        if ip.startswith(("127.", "10.", "192.168.", "::1")) or ip == "localhost":
+            return await call_next(request)
+
+        now = time.monotonic()
 
         with self.lock:
             self._cleanup(now)
