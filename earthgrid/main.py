@@ -322,7 +322,7 @@ def admin_set_node_name(name: str = Query(..., min_length=1, max_length=64), req
     return {"status": "renamed", "node_name": name.strip()}
 
 
-@app.get("/admin/activity", dependencies=[Depends(_require_admin_auth)])
+@app.get("/admin/activity", dependencies=[Depends(_require_grid_auth)])
 def admin_activity(
     request: Request,
     days: int = Query(7, ge=1, le=90),
