@@ -763,8 +763,13 @@ class OpenEOGateway:
                 f"Items checked: {len(items)}."
             )
 
-        def _pick_best_item(item_list):
-            """Pick best item: prefer uint16 (real data), then highest resolution."""
+        def _pick_best_item(item_list, min_width: int = 0):
+            """Pick best item: prefer uint16 (real data), then highest resolution.
+            If min_width given, filter out items below that threshold first."""
+            if min_width:
+                filtered = [it for it in item_list if it.properties.get("earthgrid:width", 0) >= min_width]
+                if filtered:
+                    item_list = filtered
             if len(item_list) == 1:
                 return item_list[0]
             def _score(it):
@@ -812,7 +817,7 @@ class OpenEOGateway:
             band_data: dict[str, np.ndarray] = {}
 
             for bname, item_list in bands_for_date.items():
-                item = _pick_best_item(item_list)
+                item = _pick_best_item(item_list, min_width=5000 if op == "ndvi" else 0)
                 try:
                     bd = reconstruct_bands(
                         item_id=item.id,
@@ -833,6 +838,12 @@ class OpenEOGateway:
             if not band_data:
                 logger.warning(f"No band data for timestep {dt}, skipping")
                 continue
+
+            # Check max available resolution for this date
+            max_width_for_date = max(
+                (it.properties.get("earthgrid:width", 0) for bl in bands_for_date.values() for it in bl),
+                default=0
+            )
 
             if op == "ndvi":
                 try:
