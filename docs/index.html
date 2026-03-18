@@ -26,6 +26,20 @@ h1 span { color:var(--accent); }
 .feature .icon { font-size:1.5rem; margin-bottom:0.5rem; }
 .feature h3 { font-size:1rem; margin-bottom:0.5rem; }
 .feature p { font-size:0.85rem; color:var(--dim); }
+
+/* Copy button for code blocks */
+pre { position: relative; }
+pre .copy-btn {
+  position: absolute; top: 8px; right: 8px;
+  background: rgba(88,166,255,0.1); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--dim); cursor: pointer;
+  padding: 4px 8px; font-size: 11px; font-family: inherit;
+  opacity: 0; transition: opacity 0.2s, color 0.2s, background 0.2s;
+  z-index: 1;
+}
+pre:hover .copy-btn { opacity: 1; }
+pre .copy-btn:hover { background: rgba(88,166,255,0.2); color: var(--accent); }
+pre .copy-btn.copied { color: var(--green); border-color: var(--green); opacity: 1; }
 code { background:var(--card); padding:2px 6px; border-radius:4px; font-size:0.9em; }
 pre { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:1rem; overflow-x:auto; margin:1rem 0; }
 a { color:var(--accent); text-decoration:none; }
@@ -1175,6 +1189,23 @@ async function load() {
   }
 }
 load();
+
+// --- Copy buttons for all <pre><code> blocks ---
+document.querySelectorAll('pre').forEach(function(pre) {
+  var btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.textContent = '📋 Copy';
+  btn.onclick = function() {
+    var code = pre.querySelector('code');
+    var text = code ? code.textContent : pre.textContent;
+    navigator.clipboard.writeText(text).then(function() {
+      btn.textContent = '✓ Copied';
+      btn.classList.add('copied');
+      setTimeout(function() { btn.textContent = '📋 Copy'; btn.classList.remove('copied'); }, 1500);
+    });
+  };
+  pre.appendChild(btn);
+});
 </script>
 </body>
 </html>
