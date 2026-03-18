@@ -1513,6 +1513,7 @@ def _interactive_setup(args):
         print(f"   earthgrid start --also-beacon")
     else:
         print(f"   earthgrid start")
+    print(f"\n🌐 WebUI: http://localhost:{port}/ui")
     print(f"\n📊 Manage source accounts later:")
     print(f"   earthgrid users list")
     print(f"   earthgrid users add --provider cdse --username your@email.com")
