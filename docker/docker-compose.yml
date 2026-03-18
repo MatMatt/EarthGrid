@@ -13,7 +13,7 @@ services:
       dockerfile: docker/Dockerfile
     container_name: earthgrid
     ports:
-      - "8400:8400"
+      - "127.0.0.1:8400:8400"
     volumes:
       - /mnt/sda/earthgrid:/data
       - ../docs:/app/docs

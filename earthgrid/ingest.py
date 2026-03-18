@@ -37,7 +37,7 @@ S2_BANDS = ["B01", "B02", "B03", "B04", "B05", "B06", "B07",
             "B08", "B8A", "B09", "B11", "B12", "SCL"]
 
 
-def _detect_band_names(file_path: Path, n_bands: int) -> list[str]:
+def _detect_band_names(file_path: Path, n_bands: int, item_id: str | None = None) -> list[str]:
     """Detect band names from filename or fall back to generic names."""
     fname = file_path.name.upper()
     # Single-band file with S2 band name in filename
@@ -52,6 +52,17 @@ def _detect_band_names(file_path: Path, n_bands: int) -> list[str]:
         for i in range(1, 8):
             if f"SR_B{i}" in fname:
                 return [f"SR_B{i}"]
+    # Sentinel-1 polarization from filename or item_id
+    if n_bands == 1:
+        for src in [fname, (item_id or '').upper()]:
+            if '_VV' in src or src.endswith('VV'):
+                return ['VV']
+            if '_VH' in src or src.endswith('VH'):
+                return ['VH']
+            if '_HH' in src or src.endswith('HH'):
+                return ['HH']
+            if '_HV' in src or src.endswith('HV'):
+                return ['HV']
     # Generic
     return [f"B{i+1:02d}" for i in range(n_bands)]
 
@@ -167,7 +178,7 @@ def _do_ingest(
         n_bands = src.count
         dtype = str(src.dtypes[0])
 
-        band_names = _detect_band_names(file_path, n_bands)
+        band_names = _detect_band_names(file_path, n_bands, item_id)
 
         # Ensure collection exists
         col = catalog.get_collection(collection_id)
