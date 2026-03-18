@@ -2,8 +2,29 @@
 from __future__ import annotations
 import json
 import uuid
+import logging
 from pathlib import Path
 from pydantic_settings import BaseSettings
+
+
+def _detect_public_ip() -> str:
+    """Auto-detect public IP via external services."""
+    import urllib.request
+    services = [
+        "https://ifconfig.me/ip",
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+    ]
+    for url in services:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "EarthGrid"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                ip = resp.read().decode().strip()
+                if ip and "." in ip:  # basic IPv4 check
+                    return ip
+        except Exception:
+            continue
+    return ""
 
 
 class Settings(BaseSettings):
@@ -97,6 +118,19 @@ class Settings(BaseSettings):
                      "knoll", "ridge", "brook", "cliff", "grove", "shore"]
             import random
             self.node_name = f"{random.choice(_adj)}-{random.choice(_noun)}-{self.node_id[:4]}"
+
+        # --- Auto-detect public URL ---
+        if not self.public_url and (self.also_beacon or self.role == "beacon"):
+            ip = _detect_public_ip()
+            if ip:
+                self.public_url = f"http://{ip}:{self.port}"
+                logging.getLogger("earthgrid.config").info(
+                    f"Auto-detected public URL: {self.public_url}"
+                )
+            else:
+                logging.getLogger("earthgrid.config").warning(
+                    "Could not auto-detect public IP. Set EARTHGRID_PUBLIC_URL manually."
+                )
 
     @property
     def base_url(self) -> str:
