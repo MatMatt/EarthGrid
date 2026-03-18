@@ -1048,7 +1048,8 @@ async function loadStats() {
     const flat = {};
     function flatten(obj, prefix='') {
       for (const [k,v] of Object.entries(obj)) {
-        if (typeof v === 'object' && v !== null && !Array.isArray(v)) flatten(v, prefix ? prefix+'.'+k : k);
+        if (Array.isArray(v)) flat[prefix ? prefix+'.'+k : k] = v.length + ' entries';
+        else if (typeof v === 'object' && v !== null) flatten(v, prefix ? prefix+'.'+k : k);
         else flat[prefix ? prefix+'.'+k : k] = v;
       }
     }
