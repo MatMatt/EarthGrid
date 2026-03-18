@@ -372,14 +372,16 @@ async def _ingest_item_locally(
             print(f"    \u2b07 {band_name}...")
 
             try:
-                resp = await client.get(cog_url)
-                resp.raise_for_status()
+                tmp_path = Path(tempfile.mktemp(suffix=".tif"))
+                total_bytes = 0
+                async with client.stream("GET", cog_url) as resp:
+                    resp.raise_for_status()
+                    with open(tmp_path, "wb") as f:
+                        async for data in resp.aiter_bytes(65536):
+                            f.write(data)
+                            total_bytes += len(data)
                 if bandwidth_manager:
-                    await bandwidth_manager.acquire(len(resp.content), nice_level=10, stream_id=f"e84-{item['id'][:12]}")
-
-                with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
-                    tmp.write(resp.content)
-                    tmp_path = Path(tmp.name)
+                    await bandwidth_manager.acquire(total_bytes, nice_level=10, stream_id=f"e84-{item['id'][:12]}")
 
                 try:
                     item_obj = ingest_cog(
