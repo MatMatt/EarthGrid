@@ -46,7 +46,7 @@ EarthGrid stores **only official data** from sources like Copernicus (Sentinel) 
 └─────────────────────────────────────────────────────┘
 ```
 
-**Beacon** — Lightweight coordinator. Maintains a registry of nodes, routes queries, federates with other beacons. Stores no data.
+**Beacon** — Lightweight coordinator. Maintains a registry of nodes, routes queries, federates with other beacons. Stores no data. → [Beacon Setup Guide](docs/beacon-guide.md)
 
 **Node** — Stores and serves data chunks. Every chunk is identified by its SHA-256 hash (content-addressed). Nodes auto-sync data between each other.
 
@@ -284,6 +284,20 @@ earthgrid start
 > PyPI package not yet published.
 
 ---
+
+## Running a Beacon
+
+Want to help the network by running a beacon? A beacon is a lightweight coordinator — it needs minimal resources (50-100 MB RAM, <1 MB disk) and helps other nodes discover each other.
+
+**Quick version:**
+
+```bash
+earthgrid docker start --beacon --name my-beacon
+```
+
+**Requirements:** EarthGrid installed + port 8400 reachable from the internet. A small EU VPS (~€4/month) is ideal.
+
+→ **[Full Beacon Guide](docs/beacon-guide.md)** — setup options, auto-detection, federation, hybrid mode.
 
 ## CLI Reference
 
