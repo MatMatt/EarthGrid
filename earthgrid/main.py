@@ -336,6 +336,10 @@ app.include_router(openeo_router)   # legacy /openeo/* routes
 app.include_router(root_router)     # openEO API v1.2.0 root-level routes
 app.include_router(gamification_router)
 
+# Beacon router always included — active only when also_beacon=True
+from .beacon import beacon_router as _beacon_router, registry as _beacon_registry, _beacon_sync_loop
+app.include_router(_beacon_router)
+
 
 # --- Beacon Registration ---
 
@@ -657,8 +661,8 @@ async def startup():
 
     # Mount beacon FIRST so /register and /nodes work for self-registration
     if settings.also_beacon:
-        from .beacon import beacon_router, registry, _beacon_sync_loop
-        app.include_router(beacon_router)
+        # beacon_router already included at module level
+        from .beacon import registry, _beacon_sync_loop
         # Self-register this node with its own beacon registry
         try:
             summary = catalog.summary()
