@@ -14,8 +14,8 @@ Distributed storage and openEO processing for Earth observation data.
 > EarthGrid is in active development and test phase. Things break, APIs change, data may be lost. It is not ready for production use.
 >
 > **We are looking for a few early testers:**
-> - 🔦 **1–3 more beacon operators** — a small VPS (~€4/month) is enough. [How to run a beacon →](docs/beacon-guide.md)
-> - 📦 **A handful of data nodes** — spare disk space (50–500 GB) and a stable connection
+> - 🔦 **Beacon operators** — [How to run a beacon →](docs/beacon-guide.md)
+> - 📦 **Data nodes** — spare disk space and a stable connection
 >
 > Not looking for mass adoption yet — a small, stable test network first.
 
