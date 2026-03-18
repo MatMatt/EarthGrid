@@ -245,6 +245,7 @@ class Catalog:
                     "item_count": 0,
                     "dates": set(),
                     "bands": set(),
+                    "tile_id": None,
                 }
 
             cell = collections[col][key]
@@ -256,8 +257,12 @@ class Catalog:
             if dt and dt != "None":
                 cell["dates"].add(dt)
 
-            # Extract band from item ID or properties
+            # Extract tile_id from item ID (MGRS pattern: T32TPT or 32TPT)
             item_id = r["id"]
+            if cell["tile_id"] is None:
+                tm = re.search(r'(?:^|[_/])(T?[0-9]{2}[A-Z]{3})(?:[_/]|$)', item_id)
+                if tm:
+                    cell["tile_id"] = tm.group(1).lstrip("T")  # e.g. "32TPT"
             band_names = props.get("earthgrid:band_names", [])
             if band_names:
                 for b in band_names:
@@ -277,6 +282,7 @@ class Catalog:
                 sorted_dates = sorted(cell["dates"])
                 cell_list.append({
                     "bbox": cell["bbox"],
+                    "tile_id": cell["tile_id"],
                     "item_count": cell["item_count"],
                     "date_count": len(sorted_dates),
                     "dates": sorted_dates,

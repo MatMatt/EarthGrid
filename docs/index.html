@@ -209,7 +209,7 @@ function renderCoverageMap(data) {
       rect.on('click', () => showCoverageDetail(colId, cell));
 
       rect.bindTooltip(
-        sensorLabel(colId) + '<br>' +
+        sensorLabel(colId) + (cell.tile_id ? ' · Tile ' + cell.tile_id : '') + '<br>' +
         pct.toFixed(1) + '% of archive · ' + cell.date_count + ' dates',
         {className:'', sticky:true}
       );
@@ -307,6 +307,7 @@ function showCoverageDetail(colId, cell) {
     '<div style="display:flex;gap:2rem;margin:1rem 0;flex-wrap:wrap">' +
     '<div><div style="font-size:1.8rem;font-weight:700;color:' + covColor(cell.date_count, colId) + '">' + pct.toFixed(1) + '%</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">of archive</div></div>' +
+    (cell.tile_id ? '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:4px">Tile: <strong>' + cell.tile_id + '</strong></div>' : '') +
     '<div><div style="font-size:1.8rem;font-weight:700;color:var(--text)">' + cell.date_count + '</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">dates ingested</div></div>' +
     '<div><div style="font-size:1.8rem;font-weight:700;color:var(--accent)">' + cell.item_count + '</div>' +
