@@ -17,6 +17,31 @@ from fastapi.responses import Response, HTMLResponse
 
 from . import __version__
 from .config import settings
+
+# --- Rust Core Proxy ---
+# When EARTHGRID_RUST_CORE_URL is set, read endpoints are proxied to the Rust binary.
+# This allows gradual migration: Rust handles reads, Python handles writes.
+import os as _os
+RUST_CORE_URL = _os.environ.get("EARTHGRID_RUST_CORE_URL", "").rstrip("/")
+
+async def _rust_proxy(request: "Request", path: str) -> "Response":
+    """Forward a request to the Rust core and return its response."""
+    if not RUST_CORE_URL:
+        return None
+    url = f"{RUST_CORE_URL}{path}"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url)
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type", "application/json"),
+            )
+    except Exception as e:
+        logger.warning(f"Rust core proxy failed ({url}): {e}, falling back to Python")
+        return None
 from .chunk_store import ChunkStore
 from .catalog import Catalog
 from .federation import Federation
@@ -47,6 +72,37 @@ app.add_middleware(
     allow_methods=['GET', 'POST', 'OPTIONS'],
     allow_headers=['*'],
 )
+
+# --- Rust Core Proxy Middleware ---
+RUST_PROXY_PATHS = {
+    "/health", "/node-info", "/stats", "/stats.json",
+    "/stac/collections", "/stac/search",
+    "/chunks", "/peers", "/peers.json",
+    "/verify/", "/federation/search",
+}
+
+@app.middleware("http")
+async def rust_core_proxy_middleware(request: Request, call_next):
+    """Proxy read endpoints to Rust core if available."""
+    if RUST_CORE_URL and request.method == "GET":
+        path = request.url.path
+        # Check if this path should be proxied
+        should_proxy = False
+        for proxy_path in RUST_PROXY_PATHS:
+            if proxy_path.endswith("/"):
+                if path.startswith(proxy_path):
+                    should_proxy = True
+                    break
+            elif path == proxy_path or path.startswith(proxy_path + "/"):
+                should_proxy = True
+                break
+        
+        if should_proxy:
+            result = await _rust_proxy(request, path)
+            if result is not None:
+                return result
+    
+    return await call_next(request)
 
 # Built-in rate limiting — protects node without external config
 app.add_middleware(RateLimitMiddleware, requests_per_minute=120, burst=20)
