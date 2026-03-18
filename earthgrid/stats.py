@@ -711,12 +711,48 @@ class NodeLoadTracker:
                     "served_requests": 0, "served_gb": 0.0}
         return {k: round(row[k] or 0, 2) for k in row.keys()}
 
+    def get_ram_available_gb(self) -> float:
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        return round(int(line.split()[1]) / (1024 * 1024), 1)
+        except Exception:
+            pass
+        return 0.0
+
+    @staticmethod
+    def get_hw_info() -> dict:
+        """Static hardware info for registration (cpu_cores, cpu_freq_mhz, ram_total_gb)."""
+        import os
+        cores = os.cpu_count() or 0
+        ram_total = 0.0
+        freq_mhz = 0
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        ram_total = round(int(line.split()[1]) / (1024 * 1024), 1)
+                        break
+        except Exception:
+            pass
+        try:
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if line.startswith("cpu MHz"):
+                        freq_mhz = int(float(line.split(":")[1].strip()))
+                        break
+        except Exception:
+            pass
+        return {"cpu_cores": cores, "cpu_freq_mhz": freq_mhz, "ram_total_gb": ram_total}
+
     def heartbeat_snapshot(self) -> dict:
         """Return current load + stats for heartbeat reporting."""
         return {
             "active_downloads": self.active_downloads,
             "active_processing": self.active_processing,
             "cpu_percent": self.get_cpu_percent(),
+            "ram_available_gb": self.get_ram_available_gb(),
             "stats_today": self.stats_for_date(self._today()),
             "stats_month": self.stats_for_month(self._month()),
         }

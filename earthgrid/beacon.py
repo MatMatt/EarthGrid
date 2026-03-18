@@ -49,6 +49,10 @@ class RegisteredNode:
     active_processing: int = 0
     cpu_percent: float = 0.0
     disk_io_mbps: float = 0.0
+    cpu_cores: int = 0
+    cpu_freq_mhz: int = 0
+    ram_total_gb: float = 0.0
+    ram_available_gb: float = 0.0
     stats_today: dict = field(default_factory=dict)
     stats_month: dict = field(default_factory=dict)
     last_seen: float = 0.0
@@ -81,6 +85,10 @@ class RegisteredNode:
             "active_processing": self.active_processing,
             "cpu_percent": self.cpu_percent,
             "disk_io_mbps": self.disk_io_mbps,
+            "cpu_cores": self.cpu_cores,
+            "cpu_freq_mhz": self.cpu_freq_mhz,
+            "ram_total_gb": self.ram_total_gb,
+            "ram_available_gb": self.ram_available_gb,
             "stats_today": self.stats_today,
             "stats_month": self.stats_month,
             "alive": self.alive,
@@ -544,6 +552,9 @@ async def register_node(
     chunk_count: int = Query(0),
     chunks_bytes: int = Query(0),
     can_source: bool = Query(False, description="Node can fetch from official sources"),
+    cpu_cores: int = Query(0),
+    cpu_freq_mhz: int = Query(0),
+    ram_total_gb: float = Query(0.0),
 ):
     """Register a data node with this beacon."""
     # Auto-detect peer IP if url is 0.0.0.0 or missing
@@ -580,6 +591,12 @@ async def register_node(
     )
     replication_planner.set_preferences(node_id, prefs)
     node.storage_limit_gb = storage_limit
+    if cpu_cores:
+        node.cpu_cores = cpu_cores
+    if cpu_freq_mhz:
+        node.cpu_freq_mhz = cpu_freq_mhz
+    if ram_total_gb:
+        node.ram_total_gb = ram_total_gb
     return {"status": "registered", "node": node.to_dict()}
 
 
@@ -598,6 +615,7 @@ async def node_heartbeat(
     active_processing: int = Query(None),
     cpu_percent: float = Query(None),
     disk_io_mbps: float = Query(None),
+    ram_available_gb: float = Query(None),
     stats_today: str = Query(None),
     stats_month: str = Query(None),
 ):
@@ -627,6 +645,8 @@ async def node_heartbeat(
         updates["cpu_percent"] = cpu_percent
     if disk_io_mbps is not None:
         updates["disk_io_mbps"] = disk_io_mbps
+    if ram_available_gb is not None:
+        updates["ram_available_gb"] = ram_available_gb
     if stats_today is not None:
         try:
             updates["stats_today"] = json.loads(stats_today)
