@@ -23,7 +23,7 @@ pub struct StacItem {
     pub bbox: [f64; 4],
     pub properties: serde_json::Value,
     pub chunk_hashes: Vec<String>,
-    pub created_at: String,
+    pub created_at: f64,
 }
 
 /// SQLite-backed STAC catalog.
@@ -70,7 +70,7 @@ impl Catalog {
                 bbox_north REAL NOT NULL,
                 properties_json TEXT NOT NULL DEFAULT '{}',
                 chunk_hashes_json TEXT NOT NULL DEFAULT '[]',
-                created_at TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s','now')),
                 FOREIGN KEY (collection) REFERENCES collections(id)
             );
             CREATE INDEX IF NOT EXISTS idx_items_collection ON items(collection);
@@ -269,8 +269,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    fn now_str() -> String {
-        Utc::now().to_rfc3339()
+    fn now_ts() -> f64 {
+        Utc::now().timestamp() as f64
     }
 
     #[test]
@@ -282,7 +282,7 @@ mod tests {
             bbox: [12.0, 55.0, 13.0, 56.0],
             properties: serde_json::json!({"datetime": "2026-03-11"}),
             chunk_hashes: vec!["abc123".to_string(), "def456".to_string()],
-            created_at: now_str(),
+            created_at: now_ts(),
         };
         catalog.add_item(&item).unwrap();
 
@@ -302,7 +302,7 @@ mod tests {
                     bbox: [0.0, 0.0, 1.0, 1.0],
                     properties: serde_json::json!({}),
                     chunk_hashes: vec![],
-                    created_at: now_str(),
+                    created_at: now_ts(),
                 })
                 .unwrap();
         }
@@ -313,7 +313,7 @@ mod tests {
                 bbox: [0.0, 0.0, 1.0, 1.0],
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
-                created_at: now_str(),
+                created_at: now_ts(),
             })
             .unwrap();
 
@@ -331,7 +331,7 @@ mod tests {
                 bbox: [12.0, 55.0, 13.0, 56.0],
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
-                created_at: now_str(),
+                created_at: now_ts(),
             })
             .unwrap();
         catalog
@@ -341,7 +341,7 @@ mod tests {
                 bbox: [139.0, 35.0, 140.0, 36.0],
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
-                created_at: now_str(),
+                created_at: now_ts(),
             })
             .unwrap();
 
@@ -362,7 +362,7 @@ mod tests {
                 bbox: [0.0; 4],
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
-                created_at: now_str(),
+                created_at: now_ts(),
             })
             .unwrap();
         assert_eq!(catalog.item_count(None).unwrap(), 1);
@@ -378,7 +378,7 @@ mod tests {
                 bbox: [0.0; 4],
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
-                created_at: now_str(),
+                created_at: now_ts(),
             })
             .unwrap();
         assert!(catalog.delete_item("del").unwrap());

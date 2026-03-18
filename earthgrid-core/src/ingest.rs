@@ -70,7 +70,8 @@ pub fn ingest_file(
         .unwrap_or_else(|| "file".to_string());
     let item_id = format!("{}_{}", stem, short_hash);
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now_str = chrono::Utc::now().to_rfc3339();
+    let now_ts = chrono::Utc::now().timestamp() as f64;
 
     let item = StacItem {
         id: item_id,
@@ -82,10 +83,10 @@ pub fn ingest_file(
             "earthgrid:file_hash": file_hash,
             "earthgrid:chunk_count": chunk_hashes.len(),
             "earthgrid:chunk_size": chunk_size,
-            "datetime": &now,
+            "datetime": &now_str,
         }),
         chunk_hashes,
-        created_at: now,
+        created_at: now_ts,
     };
 
     Ok(item)
