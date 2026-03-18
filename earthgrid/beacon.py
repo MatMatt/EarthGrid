@@ -565,6 +565,9 @@ async def register_node(
             url = re.sub(r"0\.0\.0\.0", client_ip, url)
             import logging
             logging.getLogger("earthgrid").info(f"Auto-detected peer URL: {url} (from {client_ip})")
+    # Reject self-loop registrations (127.0.0.1)
+    if url and "127.0.0.1" in url:
+        return {"status": "rejected", "reason": "localhost URL not allowed"}
     col_list = [c.strip() for c in collections.split(",") if c.strip()] if collections else []
     node = await registry.register(
         node_id=node_id,
@@ -707,6 +710,13 @@ def get_node(node_id: str):
     if not node:
         raise HTTPException(404, "Node not found")
     return node.to_dict()
+
+
+@beacon_app.delete("/nodes/{node_id}")
+async def remove_node(node_id: str):
+    """Remove a node from the beacon registry."""
+    await registry.unregister(node_id)
+    return {"status": "removed", "node_id": node_id}
 
 
 # --- Beacon Federation ---
