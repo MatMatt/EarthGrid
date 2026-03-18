@@ -216,3 +216,30 @@ Priority-based bandwidth allocation, inspired by Unix `nice`.
 - **Target:** Full Rust implementation
 - **Container:** Docker
 - **License:** EUPL-1.2
+
+## Migration: Python → Rust
+
+**Decision (2026-03-18):** Rust replaces Python completely. Single binary, no Python runtime.
+
+### Roadmap
+
+**Phase 1 — Current:** Python is the running node. Rust core exists as parallel implementation with matching APIs.
+
+**Phase 2 — Feature parity:** Build out remaining Rust functionality:
+- [ ] openEO Gateway (process graph parsing + execution)
+- [ ] Source User management (encrypted credentials)
+- [ ] Auto-ingest pipeline
+- [ ] CLI (clap-based, replacing Python Click)
+- [ ] Docker image (single static binary, alpine-based)
+- [ ] GDAL bindings (via gdal-rs crate)
+
+**Phase 3 — Switch:** Deploy Rust binary alongside Python on Nucleus, compare, then decommission Python.
+
+**Phase 4 — Cleanup:** Remove `earthgrid/` Python directory. Single codebase in `earthgrid-core/`.
+
+### Why
+
+- One static binary, zero dependencies for users
+- Better performance (chunks, networking, concurrency)
+- Simpler deployment (no venv, no pip, no Python version issues)
+- Infrastructure software should be self-contained
