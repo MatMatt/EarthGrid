@@ -1178,6 +1178,28 @@ async def peers_json():
             return data
     raise HTTPException(404, "peers.json not found")
 
+
+@app.get("/nodes")
+async def nodes_proxy(alive_only: bool = Query(True)):
+    """Proxy /nodes to beacon for non-beacon nodes, or serve locally if beacon."""
+    if settings.also_beacon:
+        # Served by beacon_app sub-router
+        from .beacon import registry
+        nodes = registry.get_alive_nodes() if alive_only else list(registry.nodes.values())
+        return {"count": len(nodes), "nodes": [n.to_dict() for n in nodes]}
+    # Proxy to configured beacon
+    if not settings.beacon_url:
+        return {"count": 0, "nodes": []}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{settings.beacon_url.rstrip('/')}/nodes",
+                params={"alive_only": alive_only},
+            )
+            return resp.json()
+    except Exception:
+        return {"count": 0, "nodes": []}
+
 @app.get("/coverage/spatial")
 def coverage_spatial():
     """Spatial coverage with per-cell detail (dates, bands, item counts)."""
