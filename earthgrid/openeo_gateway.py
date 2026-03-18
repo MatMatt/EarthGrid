@@ -852,11 +852,27 @@ class OpenEOGateway:
         props = reference_item.properties
         width  = output_data.shape[2]
         height = output_data.shape[1]
-        crs    = props.get("earthgrid:crs", "EPSG:4326")
-        bbox   = reference_item.bbox  # [west, south, east, north] in native CRS
+        native_crs = props.get("earthgrid:crs", "EPSG:4326")
+        bbox   = reference_item.bbox  # [west, south, east, north] — STAC bbox is always WGS84
 
         from rasterio.transform import from_bounds
-        transform = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], width, height)
+        from pyproj import Transformer
+
+        # STAC bbox is always in EPSG:4326; reproject to native CRS if needed
+        if native_crs and native_crs.upper() != "EPSG:4326":
+            try:
+                transformer = Transformer.from_crs("EPSG:4326", native_crs, always_xy=True)
+                x0, y0 = transformer.transform(bbox[0], bbox[1])
+                x1, y1 = transformer.transform(bbox[2], bbox[3])
+                transform = from_bounds(x0, y0, x1, y1, width, height)
+                crs = native_crs
+            except Exception as e:
+                logger.warning(f"CRS transform failed ({native_crs}): {e}, falling back to EPSG:4326")
+                transform = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], width, height)
+                crs = "EPSG:4326"
+        else:
+            transform = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], width, height)
+            crs = "EPSG:4326"
 
         buf = io.BytesIO()
         with rasterio.open(
