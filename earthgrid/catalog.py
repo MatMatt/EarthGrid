@@ -63,6 +63,8 @@ class Catalog:
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(db_path), check_same_thread=False)
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA busy_timeout=5000")
         self.db.row_factory = sqlite3.Row
         self._init_db()
 
