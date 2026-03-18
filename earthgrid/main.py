@@ -133,6 +133,21 @@ def _require_admin_auth(request: Request, x_api_key: str = Depends(_api_key_head
         raise HTTPException(401, "Invalid or missing admin API key")
 
 
+def _require_grid_auth(request: Request, x_api_key: str = Depends(_api_key_header)):
+    """Allow access from admin key OR LAN/grid peers."""
+    if settings.admin_key and x_api_key == settings.admin_key:
+        return
+    candidate_ips = [request.client.host if request.client else ""]
+    candidate_ips.append(request.headers.get("x-real-ip", ""))
+    candidate_ips.append(request.headers.get("x-forwarded-for", "").split(",")[0].strip())
+    if any(_is_lan_ip(ip) for ip in candidate_ips if ip):
+        return
+    if not settings.admin_key and not settings.api_key:
+        return
+    raise HTTPException(401, "Requires admin key or LAN access")
+
+
+
 # Ensure data directories exist (native installs may not have /data)
 for _p in [settings.store_path, Path(settings.catalog_path).parent,
            Path(settings.stats_db).parent, Path(settings.source_users_db).parent]:
@@ -1029,7 +1044,6 @@ def _redundancy_index() -> float:
 
 
 
-# _require_grid_auth moved to top (near other auth functions)
 
 # Background fetch jobs tracker
 _fetch_jobs: dict[str, dict] = {}
