@@ -203,7 +203,12 @@ class Catalog:
             stats[col]["items"] += 1
             if key not in stats[col]["seen"]:
                 stats[col]["seen"].add(key)
-                stats[col]["area_km2"] += abs((e - w) * (n - s)) / 1e6
+                # Convert degree-based bbox to km² (lon/lat → approximate area)
+                import math
+                mid_lat = (n + s) / 2.0
+                km_per_deg_lat = 111.32
+                km_per_deg_lon = 111.32 * math.cos(math.radians(mid_lat))
+                stats[col]["area_km2"] += abs((e - w) * km_per_deg_lon * (n - s) * km_per_deg_lat)
         # Clean up sets (not serializable) and round
         result = {}
         total_area = 0.0
