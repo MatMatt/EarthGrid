@@ -148,6 +148,33 @@ async def search_element84(
             unique.append(item)
     items = unique[:target]
 
+    # Filter: keep only items whose MGRS tile intersects the search bbox center
+    # This prevents fetching neighboring tiles when bbox is within a single tile
+    if items:
+        # Determine dominant tile(s) from bbox center point
+        cx, cy = (bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2
+        tile_counts = {}
+        for it in items:
+            p = it.get("properties", {})
+            tile = p.get("grid:code", p.get("s2:mgrs_tile", ""))
+            if tile.startswith("MGRS-"): tile = tile[5:]  # strip "MGRS-" prefix
+            if tile:
+                tile_counts[tile] = tile_counts.get(tile, 0) + 1
+        if tile_counts:
+            # Keep tile(s) that have >10% of total items (filters out edge cases)
+            total = len(items)
+            threshold = max(1, int(total * 0.1))
+            valid_tiles = {t for t, c in tile_counts.items() if c >= threshold}
+            before = len(items)
+            items = [it for it in items if (
+                (it.get("properties", {}).get("grid:code", "").replace("MGRS-", "") or
+                 it.get("properties", {}).get("s2:mgrs_tile", "")) in valid_tiles
+                or not tile_counts  # no tile info = keep all
+            )]
+            filtered = before - len(items)
+            if filtered:
+                print(f"  \U0001f3af Filtered {filtered} items from neighboring tiles (keeping: {', '.join(sorted(valid_tiles))})")
+
     _elapsed = _time.monotonic() - _t0
     print(f"\r  \U0001f50d {len(items)} items found ({_elapsed:.1f}s)        ")
     # Sort by date descending (client-side, since we removed server-side sort)
