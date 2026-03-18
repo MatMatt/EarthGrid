@@ -456,7 +456,8 @@ app.include_router(gamification_router)
 
 # Beacon router always included — active only when also_beacon=True
 from .beacon import beacon_router as _beacon_router, registry as _beacon_registry, _beacon_sync_loop
-app.include_router(_beacon_router)
+if settings.also_beacon:
+    app.include_router(_beacon_router)
 
 
 # --- Beacon Registration ---
