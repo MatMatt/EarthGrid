@@ -1029,21 +1029,7 @@ def _redundancy_index() -> float:
 
 
 
-def _require_grid_auth(request: Request, x_api_key: str = Depends(_api_key_header)):
-    """Allow fetch from admin key OR LAN/grid peers."""
-    # Admin key always works
-    if settings.admin_key and x_api_key == settings.admin_key:
-        return
-    # Check all possible client IPs (direct, behind proxy)
-    candidate_ips = [request.client.host if request.client else ""]
-    candidate_ips.append(request.headers.get("x-real-ip", ""))
-    candidate_ips.append(request.headers.get("x-forwarded-for", "").split(",")[0].strip())
-    if any(_is_lan_ip(ip) for ip in candidate_ips if ip):
-        return
-    # No keys configured = open
-    if not settings.admin_key and not settings.api_key:
-        return
-    raise HTTPException(401, "Grid fetch requires admin key or LAN access")
+# _require_grid_auth moved to top (near other auth functions)
 
 # Background fetch jobs tracker
 _fetch_jobs: dict[str, dict] = {}
