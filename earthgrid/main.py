@@ -1057,7 +1057,6 @@ async def remote_fetch(
     limit: int = Query(5),
     source: str = Query("element84"),
     collection: str = Query("sentinel-2-l2a"),
-    distribute: bool = Query(True),
 ):
     """Accept a fetch request — runs in background, returns immediately."""
     import uuid
@@ -1081,7 +1080,7 @@ async def remote_fetch(
                 bands=band_list,
                 limit=limit,
                 earthgrid_collection=collection,
-                distribute=distribute,
+                distribute=True,
                 local_node_id=settings.node_id,
                 bandwidth_manager=getattr(app.state, "_bandwidth_mgr", None),
             )
