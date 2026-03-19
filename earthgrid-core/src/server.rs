@@ -25,6 +25,8 @@ use crate::{
     chunk_store::ChunkStore,
     ingest,
     peers::{GossipPeerList, NodeInfo, PeerRegistry},
+    replication::Replicator,
+    stats::StatsEngine,
 };
 
 // ---------------------------------------------------------------------------
@@ -38,6 +40,7 @@ pub struct AppState {
     pub audit: Arc<AuditLog>,
     pub auth: AuthConfig,
     pub peers: Arc<Mutex<PeerRegistry>>,
+    pub stats: Arc<StatsEngine>,
     pub version: String,
     pub node_id: String,
     pub node_name: String,
@@ -706,6 +709,109 @@ async fn federation_search(
 }
 
 // ---------------------------------------------------------------------------
+// Stats handlers
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct StatsPeriodQuery {
+    pub period_hours: Option<u64>,
+    pub period_days: Option<u64>,
+    pub limit: Option<usize>,
+}
+
+async fn stats_downloads(
+    State(state): State<AppState>,
+    Query(q): Query<StatsPeriodQuery>,
+) -> impl IntoResponse {
+    let period_hours = q.period_hours.unwrap_or(168); // 7 days default
+    match state.stats.download_stats(period_hours) {
+        Ok(s) => (StatusCode::OK, Json(serde_json::to_value(s).unwrap_or_default())).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn stats_hot_chunks(
+    State(state): State<AppState>,
+    Query(q): Query<StatsPeriodQuery>,
+) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(20);
+    match state.stats.hot_chunks(limit) {
+        Ok(chunks) => {
+            let count = chunks.len();
+            (StatusCode::OK, Json(serde_json::json!({"hot_chunks": chunks, "count": count}))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn stats_replication_advice(State(state): State<AppState>) -> impl IntoResponse {
+    match state.stats.replication_advice() {
+        Ok(advice) => {
+            let count = advice.len();
+            (StatusCode::OK, Json(serde_json::json!({"advice": advice, "count": count}))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn stats_ingest_history(
+    State(state): State<AppState>,
+    Query(q): Query<StatsPeriodQuery>,
+) -> impl IntoResponse {
+    let period_days = q.period_days.unwrap_or(365);
+    match state.stats.ingest_history(period_days) {
+        Ok(h) => (StatusCode::OK, Json(serde_json::to_value(h).unwrap_or_default())).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Replication handler
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ReplicateQuery {
+    pub peer_url: String,
+    pub collections: Option<String>, // comma-separated
+    pub max_items: Option<usize>,
+    pub dry_run: Option<bool>,
+}
+
+async fn replicate(
+    State(state): State<AppState>,
+    Query(q): Query<ReplicateQuery>,
+) -> impl IntoResponse {
+    if q.peer_url.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "peer_url is required").into_response();
+    }
+
+    let collections: Vec<String> = q
+        .collections
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let max_items = q.max_items.unwrap_or(0);
+    let dry_run = q.dry_run.unwrap_or(false);
+
+    let replicator = Replicator::new(state.store.clone(), state.catalog.clone());
+    let result = replicator
+        .sync_from_peer(&q.peer_url, &collections, max_items, dry_run)
+        .await;
+
+    let status = if result.errors.is_empty() {
+        StatusCode::OK
+    } else {
+        StatusCode::MULTI_STATUS
+    };
+
+    (status, Json(serde_json::to_value(result).unwrap_or_default())).into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Base64 decode helper
 // ---------------------------------------------------------------------------
 
@@ -844,6 +950,13 @@ pub fn router(state: AppState) -> Router {
         // Gossip + file ingest
         .route("/peers.json", get(peers_json))
         .route("/ingest/file", post(ingest_file_endpoint))
+        // Stats
+        .route("/stats/downloads", get(stats_downloads))
+        .route("/stats/hot-chunks", get(stats_hot_chunks))
+        .route("/stats/replication-advice", get(stats_replication_advice))
+        .route("/stats/ingest", get(stats_ingest_history))
+        // Replication
+        .route("/replicate", post(replicate))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -866,11 +979,13 @@ pub async fn serve(
     let store_path = data_dir.join("store");
     let catalog_path = data_dir.join("catalog.db");
     let audit_path = data_dir.join("audit.jsonl");
+    let stats_db_path = data_dir.join("stats.db");
 
     let store = ChunkStore::new(&store_path, 0.0)?;
     let catalog = Catalog::new(&catalog_path)?;
     let audit = AuditLog::new(&audit_path);
     let auth = AuthConfig::from_env();
+    let stats_engine = StatsEngine::new(&stats_db_path)?;
 
     // Node identity from env
     let node_id = env::var("EARTHGRID_NODE_ID").unwrap_or_else(|_| {
@@ -896,6 +1011,7 @@ pub async fn serve(
         audit: Arc::new(audit),
         auth,
         peers: Arc::new(Mutex::new(peer_registry)),
+        stats: Arc::new(stats_engine),
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_id,
         node_name: node_name.clone(),

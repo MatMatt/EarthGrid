@@ -9,5 +9,7 @@ pub mod error;
 pub mod ingest;
 pub mod network;
 pub mod peers;
+pub mod replication;
 pub mod server;
+pub mod stats;
 pub mod transport;
