@@ -1,16 +1,16 @@
 {
-  "updated": "2026-03-19T16:40:01Z",
+  "updated": "2026-03-19T16:50:01Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 2,
     "nodes_total": 2,
-    "total_bytes": 682382440656,
+    "total_bytes": 687378168784,
     "available_storage_gb": 5050.0,
     "redundancy": 1.0
   },
   "coverage": {
     "sentinel-2-l2a": {
-      "items": 3936,
+      "items": 3991,
       "tiles": 1,
       "area_km2": 12670
     }
@@ -27,8 +27,8 @@
               46.9
             ],
             "tile_id": "32TPS",
-            "item_count": 2832,
-            "date_count": 407,
+            "item_count": 2862,
+            "date_count": 411,
             "dates": [
               "2016-11-15",
               "2016-11-28",
@@ -45,6 +45,10 @@
               "2018-07-18",
               "2018-07-31",
               "2018-08-05",
+              "2018-10-19",
+              "2018-10-21",
+              "2018-10-24",
+              "2018-11-15",
               "2018-11-18",
               "2018-11-28",
               "2018-12-03",
@@ -450,6 +454,36 @@
           },
           {
             "bbox": [
+              13.4,
+              54.9,
+              15.2,
+              55.9
+            ],
+            "tile_id": "33UVB",
+            "item_count": 68,
+            "date_count": 12,
+            "dates": [
+              "2018-06-06",
+              "2018-06-08",
+              "2018-06-18",
+              "2018-06-23",
+              "2018-06-26",
+              "2018-06-28",
+              "2018-07-01",
+              "2018-07-03",
+              "2018-07-04",
+              "2025-06-19",
+              "2025-06-21",
+              "2025-06-29"
+            ],
+            "bands": [
+              "B01"
+            ],
+            "first_date": "2018-06-06",
+            "last_date": "2025-06-29"
+          },
+          {
+            "bbox": [
               9.0,
               46.0,
               10.4,
@@ -477,43 +511,14 @@
           },
           {
             "bbox": [
-              13.4,
-              54.9,
-              15.2,
-              55.9
-            ],
-            "tile_id": "33UVB",
-            "item_count": 66,
-            "date_count": 11,
-            "dates": [
-              "2018-06-06",
-              "2018-06-08",
-              "2018-06-18",
-              "2018-06-23",
-              "2018-06-26",
-              "2018-06-28",
-              "2018-07-01",
-              "2018-07-03",
-              "2018-07-04",
-              "2025-06-21",
-              "2025-06-29"
-            ],
-            "bands": [
-              "B01"
-            ],
-            "first_date": "2018-06-06",
-            "last_date": "2025-06-29"
-          },
-          {
-            "bbox": [
               11.9,
               54.0,
               13.6,
               55.0
             ],
             "tile_id": "33UUA",
-            "item_count": 64,
-            "date_count": 10,
+            "item_count": 66,
+            "date_count": 11,
             "dates": [
               "2018-06-06",
               "2018-06-08",
@@ -523,6 +528,7 @@
               "2018-07-01",
               "2018-07-03",
               "2018-07-04",
+              "2025-06-14",
               "2025-06-21",
               "2025-06-29"
             ],
@@ -587,13 +593,41 @@
           {
             "bbox": [
               10.6,
+              55.8,
+              12.4,
+              56.8
+            ],
+            "tile_id": "32VPH",
+            "item_count": 55,
+            "date_count": 10,
+            "dates": [
+              "2018-06-06",
+              "2018-06-19",
+              "2018-06-26",
+              "2018-06-29",
+              "2018-07-01",
+              "2018-07-04",
+              "2025-06-16",
+              "2025-06-19",
+              "2025-06-27",
+              "2025-06-29"
+            ],
+            "bands": [
+              "B01"
+            ],
+            "first_date": "2018-06-06",
+            "last_date": "2025-06-29"
+          },
+          {
+            "bbox": [
+              10.6,
               54.9,
               12.4,
               55.9
             ],
             "tile_id": "32UPG",
-            "item_count": 52,
-            "date_count": 8,
+            "item_count": 54,
+            "date_count": 9,
             "dates": [
               "2016-11-24",
               "2016-11-28",
@@ -602,6 +636,7 @@
               "2018-06-26",
               "2018-07-01",
               "2018-07-04",
+              "2025-06-17",
               "2025-06-29"
             ],
             "bands": [
@@ -638,53 +673,54 @@
           },
           {
             "bbox": [
-              10.6,
-              55.8,
-              12.4,
-              56.8
-            ],
-            "tile_id": "32VPH",
-            "item_count": 49,
-            "date_count": 8,
-            "dates": [
-              "2018-06-06",
-              "2018-06-19",
-              "2018-06-26",
-              "2018-06-29",
-              "2018-07-01",
-              "2018-07-04",
-              "2025-06-27",
-              "2025-06-29"
-            ],
-            "bands": [
-              "B01"
-            ],
-            "first_date": "2018-06-06",
-            "last_date": "2025-06-29"
-          },
-          {
-            "bbox": [
               11.7,
               55.8,
               13.6,
               56.8
             ],
             "tile_id": "33VUC",
-            "item_count": 45,
-            "date_count": 6,
+            "item_count": 49,
+            "date_count": 7,
             "dates": [
               "2018-06-06",
               "2018-06-24",
               "2018-06-26",
               "2018-06-29",
               "2018-07-01",
-              "2018-07-04"
+              "2018-07-04",
+              "2025-06-19"
             ],
             "bands": [
               "B01"
             ],
             "first_date": "2018-06-06",
-            "last_date": "2018-07-04"
+            "last_date": "2025-06-19"
+          },
+          {
+            "bbox": [
+              13.4,
+              54.1,
+              15.2,
+              55.0
+            ],
+            "tile_id": "33UVA",
+            "item_count": 40,
+            "date_count": 8,
+            "dates": [
+              "2018-06-06",
+              "2018-06-08",
+              "2018-06-09",
+              "2018-06-14",
+              "2018-07-01",
+              "2025-06-14",
+              "2025-06-19",
+              "2025-06-21"
+            ],
+            "bands": [
+              "B01"
+            ],
+            "first_date": "2018-06-06",
+            "last_date": "2025-06-21"
           },
           {
             "bbox": [
@@ -708,30 +744,6 @@
             ],
             "first_date": "2018-06-06",
             "last_date": "2025-06-29"
-          },
-          {
-            "bbox": [
-              13.4,
-              54.1,
-              15.2,
-              55.0
-            ],
-            "tile_id": "33UVA",
-            "item_count": 37,
-            "date_count": 6,
-            "dates": [
-              "2018-06-06",
-              "2018-06-08",
-              "2018-06-09",
-              "2018-06-14",
-              "2018-07-01",
-              "2025-06-21"
-            ],
-            "bands": [
-              "B01"
-            ],
-            "first_date": "2018-06-06",
-            "last_date": "2025-06-21"
           },
           {
             "bbox": [
@@ -839,6 +851,28 @@
             ],
             "first_date": "2019-05-24",
             "last_date": "2019-05-24"
+          },
+          {
+            "bbox": [
+              10.5,
+              54.0,
+              12.3,
+              55.0
+            ],
+            "tile_id": "32UPF",
+            "item_count": 8,
+            "date_count": 4,
+            "dates": [
+              "2025-06-14",
+              "2025-06-16",
+              "2025-06-19",
+              "2025-06-29"
+            ],
+            "bands": [
+              "B01"
+            ],
+            "first_date": "2025-06-14",
+            "last_date": "2025-06-29"
           },
           {
             "bbox": [
@@ -973,25 +1007,6 @@
             ],
             "first_date": "2019-05-24",
             "last_date": "2019-05-24"
-          },
-          {
-            "bbox": [
-              10.5,
-              54.0,
-              12.3,
-              55.0
-            ],
-            "tile_id": "32UPF",
-            "item_count": 2,
-            "date_count": 1,
-            "dates": [
-              "2025-06-29"
-            ],
-            "bands": [
-              "B01"
-            ],
-            "first_date": "2025-06-29",
-            "last_date": "2025-06-29"
           }
         ]
       }
@@ -1014,8 +1029,8 @@
     "daily_trend": []
   },
   "ingest": {
-    "total_items_fetched": 350,
-    "total_gb_fetched": 1.81,
+    "total_items_fetched": 374,
+    "total_gb_fetched": 5.29,
     "collections": 1,
     "daily": [
       {
@@ -1025,8 +1040,8 @@
       },
       {
         "date": "2026-03-19",
-        "items": 19,
-        "gb": 1.807
+        "items": 43,
+        "gb": 5.292
       }
     ],
     "hourly": [
@@ -1047,13 +1062,13 @@
       },
       {
         "hour": "2026-03-19T16:00",
-        "items": 19,
-        "gb": 1.807
+        "items": 43,
+        "gb": 5.292
       }
     ]
   },
-  "items": 3571,
-  "chunks": 1288056,
+  "items": 3626,
+  "chunks": 1297746,
   "km2_requested": 0,
   "operations": [
     {
@@ -1122,9 +1137,9 @@
           "node_name": "node-alpha",
           "owner": "",
           "anonymous": true,
-          "score": 28689,
-          "items": 3569,
-          "gb_stored": 586.8,
+          "score": 28747,
+          "items": 3626,
+          "gb_stored": 591.4,
           "gb_pledged": 5000.0,
           "gb_served": 0.0,
           "streak": 1,
@@ -1269,8 +1284,8 @@
       "nodes_total": 2,
       "nodes_alive": 2,
       "storage_pledged_gb": 5050.0,
-      "storage_used_gb": 635.5,
-      "storage_utilization_pct": 12.6,
+      "storage_used_gb": 640.2,
+      "storage_utilization_pct": 12.7,
       "data_served_gb": 0.0,
       "estimated_replication_factor": 1.1,
       "factors": {
@@ -1302,14 +1317,14 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 285598.4049706459,
+          "remaining_seconds": 284998.074000597,
           "remaining_human": "3d 7h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 3569.0,
+              "score": 3626.0,
               "group": ""
             },
             {
@@ -1328,14 +1343,14 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 285598.4049706459,
+          "remaining_seconds": 284998.074000597,
           "remaining_human": "3d 7h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 586.76,
+              "score": 591.41,
               "group": ""
             },
             {
@@ -1354,7 +1369,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 285598.4049706459,
+          "remaining_seconds": 284998.074000597,
           "remaining_human": "3d 7h",
           "participants": 0,
           "top3": []
@@ -1367,14 +1382,14 @@
           "period": "monthly",
           "start_ts": 1772323200.0,
           "end_ts": 1775001600.0,
-          "remaining_seconds": 1063198.404970646,
+          "remaining_seconds": 1062598.074000597,
           "remaining_human": "12d 7h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 28689.0,
+              "score": 28747.0,
               "group": ""
             },
             {
