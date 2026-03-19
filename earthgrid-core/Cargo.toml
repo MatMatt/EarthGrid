@@ -39,6 +39,7 @@ libp2p = { version = "0.54", features = [
     "ed25519",
     "cbor",
 ] }
+gdal = "0.17"
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

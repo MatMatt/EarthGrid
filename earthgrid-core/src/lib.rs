@@ -12,6 +12,7 @@ pub mod ingest;
 pub mod network;
 pub mod openeo;
 pub mod peers;
+pub mod reconstruct;
 pub mod replication;
 pub mod server;
 pub mod stats;
