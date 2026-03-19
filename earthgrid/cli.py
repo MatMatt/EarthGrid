@@ -884,7 +884,15 @@ def _cmd_fetch(args):
         except KeyboardInterrupt:
             print("\n\n⚠️  Interrupted — partial results saved. Already ingested data is safe.")
             return
-    else:
+
+        # Auto-fallback to CDSE if Element84 returned 0 results
+        ingested_count = sum(1 for r in (results or []) if isinstance(r, dict) and r.get("item_id") and not r.get("skipped"))
+        skipped_count = sum(1 for r in (results or []) if isinstance(r, dict) and r.get("skipped"))
+        if ingested_count == 0 and skipped_count == 0 and username and password:
+            print(f"\n  ℹ️  Element84 returned no data — falling back to CDSE...")
+            args.source = "cdse"  # fall through to CDSE block below
+
+    if args.source == "cdse":
         print(f"Fetching from CDSE (bbox={args.bbox}, cloud≤{args.cloud}%)...")
         try:
             results = asyncio.run(fetch_and_ingest(
