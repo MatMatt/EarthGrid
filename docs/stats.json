@@ -1,16 +1,16 @@
 {
-  "updated": "2026-03-19T19:30:01Z",
+  "updated": "2026-03-19T19:40:01Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 1,
     "nodes_total": 1,
-    "total_bytes": 664365955032,
+    "total_bytes": 664592395768,
     "available_storage_gb": 5000.0,
     "redundancy": 1.0
   },
   "coverage": {
     "sentinel-2-l2a": {
-      "items": 3882,
+      "items": 3883,
       "tiles": 1,
       "area_km2": 12670
     }
@@ -820,6 +820,33 @@
           },
           {
             "bbox": [
+              10.3,
+              46.8,
+              11.8,
+              47.8
+            ],
+            "tile_id": "32TPT",
+            "item_count": 30,
+            "date_count": 9,
+            "dates": [
+              "2018-04-07",
+              "2018-07-13",
+              "2018-07-18",
+              "2018-07-31",
+              "2025-06-11",
+              "2025-06-13",
+              "2025-06-14",
+              "2025-06-19",
+              "2025-06-21"
+            ],
+            "bands": [
+              "B01"
+            ],
+            "first_date": "2018-04-07",
+            "last_date": "2025-06-21"
+          },
+          {
+            "bbox": [
               13.4,
               55.8,
               15.2,
@@ -838,33 +865,6 @@
             ],
             "first_date": "2018-06-29",
             "last_date": "2018-07-04"
-          },
-          {
-            "bbox": [
-              10.3,
-              46.8,
-              11.8,
-              47.8
-            ],
-            "tile_id": "32TPT",
-            "item_count": 29,
-            "date_count": 9,
-            "dates": [
-              "2018-04-07",
-              "2018-07-13",
-              "2018-07-18",
-              "2018-07-31",
-              "2025-06-11",
-              "2025-06-13",
-              "2025-06-14",
-              "2025-06-19",
-              "2025-06-21"
-            ],
-            "bands": [
-              "B01"
-            ],
-            "first_date": "2018-04-07",
-            "last_date": "2025-06-21"
           },
           {
             "bbox": [
@@ -1088,8 +1088,8 @@
     "daily_trend": []
   },
   "ingest": {
-    "total_items_fetched": 451,
-    "total_gb_fetched": 16.26,
+    "total_items_fetched": 453,
+    "total_gb_fetched": 16.66,
     "collections": 1,
     "daily": [
       {
@@ -1099,8 +1099,8 @@
       },
       {
         "date": "2026-03-19",
-        "items": 120,
-        "gb": 16.258
+        "items": 122,
+        "gb": 16.657
       }
     ],
     "hourly": [
@@ -1131,13 +1131,13 @@
       },
       {
         "hour": "2026-03-19T19:00",
-        "items": 6,
-        "gb": 0.898
+        "items": 8,
+        "gb": 1.297
       }
     ]
   },
-  "items": 3882,
-  "chunks": 1353664,
+  "items": 3883,
+  "chunks": 1354120,
   "km2_requested": 0,
   "operations": [
     {
@@ -1206,9 +1206,9 @@
           "node_name": "node-alpha",
           "owner": "",
           "anonymous": true,
-          "score": 29008,
-          "items": 3882,
-          "gb_stored": 618.7,
+          "score": 29009,
+          "items": 3883,
+          "gb_stored": 618.9,
           "gb_pledged": 5000.0,
           "gb_served": 0.0,
           "streak": 1,
@@ -1337,7 +1337,7 @@
       "nodes_total": 2,
       "nodes_alive": 1,
       "storage_pledged_gb": 5070.0,
-      "storage_used_gb": 667.6,
+      "storage_used_gb": 667.9,
       "storage_utilization_pct": 13.2,
       "data_served_gb": 0.0,
       "estimated_replication_factor": 1.0,
@@ -1370,14 +1370,14 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 275398.6076643467,
+          "remaining_seconds": 274798.3282337189,
           "remaining_human": "3d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 3882.0,
+              "score": 3883.0,
               "group": ""
             },
             {
@@ -1396,14 +1396,14 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 275398.6076643467,
+          "remaining_seconds": 274798.3282337189,
           "remaining_human": "3d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 618.74,
+              "score": 618.95,
               "group": ""
             },
             {
@@ -1422,7 +1422,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 275398.6076643467,
+          "remaining_seconds": 274798.3282337189,
           "remaining_human": "3d 4h",
           "participants": 0,
           "top3": []
@@ -1435,14 +1435,14 @@
           "period": "monthly",
           "start_ts": 1772323200.0,
           "end_ts": 1775001600.0,
-          "remaining_seconds": 1052998.6076643467,
+          "remaining_seconds": 1052398.3282337189,
           "remaining_human": "12d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 29008.0,
+              "score": 29009.0,
               "group": ""
             },
             {
