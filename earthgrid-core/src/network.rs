@@ -21,7 +21,7 @@ use libp2p::{
 use tokio::sync::mpsc;
 use tracing::{info, warn, debug};
 
-use crate::transport::{EarthGridCodec, EarthGridRequest, EarthGridResponse};
+use crate::transport::{EarthGridRpc, EarthGridRequest, EarthGridResponse};
 
 // ---------------------------------------------------------------------------
 // Behaviour — combines all libp2p protocols
@@ -35,7 +35,7 @@ pub struct EarthGridBehaviour {
     pub ping: ping::Behaviour,
     pub relay_client: relay::client::Behaviour,
     pub dcutr: dcutr::Behaviour,
-    pub rpc: request_response::Behaviour<EarthGridCodec>,
+    pub rpc: EarthGridRpc,
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +172,8 @@ pub async fn start(
             )?;
 
             // Request-Response (chunk transfer, catalog queries, job delegation)
-            let rpc = request_response::Behaviour::new(
+            // cbor::Behaviour is a type alias for request_response::Behaviour<cbor::codec::Codec<Req, Resp>>
+            let rpc = EarthGridRpc::new(
                 [(StreamProtocol::new("/earthgrid/rpc/1.0.0"), ProtocolSupport::Full)],
                 request_response::Config::default()
                     .with_request_timeout(Duration::from_secs(300)),
