@@ -6,5 +6,7 @@ pub mod catalog;
 pub mod chunk_store;
 pub mod error;
 pub mod ingest;
+pub mod network;
 pub mod peers;
 pub mod server;
+pub mod transport;

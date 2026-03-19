@@ -64,6 +64,19 @@ enum Commands {
         /// Port to listen on
         #[arg(long, default_value = "8400")]
         port: u16,
+
+        /// libp2p listen port (0 = random)
+        #[arg(long, default_value = "9400")]
+        p2p_port: u16,
+
+        /// Bootstrap peers (multiaddr, comma-separated)
+        /// e.g. /ip4/1.2.3.4/tcp/9400/p2p/12D3Koo...
+        #[arg(long, env = "EARTHGRID_BOOTSTRAP_PEERS")]
+        bootstrap_peers: Option<String>,
+
+        /// Disable libp2p networking
+        #[arg(long)]
+        no_p2p: bool,
     },
 }
 
@@ -162,9 +175,43 @@ fn main() -> anyhow::Result<()> {
             println!("   File size: {} bytes", item.properties["earthgrid:file_size"]);
         }
 
-        Commands::Serve { host, port } => {
+        Commands::Serve { host, port, p2p_port, bootstrap_peers, no_p2p } => {
+            let bootstrap: Vec<String> = bootstrap_peers
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(earthgrid_core::server::serve(cli.data_dir, host, port))?;
+            rt.block_on(async {
+                // Start libp2p network (if not disabled)
+                if !no_p2p {
+                    let node_name = std::env::var("EARTHGRID_NODE_NAME")
+                        .unwrap_or_else(|_| "earthgrid-node".to_string());
+
+                    let net_config = earthgrid_core::network::NetworkConfig {
+                        data_dir: cli.data_dir.clone(),
+                        listen_port: p2p_port,
+                        bootstrap_peers: bootstrap,
+                        node_name,
+                    };
+
+                    match earthgrid_core::network::start(net_config).await {
+                        Ok((_event_rx, _cmd_tx, peer_id)) => {
+                            println!("🔗 libp2p peer ID: {}", peer_id);
+                            println!("   P2P port: {}", p2p_port);
+                            // TODO: wire event_rx/cmd_tx into server for P2P request handling
+                        }
+                        Err(e) => {
+                            eprintln!("⚠️  libp2p failed to start: {} (HTTP-only mode)", e);
+                        }
+                    }
+                }
+
+                // Start HTTP server
+                earthgrid_core::server::serve(cli.data_dir.clone(), host, port).await
+            })?;
         }
     }
 
