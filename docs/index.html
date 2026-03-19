@@ -1098,17 +1098,40 @@ async function load() {
     document.getElementById('vFetched').textContent = ig >= 1000 ? (ig/1000).toFixed(1) + ' TB' : ig.toFixed(1) + ' GB';
     document.getElementById('sFetched').classList.remove('loading');
 
+    // Prefer hourly data, fallback to daily
+    const iHourly = ingest.hourly || [];
     const iDaily = ingest.daily || [];
-    if (iDaily.length > 0) {
-      const maxItems = Math.max(...iDaily.map(d => d.items));
-      let bars = '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.75rem;margin-bottom:2px"><span>Daily items ingested</span><span>' + (ingest.total_items_fetched||0).toLocaleString() + ' total</span></div>';
+    const useHourly = iHourly.length > 0;
+    const chartData = useHourly ? iHourly : iDaily;
+
+    if (chartData.length > 0) {
+      const maxItems = Math.max(...chartData.map(d => d.items));
+      const label = useHourly ? 'Hourly items ingested' : 'Daily items ingested';
+      let bars = '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.75rem;margin-bottom:2px"><span>' + label + '</span><span>' + (ingest.total_items_fetched||0).toLocaleString() + ' total</span></div>';
       bars += '<div style="display:flex;align-items:flex-end;gap:1px;height:80px;background:rgba(255,255,255,0.02);border-radius:4px;padding:4px">';
-      for (const dd of iDaily) {
+      for (const dd of chartData) {
         const h = maxItems > 0 ? Math.max(2, (dd.items / maxItems) * 72) : 2;
-        bars += '<div style="flex:1;min-width:2px;height:' + h + 'px;background:var(--green);border-radius:1px 1px 0 0;opacity:0.7" title="' + dd.date + ': ' + dd.items + ' items, ' + dd.gb + ' GB"></div>';
+        const ts = useHourly ? dd.hour : dd.date;
+        const tip = useHourly
+          ? ts.slice(5) + ': ' + dd.items + ' items'
+          : ts + ': ' + dd.items + ' items, ' + dd.gb + ' GB';
+        bars += '<div style="flex:1;min-width:2px;height:' + h + 'px;background:var(--green);border-radius:1px 1px 0 0;opacity:0.7" title="' + tip + '"></div>';
       }
       bars += '</div>';
-      bars += '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.7rem;margin-top:2px"><span>' + iDaily[0].date + '</span><span>' + iDaily[iDaily.length-1].date + '</span></div>';
+
+      // X-axis labels — show day boundaries for hourly
+      if (useHourly && chartData.length > 6) {
+        const days = [...new Set(chartData.map(d => d.hour.slice(0,10)))];
+        bars += '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.7rem;margin-top:2px">';
+        for (const day of days) {
+          bars += '<span>' + day.slice(5) + '</span>';
+        }
+        bars += '</div>';
+      } else {
+        const first = useHourly ? chartData[0].hour : chartData[0].date;
+        const last = useHourly ? chartData[chartData.length-1].hour : chartData[chartData.length-1].date;
+        bars += '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.7rem;margin-top:2px"><span>' + first + '</span><span>' + last + '</span></div>';
+      }
       document.getElementById('ingestChart').innerHTML = bars;
     } else {
       document.getElementById('ingestChart').innerHTML = '<em style="color:var(--dim)">No ingest data yet</em>';

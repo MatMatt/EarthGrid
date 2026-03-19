@@ -566,6 +566,17 @@ class StatsEngine:
                    FROM download_log
                    WHERE origin = 'source'"""
             ).fetchone()
+            # Hourly ingest (last 7 days max)
+            hourly_cutoff = max(cutoff, time.time() - (7 * 86400))
+            hourly = conn.execute(
+                """SELECT strftime('%Y-%m-%dT%H:00', timestamp, 'unixepoch') as hour,
+                   COUNT(*) as items,
+                   SUM(bytes_transferred) as total_bytes
+                   FROM download_log
+                   WHERE timestamp > ? AND origin = 'source'
+                   GROUP BY hour ORDER BY hour""",
+                (hourly_cutoff,)
+            ).fetchall()
         return {
             "total_items_fetched": totals["items"] or 0,
             "total_gb_fetched": round((totals["total_bytes"] or 0) / (1024**3), 2),
@@ -574,6 +585,11 @@ class StatsEngine:
                 {"date": r["day"], "items": r["items"],
                  "gb": round((r["total_bytes"] or 0) / (1024**3), 3)}
                 for r in daily
+            ],
+            "hourly": [
+                {"hour": r["hour"], "items": r["items"],
+                 "gb": round((r["total_bytes"] or 0) / (1024**3), 3)}
+                for r in hourly
             ],
         }
 
