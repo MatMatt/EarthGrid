@@ -23,6 +23,7 @@ use crate::{
     beacon::{BeaconRegistry, BeaconState, beacon_router},
     catalog::{Catalog, DatetimeFilter, StacItem},
     chunk_store::ChunkStore,
+    fetcher,
     ingest,
     peers::{GossipPeerList, NodeInfo, PeerRegistry},
     replication::Replicator,
@@ -914,6 +915,85 @@ async fn ingest_file_endpoint(
 }
 
 // ---------------------------------------------------------------------------
+// Fetch endpoint — POST /fetch
+// ---------------------------------------------------------------------------
+
+/// Query parameters for POST /fetch
+#[derive(Deserialize)]
+pub struct FetchQuery {
+    /// Bounding box as "west,south,east,north"
+    pub bbox: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub cloud_cover: Option<f64>,
+    /// Comma-separated band names, e.g. "blue,green,red,nir"
+    pub bands: Option<String>,
+    pub limit: Option<usize>,
+    pub collection: Option<String>,
+}
+
+/// POST /fetch — search Element84 STAC and ingest matching items.
+async fn fetch_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<FetchQuery>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        state.audit.log("fetch", "auth_fail", "", false);
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    // Parse bbox
+    let bbox = match q.bbox.as_deref() {
+        Some(s) => {
+            let parts: Vec<f64> = s.split(',')
+                .filter_map(|v| v.trim().parse().ok())
+                .collect();
+            if parts.len() < 4 {
+                return err(StatusCode::BAD_REQUEST, "bbox must be 'west,south,east,north'").into_response();
+            }
+            [parts[0], parts[1], parts[2], parts[3]]
+        }
+        None => return err(StatusCode::BAD_REQUEST, "Missing bbox parameter").into_response(),
+    };
+
+    let start_date = q.start_date.as_deref().unwrap_or("2020-01-01");
+    let end_date = q.end_date.as_deref().unwrap_or("2020-12-31");
+    let cloud_cover = q.cloud_cover.unwrap_or(30.0);
+    let limit = q.limit.unwrap_or(100);
+    let collection = q.collection.as_deref().unwrap_or("sentinel-2-l2a");
+
+    let bands: Vec<String> = q.bands
+        .as_deref()
+        .map(|s| s.split(',').map(|b| b.trim().to_string()).filter(|b| !b.is_empty()).collect())
+        .unwrap_or_default();
+
+    let result = fetcher::fetch_and_ingest(
+        state.store.clone(),
+        state.catalog.clone(),
+        bbox,
+        start_date,
+        end_date,
+        cloud_cover,
+        &bands,
+        limit,
+        collection,
+    )
+    .await;
+
+    state.audit.log("fetch", collection, "", result.errors.is_empty());
+
+    let status = if result.errors.is_empty() {
+        StatusCode::OK
+    } else {
+        StatusCode::MULTI_STATUS
+    };
+
+    (status, Json(serde_json::to_value(result).unwrap_or_default())).into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -950,6 +1030,8 @@ pub fn router(state: AppState) -> Router {
         // Gossip + file ingest
         .route("/peers.json", get(peers_json))
         .route("/ingest/file", post(ingest_file_endpoint))
+        // Element84 STAC Fetcher
+        .route("/fetch", post(fetch_handler))
         // Stats
         .route("/stats/downloads", get(stats_downloads))
         .route("/stats/hot-chunks", get(stats_hot_chunks))
