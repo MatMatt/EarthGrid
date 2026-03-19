@@ -45,8 +45,8 @@ Download the latest release for your platform from [**Releases**](https://github
 | Platform | Binary | Tray App |
 |---|---|---|
 | 🐧 Linux x86_64 | `earthgrid-linux-x86_64` | `earthgrid-tray-linux-x86_64` |
-| 🍎 macOS arm64 | `earthgrid-macos-arm64` | — |
-| 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | — |
+| 🍎 macOS arm64 | `earthgrid-macos-arm64` | `earthgrid-tray-macos-arm64` |
+| 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | `earthgrid-tray-windows-x86_64.exe` |
 
 ```bash
 # Linux / macOS
@@ -85,7 +85,7 @@ cargo build --release
 
 # Binaries in target/release/
 #   earthgrid       — core node + CLI
-#   earthgrid-tray  — system tray app (Linux/GTK)
+#   earthgrid-tray  — system tray app (Linux/macOS/Windows)
 ```
 
 ### Setup
@@ -116,20 +116,27 @@ After setup completes, EarthGrid **starts automatically** as a systemd user serv
 
 ### System Tray App
 
-The tray app shows your node status at a glance:
+Cross-platform system tray app (Linux, macOS, Windows). Shows node status at a glance:
 
 - 🌍 **Online** — node is running and connected
 - 🌑 **Offline** — node not running or unreachable
 
+**Linux:**
 ```bash
-# Install (Linux)
 cp earthgrid-tray ~/.local/bin/
-
-# Auto-start on login
-cp earthgrid-tray.desktop ~/.config/autostart/
-
-# Run
+cp earthgrid-tray.desktop ~/.config/autostart/  # auto-start
 earthgrid-tray &
+```
+
+**macOS:**
+```bash
+cp earthgrid-tray /usr/local/bin/
+earthgrid-tray &
+```
+
+**Windows:**
+```
+earthgrid-tray.exe
 ```
 
 Right-click menu: Status, Open Dashboard, Quit.

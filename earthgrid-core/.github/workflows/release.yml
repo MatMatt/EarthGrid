@@ -43,17 +43,19 @@ jobs:
       - name: Install dependencies
         run: brew install gdal
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build
+      - name: Build all binaries
         working-directory: earthgrid-core
-        run: cargo build --release --bin earthgrid-core
-        # tray app needs different approach on macOS (no GTK)
-      - name: Strip
-        run: strip earthgrid-core/target/release/earthgrid-core
+        run: cargo build --release
+      - name: Strip binaries
+        run: |
+          strip earthgrid-core/target/release/earthgrid-core
+          strip earthgrid-core/target/release/earthgrid-tray
       - name: Package
         run: |
           mkdir -p dist
           cp earthgrid-core/target/release/earthgrid-core dist/earthgrid-macos-arm64
-          cd dist && tar czf earthgrid-macos-arm64.tar.gz earthgrid-macos-arm64
+          cp earthgrid-core/target/release/earthgrid-tray dist/earthgrid-tray-macos-arm64
+          cd dist && tar czf earthgrid-macos-arm64.tar.gz earthgrid-macos-arm64 earthgrid-tray-macos-arm64
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
@@ -70,16 +72,17 @@ jobs:
           echo "GDAL_LIB_DIR=C:\vcpkg\installed\x64-windows\lib" >> $env:GITHUB_ENV
           echo "C:\vcpkg\installed\x64-windows\bin" >> $env:GITHUB_PATH
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build
+      - name: Build all binaries
         working-directory: earthgrid-core
-        run: cargo build --release --bin earthgrid-core
+        run: cargo build --release
         env:
           GDAL_LIB_DIR: C:\vcpkg\installed\x64-windows\lib
       - name: Package
         run: |
           mkdir dist
           copy earthgrid-core\target\release\earthgrid-core.exe dist\earthgrid-windows-x86_64.exe
-          Compress-Archive -Path dist\earthgrid-windows-x86_64.exe -DestinationPath dist\earthgrid-windows-x86_64.zip
+          copy earthgrid-core\target\release\earthgrid-tray.exe dist\earthgrid-tray-windows-x86_64.exe
+          Compress-Archive -Path dist\earthgrid-windows-x86_64.exe,dist\earthgrid-tray-windows-x86_64.exe -DestinationPath dist\earthgrid-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64
