@@ -5,8 +5,10 @@ Distributed storage and openEO processing for Earth observation data.
 **No single point of failure. No vendor lock-in. Community-driven.**
 
 [![Live Dashboard](https://img.shields.io/badge/dashboard-live-brightgreen)](https://matmatt.github.io/EarthGrid/)
-[![Python](https://img.shields.io/badge/python-≥3.9-blue)](https://github.com/MatMatt/EarthGrid)
+[![Rust](https://img.shields.io/badge/rust-stable-orange)](https://github.com/MatMatt/EarthGrid)
+[![Tests](https://img.shields.io/badge/tests-81%20passing-brightgreen)](https://github.com/MatMatt/EarthGrid)
 [![License](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSE)
+
 > ## 🚧 Early Stage — Test Phase
 >
 > **Do not install if you expect a functioning service.**
@@ -36,50 +38,57 @@ EarthGrid stores **only official data** from sources like Copernicus (Sentinel) 
 
 ## Installation
 
+### Download pre-built binaries
+
+Download the latest release for your platform from [**Releases**](https://github.com/MatMatt/EarthGrid/releases):
+
+| Platform | Binary | Tray App |
+|---|---|---|
+| 🐧 Linux x86_64 | `earthgrid-linux-x86_64` | `earthgrid-tray-linux-x86_64` |
+| 🍎 macOS arm64 | `earthgrid-macos-arm64` | — |
+| 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | — |
+
+```bash
+# Linux / macOS
+chmod +x earthgrid-*
+sudo mv earthgrid-linux-x86_64 /usr/local/bin/earthgrid
+```
+
 ### Prerequisites
 
 | Requirement | Version | Why |
 |---|---|---|
-| Python | ≥ 3.9 | Core application |
-| Rust | ≥ 1.70 | Rust core (P2P, storage engine) |
-| GDAL | ≥ 3.4 | Raster I/O (`libgdal-dev` on Debian/Ubuntu) |
-| git | any | Clone the repository |
-
-### 1. Install system dependencies
-
-**Debian / Ubuntu:**
+| **GDAL** | ≥ 3.4 | Raster I/O (required on all platforms) |
 
 ```bash
-sudo apt update && sudo apt install -y python3 python3-pip libgdal-dev git
+# Debian / Ubuntu
+sudo apt install libgdal-dev
+
+# macOS
+brew install gdal
+
+# Windows
+# GDAL included via vcpkg or OSGeo4W
 ```
 
-**macOS (Homebrew):**
+### Build from source
 
 ```bash
-brew install python gdal git
-```
-
-### 2. Install Rust (if not installed)
-
-```bash
+# Install Rust (if not installed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source ~/.cargo/env
-```
 
-### 3. Clone and build
-
-```bash
+# Clone and build
 git clone https://github.com/MatMatt/EarthGrid.git
-cd EarthGrid
+cd EarthGrid/earthgrid-core
+cargo build --release
 
-# Build the Rust core
-cd earthgrid-core && cargo build --release && cd ..
-
-# Install Python package
-pip install -e .
+# Binaries in target/release/
+#   earthgrid       — core node + CLI
+#   earthgrid-tray  — system tray app (Linux/GTK)
 ```
 
-### 4. Setup
+### Setup
 
 ```bash
 earthgrid setup
@@ -91,26 +100,41 @@ The interactive setup wizard will ask for:
 2. **Participation mode** — Node + Beacon (recommended) or Node only
 3. **Data directory** — where to store data (default: `~/.earthgrid/data`)
 4. **Node name** — a friendly name for your node (auto-generated if skipped)
-5. **Auto-update** — pull latest code on start (recommended)
-6. **Data sources** — Element84 is always enabled; optionally add CDSE credentials for the full Sentinel archive
+5. **Data sources** — Element84 is always enabled; optionally add CDSE credentials
 
-After setup completes, EarthGrid **starts automatically** as a systemd user service that survives reboots.
+After setup completes, EarthGrid **starts automatically** as a systemd user service.
 
 ```
 ✅ EarthGrid configured!
    Node:     my-node
    Storage:  100 GB at /mnt/data/earthgrid
-   Beacon:   yes (also coordinator)
-   Sources:  CDSE (me@example.org), Element84 (public)
+   Beacon:   yes
    Port:     8400
 
 🌐 WebUI: http://localhost:8400/ui
-
-🚀 Starting EarthGrid...
-  ✓ EarthGrid running (systemd service)
 ```
 
-### 5. Verify
+### System Tray App
+
+The tray app shows your node status at a glance:
+
+- 🌍 **Online** — node is running and connected
+- 🌑 **Offline** — node not running or unreachable
+
+```bash
+# Install (Linux)
+cp earthgrid-tray ~/.local/bin/
+
+# Auto-start on login
+cp earthgrid-tray.desktop ~/.config/autostart/
+
+# Run
+earthgrid-tray &
+```
+
+Right-click menu: Status, Open Dashboard, Quit.
+
+### Verify
 
 ```bash
 earthgrid status                         # Check node status
@@ -119,31 +143,39 @@ curl http://localhost:8400/health         # API health check
 
 Open `http://localhost:8400/ui` in your browser to see the WebUI.
 
-### Updating
-
-```bash
-earthgrid update                         # Pull latest code + restart
-```
-
-Or manually:
-
-```bash
-cd ~/EarthGrid && git pull && pip install -e .
-earthgrid stop && earthgrid start
-```
-
-### Uninstalling
-
-```bash
-earthgrid stop
-earthgrid uninstall-service
-pip uninstall earthgrid
-rm -rf ~/EarthGrid ~/.earthgrid
-```
-
 ---
 
 ## Architecture
+
+### Rust Core (v0.1.0)
+
+The entire codebase is written in Rust for performance and reliability:
+
+| Module | LOC | Description |
+|---|---|---|
+| `main.rs` | 1,783 | CLI (clap v4) — all subcommands |
+| `gamification.rs` | 1,637 | Achievements, leaderboards, challenges |
+| `server.rs` | 1,280 | HTTP API (Actix-web) |
+| `openeo.rs` | 937 | openEO v1.2.0 gateway |
+| `fetcher.rs` | 629 | CDSE + Element84 data fetching |
+| `catalog.rs` | 543 | STAC catalog (SQLite) |
+| `beacon.rs` | 532 | Peer discovery + coordination |
+| `stats.rs` | 521 | Download statistics |
+| `smart_replication.rs` | 443 | Beacon-coordinated replication |
+| `ingest.rs` | 406 | GDAL spatial tiling + COG ingest |
+| `config.rs` | 388 | TOML config management |
+| `bandwidth.rs` | 356 | Token bucket rate control |
+| `chunk_store.rs` | 356 | Content-addressed storage (SHA-256) |
+| `client.rs` | 352 | M2M client for node access |
+| `reconstruct.rs` | 359 | COG reconstruction from chunks |
+| `processing.rs` | 330 | NDVI, NDWI, EVI, cloud mask |
+| `node_identity.rs` | 370 | Ed25519 keypair (libp2p) |
+| `source_users.rs` | 290 | CDSE credential management |
+| `ratelimit.rs` | 252 | Sliding window rate limiter |
+| `user_auth.rs` | 244 | API key management |
+| `federation.rs` | 225 | Federated search across peers |
+| + more | — | network, transport, peers, auth, audit |
+| **Total** | **14,141** | **81 tests passing** |
 
 ### Network Roles
 
@@ -171,22 +203,77 @@ rm -rf ~/EarthGrid ~/.earthgrid
 
 ### How Data Flows
 
-1. Someone requests EO data for an area (any sensor/provider)
+1. Someone requests EO data for an area
 2. Beacon checks which nodes have it
 3. If cached → served directly from the nearest node
-4. If not cached → any node fetches it from the provider (Element84, CDSE, etc.), stores it, and serves it
+4. If not cached → any node with GDAL fetches from the provider, converts to COG, chunks, and stores
 5. Other nodes automatically replicate the new data
 
-### Bootstrap & Discovery
+### Storage Format
 
-New nodes discover the network via a hardcoded list of bootstrap peers:
+All data is stored as **Cloud-Optimized GeoTIFF (COG)** — one format everywhere:
+- LZW compression, 256×256 tiling, PREDICTOR=2
+- Conversion happens at **ingest time** (CDSE → COG → chunks)
+- Reconstruction is reassembly only — no conversion needed
 
-1. `earthgrid start` (no config needed)
-2. Contacts bootstrap peers → finds the network
-3. Registers with a beacon → learns about other nodes via gossip
-4. Bootstrap list is only needed for initial discovery — after that, the node is self-sufficient
+---
 
-Custom bootstrap peers can be added via `EARTHGRID_BOOTSTRAP_PEERS` env var or `~/.earthgrid/config.json`.
+## CLI Reference
+
+### Node management
+
+```bash
+earthgrid setup                          # Interactive first-time setup
+earthgrid start                          # Install systemd service + start
+earthgrid start --foreground             # Run in foreground (debug)
+earthgrid stop                           # Stop node
+earthgrid status                         # Show storage usage + peers
+earthgrid info                           # Show config
+earthgrid update                         # Git pull + cargo build + restart
+earthgrid resize 100                     # Change storage limit to 100 GB
+earthgrid install-service                # Install systemd service
+earthgrid uninstall-service              # Remove systemd service
+```
+
+### Data operations
+
+```bash
+earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --collection sentinel-2-l2a
+earthgrid fetch --bbox ... --start 2026-03-01 --end 2026-03-12
+earthgrid fetch --bbox ... --limit 0     # Fetch ALL available
+earthgrid sync <peer_url>                # Pull data from a peer
+earthgrid verify                         # Verify chunk integrity
+earthgrid verify --heal                  # Auto-repair corrupted chunks
+earthgrid ops                            # List processing operations
+earthgrid process <item_id> --op ndvi    # Run NDVI on an item
+```
+
+### Data source management
+
+```bash
+earthgrid sources list                   # List source accounts
+earthgrid sources providers              # Available providers
+earthgrid sources add --provider cdse --username me@example.org
+earthgrid sources remove --provider cdse --username me@example.org
+```
+
+### Admin
+
+```bash
+earthgrid admin show-key                 # Show admin API key
+earthgrid admin renew-key                # Generate new key
+```
+
+### Docker
+
+```bash
+earthgrid docker start                   # Build + start container
+earthgrid docker stop                    # Stop container
+earthgrid docker status                  # Container status
+earthgrid docker logs                    # View logs
+earthgrid docker restart                 # Restart
+earthgrid docker update                  # Rebuild + restart
+```
 
 ---
 
@@ -206,83 +293,24 @@ Custom bootstrap peers can be added via `EARTHGRID_BOOTSTRAP_PEERS` env var or `
 | Action | Protection | Why |
 |---|---|---|
 | Ingest new data | API key | Prevents unauthorized writes |
-| Run processing (NDVI etc.) | Per-user API key | Only authenticated nodes/users can process |
-| Manage source accounts (CDSE etc.) | **CLI only** (no network access) | Provider credentials never leave the node |
-
-### Source Account Credentials (CDSE, WEkEO, etc.)
-
-Source account credentials are:
-- Stored **encrypted** on the local node (AES + HMAC)
-- Managed **only via CLI** — no API endpoint to read them exists
-- **Never transmitted** over the network
-- The network only knows: "this node can source data" (boolean flag)
+| Run processing | Per-user API key | Only authenticated users can process |
+| Source credentials | **CLI only** | Provider credentials never leave the node |
 
 ### Node Authentication
 
-Every node generates an **Ed25519 keypair** on first start. When two nodes meet via federation, they exchange signed key requests — no secrets to share, no keys to leak. Replay attacks are blocked by a 5-minute timestamp window.
+Every node generates an **Ed25519 keypair** on first start. Peers verify each other's identity via signed key exchange — no secrets to share. Replay attacks blocked by 5-minute timestamp window.
 
 ### Built-in protections
 
-- **Content-addressed storage**: Every chunk verified by SHA-256. Corrupted or fake data is automatically rejected.
-- **Rate limiting**: Built-in (120 req/min per IP, burst limit 20/2s).
-- **Integrity verification**: `GET /verify/{item_id}` checks all chunks against stored hashes.
-
----
-
-## Data Sources
-
-EarthGrid can fetch from multiple upstream providers. **All data is stored as Cloud-Optimized GeoTIFF (COG)** regardless of source format.
-
-| Provider | Account needed | Data | Notes |
-|---|---|---|---|
-| **Element84** (AWS) | ❌ No (always enabled) | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG — fastest ingest |
-| **CDSE** (Copernicus) | ✅ Free | S1, S2, S3, S5P, CLMS, full archive | JP2000 → converted to COG on ingest |
-| **WEkEO** | 🔜 Coming soon | CLMS (legacy), CMEMS, C3S, CAMS | Climate, marine & atmosphere services |
-
-Element84 is always enabled (no credentials needed). Add CDSE during `earthgrid setup` for access to the full Copernicus archive.
-
----
-
-## CLI Reference
-
-### Node management
-
-```bash
-earthgrid setup                          # Interactive first-time setup
-earthgrid start                          # Start node
-earthgrid stop                           # Stop node
-earthgrid status                         # Show storage usage
-earthgrid update                         # Pull latest code + restart
-earthgrid resize 100                     # Change storage limit to 100 GB
-earthgrid info                           # Show config
-earthgrid install-service                # Install systemd service
-earthgrid uninstall-service              # Remove systemd service
-```
-
-### Data operations
-
-```bash
-earthgrid fetch --bbox 12.4,55.6,12.6,55.7   # Fetch available data for area
-earthgrid fetch --bbox ... --collection S2     # Filter by collection
-earthgrid fetch --bbox ... --start 2026-03-01  # Temporal filter
-earthgrid fetch --bbox ... --limit 0           # Fetch ALL available (no limit)
-earthgrid sync <peer_url>                      # Pull data from a peer
-earthgrid ops                                  # List processing operations
-```
-
-### Data source management
-
-```bash
-earthgrid sources list                     # List source accounts
-earthgrid sources add --provider cdse --username me@example.org
-earthgrid sources remove 1                 # Remove by ID
-```
+- **Content-addressed storage**: Every chunk verified by SHA-256
+- **Rate limiting**: 120 req/min per IP, burst limit 20/2s (LAN exempt)
+- **Integrity verification**: `earthgrid verify` checks all chunks against stored hashes
 
 ---
 
 ## openEO Gateway
 
-EarthGrid includes an openEO-compatible gateway. Missing data is automatically fetched from upstream sources.
+EarthGrid includes an openEO v1.2.0 compatible gateway. Missing data is automatically fetched on demand.
 
 **Python:**
 
@@ -311,63 +339,27 @@ result <- p$save_result(ndvi, format="GTiff")
 compute_result(result, "ndvi.tif")
 ```
 
-**curl:**
+---
 
-```bash
-curl -X POST http://localhost:8400/openeo/process \
-  -H "Content-Type: application/json" \
-  -d '{"process_graph": {"load": {"process_id": "load_collection", "arguments": {"id": "sentinel-2-l2a", "spatial_extent": {"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7}, "temporal_extent": ["2026-03-01", "2026-03-12"], "bands": ["B04", "B08"]}, "result": false}, "ndvi": {"process_id": "ndvi", "arguments": {"data": {"from_node": "load"}, "red": "B04", "nir": "B08"}, "result": false}, "save": {"process_id": "save_result", "arguments": {"data": {"from_node": "ndvi"}, "format": "GTiff"}, "result": true}}}'
-```
+## Gamification
 
-Processing results are **ephemeral** — computed on-the-fly and returned directly. Only original sensor data is stored in the grid.
+Opt-in gamification encourages participation:
+
+- **Achievements**: First Seed, Mesh Pioneer, Always On, Terabyte Club, Petabyte Dream
+- **Leaderboards**: By nodes, users, groups
+- **Challenges**: Weekly (Ingest Champion, Storage Hero) + Monthly (Marathon)
+- **Economy Health**: Network freshness, diversity, redundancy, reuse
+
+All gamification is privacy-respecting and opt-in.
 
 ---
 
-## API Reference
+## Data Sources
 
-### Public endpoints (no auth)
-
-| Endpoint | Description |
-|---|---|
-| `GET /` | Node status, version, coverage stats |
-| `GET /health` | Health check |
-| `GET /stac/collections` | List STAC collections |
-| `GET /stac/search` | STAC spatial/temporal search |
-| `GET /chunks/{sha256}` | Download chunk by hash |
-| `GET /download/{collection}/{item}` | Reassemble & download item |
-| `GET /verify/{item_id}` | Verify chunk integrity |
-| `GET /nodes` | List network nodes (beacon) |
-| `GET /stats/coverage` | km² per sensor |
-| `GET /openeo/collections` | openEO collections |
-| `GET /openeo/processes` | openEO supported processes |
-
-### Protected endpoints (API key required)
-
-| Endpoint | Auth | Description |
-|---|---|---|
-| `POST /ingest` | Write key | Ingest GeoTIFF |
-| `POST /process` | Write key | Run processing operation |
-| `POST /result` | User key | Execute openEO process graph |
-| `GET /credentials/basic` | Basic auth | Validate user, get bearer token |
-| `GET /me` | Bearer token | Current user info |
-
----
-
-## Supported Data
-
-Currently: **Sentinel-2 L2A** and **Sentinel-1 GRD** (COG/GeoTIFF, regular grid).
-
-S1 GRD files use GCPs instead of a geotransform — EarthGrid automatically runs `gdalwarp` during ingest to produce a properly georeferenced raster.
-
-**Not supported yet:** Sentinel-3 (OLCI, SLSTR, SRAL) — swath data with irregular geometry requires a reprojection/gridding step that EarthGrid doesn't have yet.
-
----
-
-## Dashboard
-
-Live network stats: **[matmatt.github.io/EarthGrid](https://matmatt.github.io/EarthGrid/)**
-
-Shows: Network nodes, km² coverage per sensor, redundancy index, total storage, and anonymous uptake statistics.
+| Provider | Account | Data | Format |
+|---|---|---|---|
+| **Element84** (AWS) | ❌ No | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG |
+| **CDSE** (Copernicus) | ✅ Free | S1, S2, S3, S5P, full archive | Converted to COG |
 
 ---
 
@@ -382,28 +374,25 @@ Your other workloads always come first.
 
 ---
 
-## Data Licensing & Attribution
+## Dashboard
 
-All data served by EarthGrid originates from official Copernicus and public sources. **The data is free and open**, but usage requires proper attribution.
+Live network stats: **[matmatt.github.io/EarthGrid](https://matmatt.github.io/EarthGrid/)**
+
+---
+
+## Data Licensing & Attribution
 
 | Data type | Required attribution |
 |---|---|
 | Unmodified Sentinel data | *"Copernicus Sentinel data [Year]"* |
 | Modified Sentinel data | *"Contains modified Copernicus Sentinel data [Year]"* |
-| Copernicus Service Information | *"Copernicus Service information [Year]"* |
 | Landsat data | *"Landsat Level-2 data courtesy of USGS"* |
-
-EarthGrid **redistributes** official data as-is (content-addressed, integrity-verified). Users remain subject to the original data provider's licence terms.
-
-> ⚠️ **If you use data from EarthGrid in publications, products or services, you must attribute the original data source as described above.**
 
 ---
 
 ## Disclaimer
 
-EarthGrid is provided **"as is"**, without warranty of any kind. The authors accept no liability for any loss or consequence arising from the use of this software or data obtained through it.
-
-EarthGrid is an independent, community-driven project. It is not affiliated with ESA, EEA, Copernicus, USGS, or any other data provider.
+EarthGrid is provided **"as is"**, without warranty of any kind. Not affiliated with ESA, EEA, Copernicus, USGS, or any other data provider.
 
 ## License
 
