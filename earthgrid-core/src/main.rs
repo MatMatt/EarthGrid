@@ -712,6 +712,9 @@ fn ensure_service(host: &str, port: u16) -> anyhow::Result<()> {
         println!("    Logs:    journalctl --user -u {} -f", SYSTEMD_UNIT);
         println!("    Stop:    earthgrid stop");
         println!("    Debug:   earthgrid start --foreground");
+
+        // Auto-start tray app if available and not already running
+        start_tray_if_available();
     } else {
         println!("  ⚠ Service failed to start. Try: earthgrid start --foreground");
     }
@@ -737,6 +740,11 @@ fn cmd_stop() -> anyhow::Result<()> {
     // Also stop systemd service
     let _ = Command::new("systemctl")
         .args(["--user", "stop", SYSTEMD_UNIT])
+        .status();
+
+    // Stop tray app
+    let _ = Command::new("pkill")
+        .args(["-x", "earthgrid-tray"])
         .status();
 
     Ok(())
@@ -967,6 +975,63 @@ fn cmd_update() -> anyhow::Result<()> {
 
 fn cmd_install_service() -> anyhow::Result<()> {
     install_systemd_service()
+}
+
+/// Start the tray app if the binary exists and isn't already running.
+/// Also installs autostart desktop entry.
+fn start_tray_if_available() {
+    // Find earthgrid-tray binary next to earthgrid binary, or in PATH
+    let tray_bin = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("earthgrid-tray")))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            which_tray().map(PathBuf::from)
+        });
+
+    let Some(tray_path) = tray_bin else {
+        return; // tray binary not found, skip silently
+    };
+
+    // Check if already running
+    let already_running = Command::new("pgrep")
+        .args(["-x", "earthgrid-tray"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if already_running {
+        return;
+    }
+
+    // Install autostart desktop entry
+    if let Some(home) = std::env::var_os("HOME") {
+        let autostart_dir = PathBuf::from(&home).join(".config").join("autostart");
+        let _ = fs::create_dir_all(&autostart_dir);
+        let desktop_entry = format!(
+            "[Desktop Entry]\nType=Application\nName=EarthGrid Tray\nExec={}\nTerminal=false\nStartupNotify=false\n",
+            tray_path.display()
+        );
+        let _ = fs::write(autostart_dir.join("earthgrid-tray.desktop"), desktop_entry);
+    }
+
+    // Start tray (detached)
+    let _ = Command::new(&tray_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    println!("  ✓ Tray app started (🌍)");
+}
+
+fn which_tray() -> Option<String> {
+    Command::new("which")
+        .arg("earthgrid-tray")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
 fn install_systemd_service() -> anyhow::Result<()> {
