@@ -138,7 +138,7 @@ fn main() {
                 if event.id == quit_id {
                     std::process::exit(0);
                 } else if event.id == dashboard_id {
-                    let _ = open::that(API_BASE);
+                    let _ = open::that(&format!("{}/ui", API_BASE));
                 }
             }
 
@@ -173,7 +173,7 @@ fn main() {
             if event.id == quit_id {
                 std::process::exit(0);
             } else if event.id == dashboard_id {
-                let _ = open::that(API_BASE);
+                let _ = open::that(&format!("{}/ui", API_BASE));
             }
         }
 
