@@ -59,6 +59,4 @@ tempfile = "3"
 name = "earthgrid"
 path = "src/main.rs"
 
-[[bin]]
-name = "earthgrid-tray"
-path = "src/bin/tray.rs"
+

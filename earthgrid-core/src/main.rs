@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::thread;
 
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -253,11 +254,8 @@ enum Commands {
     /// Git pull + cargo build + restart service
     Update,
 
-    /// Install systemd user service (auto-start at boot)
-    InstallService,
-
-    /// Remove systemd user service
-    UninstallService,
+    /// Launch system tray app (🌍 online / 🌑 offline)
+    Tray,
 
     /// Resize storage allocation
     Resize {
@@ -540,8 +538,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Info) => cmd_info().await?,
         Some(Commands::Setup { port }) => cmd_setup(port)?,
         Some(Commands::Update) => cmd_update()?,
-        Some(Commands::InstallService) => cmd_install_service()?,
-        Some(Commands::UninstallService) => cmd_uninstall_service()?,
+        Some(Commands::Tray) => cmd_tray(),
         Some(Commands::Resize { size_gb, force }) => cmd_resize(size_gb, force)?,
         Some(Commands::Verify {
             heal,
@@ -743,6 +740,9 @@ fn cmd_stop() -> anyhow::Result<()> {
         .status();
 
     // Stop tray app
+    let _ = Command::new("pkill")
+        .args(["-f", "earthgrid tray"])
+        .status();
     let _ = Command::new("pkill")
         .args(["-x", "earthgrid-tray"])
         .status();
@@ -973,29 +973,19 @@ fn cmd_update() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_install_service() -> anyhow::Result<()> {
-    install_systemd_service()
-}
-
-/// Start the tray app if the binary exists and isn't already running.
+/// Start the tray app via `earthgrid tray` if a display is available.
 /// Also installs autostart desktop entry.
 fn start_tray_if_available() {
-    // Find earthgrid-tray binary next to earthgrid binary, or in PATH
-    let tray_bin = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("earthgrid-tray")))
-        .filter(|p| p.exists())
-        .or_else(|| {
-            which_tray().map(PathBuf::from)
-        });
-
-    let Some(tray_path) = tray_bin else {
-        return; // tray binary not found, skip silently
-    };
+    // Skip on headless (no DISPLAY / WAYLAND_DISPLAY)
+    let has_display = std::env::var("DISPLAY").is_ok()
+        || std::env::var("WAYLAND_DISPLAY").is_ok();
+    if !has_display {
+        return;
+    }
 
     // Check if already running
     let already_running = Command::new("pgrep")
-        .args(["-x", "earthgrid-tray"])
+        .args(["-f", "earthgrid tray"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
@@ -1005,18 +995,20 @@ fn start_tray_if_available() {
     }
 
     // Install autostart desktop entry
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("earthgrid"));
     if let Some(home) = std::env::var_os("HOME") {
         let autostart_dir = PathBuf::from(&home).join(".config").join("autostart");
         let _ = fs::create_dir_all(&autostart_dir);
         let desktop_entry = format!(
-            "[Desktop Entry]\nType=Application\nName=EarthGrid Tray\nExec={}\nTerminal=false\nStartupNotify=false\n",
-            tray_path.display()
+            "[Desktop Entry]\nType=Application\nName=EarthGrid Tray\nExec={} tray\nTerminal=false\nStartupNotify=false\n",
+            exe.display()
         );
         let _ = fs::write(autostart_dir.join("earthgrid-tray.desktop"), desktop_entry);
     }
 
-    // Start tray (detached)
-    let _ = Command::new(&tray_path)
+    // Start tray (detached: earthgrid tray)
+    let _ = Command::new(&exe)
+        .arg("tray")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1025,13 +1017,169 @@ fn start_tray_if_available() {
     println!("  ✓ Tray app started (🌍)");
 }
 
-fn which_tray() -> Option<String> {
-    Command::new("which")
-        .arg("earthgrid-tray")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+// -----------------------------------------------------------------------
+// Tray App (inline — no separate binary needed)
+// -----------------------------------------------------------------------
+
+const TRAY_API_BASE: &str = "http://localhost:8400";
+const TRAY_POLL_SECS: u64 = 5;
+const TRAY_ICON_ONLINE: &[u8] = include_bytes!("../assets/tray-online-32.png");
+const TRAY_ICON_OFFLINE: &[u8] = include_bytes!("../assets/tray-offline-32.png");
+
+#[derive(Clone, PartialEq)]
+enum TrayState {
+    Online(String),
+    Offline,
+}
+
+fn tray_icon_dir() -> PathBuf {
+    let dir = std::env::var("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            PathBuf::from(home).join(".cache")
+        })
+        .join("earthgrid-tray");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+fn tray_load_icon(png: &[u8]) -> tray_icon::Icon {
+    let img = image::load_from_memory(png).expect("bad icon PNG").into_rgba8();
+    let (w, h) = img.dimensions();
+    tray_icon::Icon::from_rgba(img.into_raw(), w, h).expect("icon create failed")
+}
+
+fn tray_poll_node() -> TrayState {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(3)))
+        .build()
+        .into();
+    match agent.get(&format!("{}/health", TRAY_API_BASE)).call() {
+        Ok(r) if r.status().as_u16() < 400 => {
+            let stats = agent.get(&format!("{}/status", TRAY_API_BASE)).call().ok().and_then(|mut r| {
+                let json: serde_json::Value = r.body_mut().read_json().ok()?;
+                let bytes = json["storage"]["used_bytes"].as_f64().unwrap_or(0.0);
+                let peers = json["peers"]["connected"].as_u64().unwrap_or(0);
+                Some(format!("{:.1} TB | {} peers", bytes / 1e12, peers))
+            });
+            TrayState::Online(stats.unwrap_or_else(|| "connected".into()))
+        }
+        _ => TrayState::Offline,
+    }
+}
+
+fn cmd_tray() -> ! {
+    use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+    use tray_icon::TrayIconBuilder;
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    #[cfg(target_os = "linux")]
+    gtk::init().expect("Failed to init GTK");
+
+    let _ = fs::write(tray_icon_dir().join("earthgrid-online.png"), TRAY_ICON_ONLINE);
+    let _ = fs::write(tray_icon_dir().join("earthgrid-offline.png"), TRAY_ICON_OFFLINE);
+
+    let icon_online = tray_load_icon(TRAY_ICON_ONLINE);
+    let icon_offline = tray_load_icon(TRAY_ICON_OFFLINE);
+
+    let title = MenuItem::new("EarthGrid v0.1.0", false, None);
+    let status_item = MenuItem::new("Status: checking...", false, None);
+    let dashboard = MenuItem::new("Open Dashboard", true, None);
+    let quit = MenuItem::new("Quit Tray", true, None);
+
+    let menu = Menu::new();
+    let _ = menu.append(&title);
+    let _ = menu.append(&PredefinedMenuItem::separator());
+    let _ = menu.append(&status_item);
+    let _ = menu.append(&PredefinedMenuItem::separator());
+    let _ = menu.append(&dashboard);
+    let _ = menu.append(&PredefinedMenuItem::separator());
+    let _ = menu.append(&quit);
+
+    let dashboard_id = dashboard.id().clone();
+    let quit_id = quit.id().clone();
+
+    let tray = TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_icon(icon_offline.clone())
+        .with_tooltip("EarthGrid — Offline")
+        .with_temp_dir_path(tray_icon_dir())
+        .build()
+        .expect("Failed to create tray icon");
+
+    let shared_state: Arc<StdMutex<TrayState>> = Arc::new(StdMutex::new(TrayState::Offline));
+    let bg_state = Arc::clone(&shared_state);
+
+    thread::spawn(move || loop {
+        let new_state = tray_poll_node();
+        *bg_state.lock().unwrap() = new_state;
+        thread::sleep(std::time::Duration::from_secs(TRAY_POLL_SECS));
+    });
+
+    let menu_rx = MenuEvent::receiver();
+    let mut last_state = TrayState::Offline;
+
+    #[cfg(target_os = "linux")]
+    {
+        let shared_for_gtk = Arc::clone(&shared_state);
+        gtk::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+            if let Ok(event) = menu_rx.try_recv() {
+                if event.id == quit_id {
+                    std::process::exit(0);
+                } else if event.id == dashboard_id {
+                    let _ = open::that(&format!("{}/ui", TRAY_API_BASE));
+                }
+            }
+            let current = shared_for_gtk.lock().unwrap().clone();
+            if current != last_state {
+                match &current {
+                    TrayState::Online(info) => {
+                        let _ = tray.set_icon(Some(icon_online.clone()));
+                        let _ = tray.set_tooltip(Some("EarthGrid — Online"));
+                        let _ = status_item.set_text(&format!("Status: Online | {}", info));
+                    }
+                    TrayState::Offline => {
+                        let _ = tray.set_icon(Some(icon_offline.clone()));
+                        let _ = tray.set_tooltip(Some("EarthGrid — Offline"));
+                        let _ = status_item.set_text("Status: Offline");
+                    }
+                }
+                last_state = current;
+            }
+            gtk::glib::ControlFlow::Continue
+        });
+        gtk::main();
+        std::process::exit(0);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    loop {
+        if let Ok(event) = menu_rx.try_recv() {
+            if event.id == quit_id {
+                std::process::exit(0);
+            } else if event.id == dashboard_id {
+                let _ = open::that(&format!("{}/ui", TRAY_API_BASE));
+            }
+        }
+        let current = shared_state.lock().unwrap().clone();
+        if current != last_state {
+            match &current {
+                TrayState::Online(info) => {
+                    let _ = tray.set_icon(Some(icon_online.clone()));
+                    let _ = tray.set_tooltip(Some("EarthGrid — Online"));
+                    let _ = status_item.set_text(&format!("Status: Online | {}", info));
+                }
+                TrayState::Offline => {
+                    let _ = tray.set_icon(Some(icon_offline.clone()));
+                    let _ = tray.set_tooltip(Some("EarthGrid — Offline"));
+                    let _ = status_item.set_text("Status: Offline");
+                }
+            }
+            last_state = current;
+        }
+        thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 fn install_systemd_service() -> anyhow::Result<()> {
@@ -1072,24 +1220,6 @@ Restart=on-failure\nRestartSec=10\nStandardOutput=journal\nStandardError=journal
     println!("   Logs:    journalctl --user -u {} -f", SYSTEMD_UNIT);
     println!("   Remove:  earthgrid uninstall-service");
 
-    Ok(())
-}
-
-fn cmd_uninstall_service() -> anyhow::Result<()> {
-    let _ = Command::new("systemctl").args(["--user", "stop", SYSTEMD_UNIT]).status();
-    let _ = Command::new("systemctl").args(["--user", "disable", SYSTEMD_UNIT]).status();
-
-    let unit_path = dirs_home()
-        .join(".config")
-        .join("systemd")
-        .join("user")
-        .join(SYSTEMD_UNIT);
-    if unit_path.exists() {
-        fs::remove_file(&unit_path)?;
-    }
-
-    let _ = Command::new("systemctl").args(["--user", "daemon-reload"]).status();
-    println!("✓ EarthGrid service removed");
     Ok(())
 }
 
