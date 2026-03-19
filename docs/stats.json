@@ -1,16 +1,16 @@
 {
-  "updated": "2026-03-19T19:10:01Z",
+  "updated": "2026-03-19T19:20:01Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 1,
     "nodes_total": 1,
-    "total_bytes": 664139514296,
+    "total_bytes": 664365955032,
     "available_storage_gb": 5000.0,
     "redundancy": 1.0
   },
   "coverage": {
     "sentinel-2-l2a": {
-      "items": 3881,
+      "items": 3882,
       "tiles": 1,
       "area_km2": 12670
     }
@@ -847,13 +847,14 @@
               47.8
             ],
             "tile_id": "32TPT",
-            "item_count": 28,
-            "date_count": 8,
+            "item_count": 29,
+            "date_count": 9,
             "dates": [
               "2018-04-07",
               "2018-07-13",
               "2018-07-18",
               "2018-07-31",
+              "2025-06-11",
               "2025-06-13",
               "2025-06-14",
               "2025-06-19",
@@ -1135,8 +1136,8 @@
       }
     ]
   },
-  "items": 3881,
-  "chunks": 1353208,
+  "items": 3882,
+  "chunks": 1353664,
   "km2_requested": 0,
   "operations": [
     {
@@ -1205,9 +1206,9 @@
           "node_name": "node-alpha",
           "owner": "",
           "anonymous": true,
-          "score": 29007,
-          "items": 3881,
-          "gb_stored": 618.5,
+          "score": 29008,
+          "items": 3882,
+          "gb_stored": 618.7,
           "gb_pledged": 5000.0,
           "gb_served": 0.0,
           "streak": 1,
@@ -1336,7 +1337,7 @@
       "nodes_total": 2,
       "nodes_alive": 1,
       "storage_pledged_gb": 5070.0,
-      "storage_used_gb": 667.4,
+      "storage_used_gb": 667.6,
       "storage_utilization_pct": 13.2,
       "data_served_gb": 0.0,
       "estimated_replication_factor": 1.0,
@@ -1369,14 +1370,14 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 276598.4826581478,
+          "remaining_seconds": 275998.5059480667,
           "remaining_human": "3d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 3881.0,
+              "score": 3882.0,
               "group": ""
             },
             {
@@ -1395,14 +1396,14 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 276598.4826581478,
+          "remaining_seconds": 275998.5059480667,
           "remaining_human": "3d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 618.53,
+              "score": 618.74,
               "group": ""
             },
             {
@@ -1421,7 +1422,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 276598.4826581478,
+          "remaining_seconds": 275998.5059480667,
           "remaining_human": "3d 4h",
           "participants": 0,
           "top3": []
@@ -1434,14 +1435,14 @@
           "period": "monthly",
           "start_ts": 1772323200.0,
           "end_ts": 1775001600.0,
-          "remaining_seconds": 1054198.4826581478,
+          "remaining_seconds": 1053598.5059480667,
           "remaining_human": "12d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 29007.0,
+              "score": 29008.0,
               "group": ""
             },
             {
