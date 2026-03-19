@@ -1,15 +1,13 @@
-//! Reconstruct GeoTIFF files from stored chunks.
+//! Reconstruct Cloud-Optimized GeoTIFF (COG) from stored chunks via GDAL.
 //!
-//! Two code paths:
-//! - **Default (pure Rust)**: Minimal GeoTIFF writer — zero external deps.
-//!   Produces valid GeoTIFF readable by QGIS, GDAL, rasterio, R.
-//! - **`gdal-support` feature**: Full GDAL-backed writer with COG, compression,
-//!   and reprojection support.
-//!
-//! Every node can process and serve GeoTIFF without installing anything.
+//! Every node produces the same format: COG with LZW compression + tiling.
+//! Requires libgdal on the system (standard for the geo community).
 
 use std::collections::HashMap;
-use std::io::{Cursor, Write};
+
+use gdal::raster::RasterCreationOptions;
+use gdal::spatial_ref::SpatialRef;
+use gdal::DriverManager;
 
 use crate::catalog::StacItem;
 use crate::chunk_store::ChunkStore;
@@ -137,340 +135,19 @@ pub fn reconstruct_bands(
     }
 }
 
-// ===========================================================================
-// Pure Rust GeoTIFF writer — zero dependencies
-// ===========================================================================
-// Writes a minimal, valid GeoTIFF that can be opened by GDAL, QGIS, rasterio, R.
-// Supports: uint8, uint16, int16, float32; single and multi-band; WGS84/UTM CRS.
+// ---------------------------------------------------------------------------
+// COG output via GDAL
+// ---------------------------------------------------------------------------
 
-// TIFF constants
-const TIFF_MAGIC_LE: u16 = 0x4949; // little-endian
-const TIFF_MAGIC_42: u16 = 42;
-
-// TIFF tag IDs
-const TAG_IMAGE_WIDTH: u16 = 256;
-const TAG_IMAGE_LENGTH: u16 = 257;
-const TAG_BITS_PER_SAMPLE: u16 = 258;
-const TAG_COMPRESSION: u16 = 259;
-const TAG_PHOTOMETRIC: u16 = 262;
-const TAG_STRIP_OFFSETS: u16 = 273;
-const TAG_SAMPLES_PER_PIXEL: u16 = 277;
-const TAG_ROWS_PER_STRIP: u16 = 278;
-const TAG_STRIP_BYTE_COUNTS: u16 = 279;
-const TAG_SAMPLE_FORMAT: u16 = 339;
-
-// GeoTIFF tag IDs
-const TAG_MODEL_TIEPOINT: u16 = 33922;
-const TAG_MODEL_PIXEL_SCALE: u16 = 33550;
-const TAG_GEO_KEY_DIRECTORY: u16 = 34735;
-
-// GeoKey IDs
-const GT_MODEL_TYPE_GEOKEY: u16 = 1024;
-const GT_RASTER_TYPE_GEOKEY: u16 = 1025;
-const GEOGRAPHIC_TYPE_GEOKEY: u16 = 2048;
-const PROJECTED_CS_TYPE_GEOKEY: u16 = 3072;
-
-// TIFF data types
-const TIFF_SHORT: u16 = 3;   // uint16
-const TIFF_LONG: u16 = 4;    // uint32
-const TIFF_DOUBLE: u16 = 12; // float64
-
-/// Reconstruct a GeoTIFF from stored chunks (pure Rust).
-pub fn reconstruct_geotiff(
+/// Reconstruct a Cloud-Optimized GeoTIFF from stored chunks.
+///
+/// Output: COG with LZW compression, 256×256 tiles, overviews.
+/// Readable by QGIS, GDAL, rasterio, R terra/stars, any STAC client.
+pub fn reconstruct_cog(
     item: &StacItem,
     store: &mut ChunkStore,
     bands: Option<&[String]>,
 ) -> Result<Vec<u8>> {
-    let band_data = reconstruct_bands(item, store, bands)?;
-    if band_data.is_empty() {
-        return Err(crate::error::EarthGridError::Other(
-            format!("No data for item {}", item.id),
-        ));
-    }
-
-    let props = &item.properties;
-    let width = props_u32(props, "earthgrid:width")?;
-    let height = props_u32(props, "earthgrid:height")?;
-    let dtype_str = props_str(props, "earthgrid:dtype").unwrap_or_else(|| "uint16".to_string());
-    let crs = props_str(props, "earthgrid:crs").unwrap_or_else(|| "EPSG:4326".to_string());
-    let bbox = item.bbox;
-
-    let geotransform = if let Some(tf) = props.get("earthgrid:transform").and_then(|v| v.as_array()) {
-        if tf.len() >= 6 {
-            [
-                tf[0].as_f64().unwrap_or(0.0),
-                tf[1].as_f64().unwrap_or(1.0),
-                tf[2].as_f64().unwrap_or(0.0),
-                tf[3].as_f64().unwrap_or(0.0),
-                tf[4].as_f64().unwrap_or(0.0),
-                tf[5].as_f64().unwrap_or(-1.0),
-            ]
-        } else {
-            geotransform_from_bbox(bbox, width, height)
-        }
-    } else {
-        geotransform_from_bbox(bbox, width, height)
-    };
-
-    let band_names_ordered: Vec<String> = band_data.keys().cloned().collect();
-    let all_band_bytes: Vec<&[u8]> = band_names_ordered.iter()
-        .map(|n| band_data[n].as_slice())
-        .collect();
-
-    write_geotiff(width, height, &dtype_str, &crs, &geotransform, &all_band_bytes)
-}
-
-/// Compute NDVI and return as GeoTIFF bytes (pure Rust).
-pub fn ndvi_geotiff(
-    red_data: &[u8],
-    nir_data: &[u8],
-    width: u32,
-    height: u32,
-    bbox: [f64; 4],
-    crs: &str,
-    geotransform: Option<[f64; 6]>,
-) -> Result<Vec<u8>> {
-    let pixel_count = (width * height) as usize;
-
-    // Compute NDVI → f32
-    let ndvi_bytes: Vec<u8> = if red_data.len() == pixel_count * 2 {
-        // uint16 input
-        red_data.chunks_exact(2).zip(nir_data.chunks_exact(2))
-            .flat_map(|(r, n)| {
-                let red = u16::from_le_bytes([r[0], r[1]]) as f32;
-                let nir = u16::from_le_bytes([n[0], n[1]]) as f32;
-                let ndvi = if (nir + red).abs() < 1e-6 { 0.0f32 } else { (nir - red) / (nir + red) };
-                ndvi.to_le_bytes()
-            })
-            .collect()
-    } else {
-        // f32 input
-        red_data.chunks_exact(4).zip(nir_data.chunks_exact(4))
-            .flat_map(|(r, n)| {
-                let red = f32::from_le_bytes([r[0], r[1], r[2], r[3]]);
-                let nir = f32::from_le_bytes([n[0], n[1], n[2], n[3]]);
-                let ndvi = if (nir + red).abs() < 1e-6 { 0.0f32 } else { (nir - red) / (nir + red) };
-                ndvi.to_le_bytes()
-            })
-            .collect()
-    };
-
-    let gt = geotransform.unwrap_or_else(|| geotransform_from_bbox(bbox, width, height));
-    write_geotiff(width, height, "float32", crs, &gt, &[&ndvi_bytes])
-}
-
-// ---------------------------------------------------------------------------
-// Pure Rust GeoTIFF writer
-// ---------------------------------------------------------------------------
-
-fn write_geotiff(
-    width: u32,
-    height: u32,
-    dtype: &str,
-    crs: &str,
-    geotransform: &[f64; 6],
-    band_data: &[&[u8]],
-) -> Result<Vec<u8>> {
-    let n_bands = band_data.len() as u16;
-    let bpp = dtype_size(dtype);
-    let bits_per_sample = (bpp * 8) as u16;
-    let sample_format: u16 = match dtype {
-        "float32" | "f32" | "float64" | "f64" => 3, // IEEE float
-        "int16" | "i16" | "int32" | "i32" => 2,     // signed int
-        _ => 1,                                       // unsigned int
-    };
-
-    // Parse CRS → EPSG code
-    let epsg = parse_epsg(crs);
-    let is_projected = epsg >= 32000; // UTM etc.
-
-    // GeoKeys
-    let geo_keys = if is_projected {
-        vec![
-            // KeyDirectoryVersion, KeyRevision, MinorRevision, NumberOfKeys
-            1, 1, 0, 3,
-            GT_MODEL_TYPE_GEOKEY, 0, 1, 1,     // ModelTypeProjected
-            GT_RASTER_TYPE_GEOKEY, 0, 1, 1,    // RasterPixelIsArea
-            PROJECTED_CS_TYPE_GEOKEY, 0, 1, epsg,
-        ]
-    } else {
-        vec![
-            1, 1, 0, 3,
-            GT_MODEL_TYPE_GEOKEY, 0, 1, 2,     // ModelTypeGeographic
-            GT_RASTER_TYPE_GEOKEY, 0, 1, 1,    // RasterPixelIsArea
-            GEOGRAPHIC_TYPE_GEOKEY, 0, 1, epsg,
-        ]
-    };
-
-    // ModelTiepoint: (0, 0, 0) → (x_origin, y_origin, 0)
-    let tiepoint = [0.0f64, 0.0, 0.0, geotransform[0], geotransform[3], 0.0];
-
-    // ModelPixelScale: (pixel_width, pixel_height, 0)
-    let pixel_scale = [geotransform[1], geotransform[5].abs(), 0.0];
-
-    // Calculate strip data size (all bands sequential)
-    let strip_size = width as usize * height as usize * bpp;
-    let total_strip_bytes = strip_size * n_bands as usize;
-
-    // Number of IFD entries
-    let n_tags: u16 = 12; // base tags + geo tags
-
-    // Layout:
-    // 8 bytes: TIFF header
-    // variable: IFD entries + IFD terminator
-    // variable: extra data (BitsPerSample if multi, strip offsets/counts, tiepoint, pixel_scale, geokeys)
-    // rest: pixel data
-
-    let ifd_offset: u32 = 8;
-    let ifd_size = 2 + n_tags as usize * 12 + 4; // count + entries + next_ifd
-    let extra_start = ifd_offset as usize + ifd_size;
-
-    // Build extra data area
-    let mut extra = Vec::new();
-
-    // BitsPerSample (if n_bands > 1, need array)
-    let bps_offset = extra_start + extra.len();
-    if n_bands > 1 {
-        for _ in 0..n_bands {
-            extra.extend_from_slice(&bits_per_sample.to_le_bytes());
-        }
-    }
-
-    // SampleFormat (if n_bands > 1)
-    let sf_offset = extra_start + extra.len();
-    if n_bands > 1 {
-        for _ in 0..n_bands {
-            extra.extend_from_slice(&sample_format.to_le_bytes());
-        }
-    }
-
-    // Strip offsets (one strip per band)
-    let strip_offsets_offset = extra_start + extra.len();
-    let pixel_data_start = extra_start + extra.len()
-        + n_bands as usize * 4  // strip offsets
-        + n_bands as usize * 4  // strip byte counts
-        + 48                     // tiepoint (6 doubles)
-        + 24                     // pixel_scale (3 doubles)
-        + geo_keys.len() * 2;   // geokeys
-
-    for i in 0..n_bands as usize {
-        let offset = (pixel_data_start + i * strip_size) as u32;
-        extra.extend_from_slice(&offset.to_le_bytes());
-    }
-
-    // Strip byte counts
-    let strip_counts_offset = extra_start + extra.len();
-    for _ in 0..n_bands {
-        extra.extend_from_slice(&(strip_size as u32).to_le_bytes());
-    }
-
-    // ModelTiepoint
-    let tiepoint_offset = extra_start + extra.len();
-    for &v in &tiepoint {
-        extra.extend_from_slice(&v.to_le_bytes());
-    }
-
-    // ModelPixelScale
-    let pixel_scale_offset = extra_start + extra.len();
-    for &v in &pixel_scale {
-        extra.extend_from_slice(&v.to_le_bytes());
-    }
-
-    // GeoKeyDirectory
-    let geokey_offset = extra_start + extra.len();
-    for &v in &geo_keys {
-        extra.extend_from_slice(&v.to_le_bytes());
-    }
-
-    // Now build the file
-    let total_size = extra_start + extra.len() + total_strip_bytes;
-    let mut buf = Cursor::new(Vec::with_capacity(total_size));
-
-    // TIFF header
-    buf.write_all(&TIFF_MAGIC_LE.to_le_bytes())?;
-    buf.write_all(&TIFF_MAGIC_42.to_le_bytes())?;
-    buf.write_all(&ifd_offset.to_le_bytes())?;
-
-    // IFD
-    buf.write_all(&n_tags.to_le_bytes())?;
-
-    // Helper to write IFD entry
-    fn write_tag(buf: &mut Cursor<Vec<u8>>, tag: u16, dtype: u16, count: u32, value: u32) -> std::io::Result<()> {
-        buf.write_all(&tag.to_le_bytes())?;
-        buf.write_all(&dtype.to_le_bytes())?;
-        buf.write_all(&count.to_le_bytes())?;
-        buf.write_all(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    // Tags must be in ascending order!
-    write_tag(&mut buf, TAG_IMAGE_WIDTH, TIFF_LONG, 1, width)?;
-    write_tag(&mut buf, TAG_IMAGE_LENGTH, TIFF_LONG, 1, height)?;
-
-    if n_bands == 1 {
-        write_tag(&mut buf, TAG_BITS_PER_SAMPLE, TIFF_SHORT, 1, bits_per_sample as u32)?;
-    } else {
-        write_tag(&mut buf, TAG_BITS_PER_SAMPLE, TIFF_SHORT, n_bands as u32, bps_offset as u32)?;
-    }
-
-    write_tag(&mut buf, TAG_COMPRESSION, TIFF_SHORT, 1, 1)?; // no compression
-    write_tag(&mut buf, TAG_PHOTOMETRIC, TIFF_SHORT, 1, 1)?;  // MinIsBlack
-
-    if n_bands == 1 {
-        write_tag(&mut buf, TAG_STRIP_OFFSETS, TIFF_LONG, 1, pixel_data_start as u32)?;
-    } else {
-        write_tag(&mut buf, TAG_STRIP_OFFSETS, TIFF_LONG, n_bands as u32, strip_offsets_offset as u32)?;
-    }
-
-    write_tag(&mut buf, TAG_SAMPLES_PER_PIXEL, TIFF_SHORT, 1, n_bands as u32)?;
-    write_tag(&mut buf, TAG_ROWS_PER_STRIP, TIFF_LONG, 1, height)?;
-
-    if n_bands == 1 {
-        write_tag(&mut buf, TAG_STRIP_BYTE_COUNTS, TIFF_LONG, 1, strip_size as u32)?;
-    } else {
-        write_tag(&mut buf, TAG_STRIP_BYTE_COUNTS, TIFF_LONG, n_bands as u32, strip_counts_offset as u32)?;
-    }
-
-    // SampleFormat
-    if n_bands == 1 {
-        write_tag(&mut buf, TAG_SAMPLE_FORMAT, TIFF_SHORT, 1, sample_format as u32)?;
-    } else {
-        write_tag(&mut buf, TAG_SAMPLE_FORMAT, TIFF_SHORT, n_bands as u32, sf_offset as u32)?;
-    }
-
-    // GeoTIFF tags
-    write_tag(&mut buf, TAG_MODEL_PIXEL_SCALE, TIFF_DOUBLE, 3, pixel_scale_offset as u32)?;
-    write_tag(&mut buf, TAG_MODEL_TIEPOINT, TIFF_DOUBLE, 6, tiepoint_offset as u32)?;
-    write_tag(&mut buf, TAG_GEO_KEY_DIRECTORY, TIFF_SHORT, geo_keys.len() as u32, geokey_offset as u32)?;
-
-    // IFD terminator (no next IFD)
-    buf.write_all(&0u32.to_le_bytes())?;
-
-    // Extra data
-    buf.write_all(&extra)?;
-
-    // Pixel data (one strip per band)
-    for band in band_data {
-        buf.write_all(band)?;
-    }
-
-    Ok(buf.into_inner())
-}
-
-// ---------------------------------------------------------------------------
-// GDAL-backed writer (optional, higher quality output with COG + compression)
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "gdal-support")]
-pub fn reconstruct_geotiff_gdal(
-    item: &StacItem,
-    store: &mut ChunkStore,
-    bands: Option<&[String]>,
-) -> Result<Vec<u8>> {
-    use gdal::raster::RasterCreationOptions;
-    use gdal::spatial_ref::SpatialRef;
-    use gdal::DriverManager;
-
     let band_data = reconstruct_bands(item, store, bands)?;
     if band_data.is_empty() {
         return Err(crate::error::EarthGridError::Other(
@@ -483,57 +160,121 @@ pub fn reconstruct_geotiff_gdal(
     let height = props_u32(props, "earthgrid:height")? as usize;
     let dtype_str = props_str(props, "earthgrid:dtype").unwrap_or_else(|| "uint16".to_string());
     let crs = props_str(props, "earthgrid:crs").unwrap_or_else(|| "EPSG:4326".to_string());
-    let bpp = dtype_size(&dtype_str);
     let bbox = item.bbox;
+    let bpp = dtype_size(&dtype_str);
+    let is_float = matches!(dtype_str.as_str(), "float32" | "f32" | "float64" | "f64");
 
-    let geotransform = if let Some(tf) = props.get("earthgrid:transform").and_then(|v| v.as_array()) {
-        if tf.len() >= 6 {
-            [
-                tf[0].as_f64().unwrap_or(0.0), tf[1].as_f64().unwrap_or(1.0),
-                tf[2].as_f64().unwrap_or(0.0), tf[3].as_f64().unwrap_or(0.0),
-                tf[4].as_f64().unwrap_or(0.0), tf[5].as_f64().unwrap_or(-1.0),
-            ]
-        } else {
-            geotransform_from_bbox(bbox, props_u32(props, "earthgrid:width")?, props_u32(props, "earthgrid:height")?)
-        }
-    } else {
-        geotransform_from_bbox(bbox, props_u32(props, "earthgrid:width")?, props_u32(props, "earthgrid:height")?)
-    };
+    let geotransform = extract_geotransform(props, bbox, width as u32, height as u32);
 
     let band_names_ordered: Vec<String> = band_data.keys().cloned().collect();
     let n_bands = band_names_ordered.len();
-    let is_float = matches!(dtype_str.as_str(), "float32" | "f32" | "float64" | "f64");
-    let vsi_path = format!("/vsimem/earthgrid_reconstruct_{}.tif", uuid::Uuid::new_v4());
+
+    write_cog(
+        width, height, n_bands, bpp, is_float,
+        &crs, &geotransform,
+        &band_names_ordered, &band_data,
+    )
+}
+
+/// Compute NDVI and return as COG.
+pub fn ndvi_cog(
+    red_data: &[u8],
+    nir_data: &[u8],
+    width: u32,
+    height: u32,
+    bbox: [f64; 4],
+    crs: &str,
+    geotransform: Option<[f64; 6]>,
+) -> Result<Vec<u8>> {
+    let pixel_count = (width * height) as usize;
+
+    let ndvi: Vec<f32> = if red_data.len() == pixel_count * 2 {
+        red_data.chunks_exact(2).zip(nir_data.chunks_exact(2))
+            .map(|(r, n)| {
+                let red = u16::from_le_bytes([r[0], r[1]]) as f32;
+                let nir = u16::from_le_bytes([n[0], n[1]]) as f32;
+                if (nir + red).abs() < 1e-6 { 0.0 } else { (nir - red) / (nir + red) }
+            })
+            .collect()
+    } else {
+        red_data.chunks_exact(4).zip(nir_data.chunks_exact(4))
+            .map(|(r, n)| {
+                let red = f32::from_le_bytes([r[0], r[1], r[2], r[3]]);
+                let nir = f32::from_le_bytes([n[0], n[1], n[2], n[3]]);
+                if (nir + red).abs() < 1e-6 { 0.0 } else { (nir - red) / (nir + red) }
+            })
+            .collect()
+    };
+
+    let ndvi_bytes: Vec<u8> = ndvi.iter().flat_map(|v| v.to_le_bytes()).collect();
+
+    let gt = geotransform.unwrap_or_else(|| geotransform_from_bbox(bbox, width, height));
+
+    let mut band_data = HashMap::new();
+    band_data.insert("NDVI".to_string(), ndvi_bytes);
+
+    write_cog(
+        width as usize, height as usize, 1, 4, true,
+        crs, &gt,
+        &["NDVI".to_string()], &band_data,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// COG writer (GDAL /vsimem)
+// ---------------------------------------------------------------------------
+
+fn write_cog(
+    width: usize,
+    height: usize,
+    n_bands: usize,
+    bpp: usize,
+    is_float: bool,
+    crs: &str,
+    geotransform: &[f64; 6],
+    band_names: &[String],
+    band_data: &HashMap<String, Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let vsi_path = format!("/vsimem/earthgrid_cog_{}.tif", uuid::Uuid::new_v4());
+
+    // COG creation options: tiled, LZW compressed, with overviews
+    let cog_options = [
+        "COMPRESS=LZW",
+        "TILED=YES",
+        "BLOCKXSIZE=256",
+        "BLOCKYSIZE=256",
+        "PREDICTOR=2",      // horizontal differencing for better compression
+    ];
 
     let driver = DriverManager::get_driver_by_name("GTiff")
-        .map_err(|e| crate::error::EarthGridError::Other(format!("GDAL: {}", e)))?;
+        .map_err(|e| crate::error::EarthGridError::Other(format!("GDAL GTiff driver: {}", e)))?;
 
     let mut ds = if is_float {
         driver.create_with_band_type_with_options::<f32, _>(
             &vsi_path, width, height, n_bands,
-            &RasterCreationOptions::from_iter(["COMPRESS=LZW", "TILED=YES"]),
+            &RasterCreationOptions::from_iter(cog_options),
         )
     } else if bpp == 1 {
         driver.create_with_band_type_with_options::<u8, _>(
             &vsi_path, width, height, n_bands,
-            &RasterCreationOptions::from_iter(["COMPRESS=LZW", "TILED=YES"]),
+            &RasterCreationOptions::from_iter(cog_options),
         )
     } else {
         driver.create_with_band_type_with_options::<u16, _>(
             &vsi_path, width, height, n_bands,
-            &RasterCreationOptions::from_iter(["COMPRESS=LZW", "TILED=YES"]),
+            &RasterCreationOptions::from_iter(cog_options),
         )
     }
     .map_err(|e| crate::error::EarthGridError::Other(format!("GDAL create: {}", e)))?;
 
-    ds.set_geo_transform(&geotransform)
-        .map_err(|e| crate::error::EarthGridError::Other(format!("GDAL gt: {}", e)))?;
+    ds.set_geo_transform(geotransform)
+        .map_err(|e| crate::error::EarthGridError::Other(format!("GDAL geotransform: {}", e)))?;
 
-    if let Ok(srs) = SpatialRef::from_definition(&crs) {
+    if let Ok(srs) = SpatialRef::from_definition(crs) {
         let _ = ds.set_spatial_ref(&srs);
     }
 
-    for (band_idx, band_name) in band_names_ordered.iter().enumerate() {
+    for (band_idx, band_name) in band_names.iter().enumerate() {
         if let Some(data) = band_data.get(band_name) {
             let mut rb = ds.rasterband(band_idx + 1)
                 .map_err(|e| crate::error::EarthGridError::Other(format!("GDAL band: {}", e)))?;
@@ -560,10 +301,13 @@ pub fn reconstruct_geotiff_gdal(
         }
     }
 
+    // Close dataset to flush
     drop(ds);
 
+    // Read from /vsimem
     let bytes = gdal::vsi::get_vsi_mem_file_bytes_owned(&vsi_path)
-        .map_err(|e| crate::error::EarthGridError::Other(format!("GDAL vsimem: {}", e)))?;
+        .map_err(|e| crate::error::EarthGridError::Other(format!("GDAL vsimem read: {}", e)))?;
+
     let _ = gdal::vsi::unlink_mem_file(&vsi_path);
 
     Ok(bytes)
@@ -573,19 +317,26 @@ pub fn reconstruct_geotiff_gdal(
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn extract_geotransform(props: &serde_json::Value, bbox: [f64; 4], width: u32, height: u32) -> [f64; 6] {
+    if let Some(tf) = props.get("earthgrid:transform").and_then(|v| v.as_array()) {
+        if tf.len() >= 6 {
+            return [
+                tf[0].as_f64().unwrap_or(0.0),
+                tf[1].as_f64().unwrap_or(1.0),
+                tf[2].as_f64().unwrap_or(0.0),
+                tf[3].as_f64().unwrap_or(0.0),
+                tf[4].as_f64().unwrap_or(0.0),
+                tf[5].as_f64().unwrap_or(-1.0),
+            ];
+        }
+    }
+    geotransform_from_bbox(bbox, width, height)
+}
+
 fn geotransform_from_bbox(bbox: [f64; 4], width: u32, height: u32) -> [f64; 6] {
     let pixel_width = (bbox[2] - bbox[0]) / width as f64;
     let pixel_height = (bbox[3] - bbox[1]) / height as f64;
     [bbox[0], pixel_width, 0.0, bbox[3], 0.0, -pixel_height]
-}
-
-fn parse_epsg(crs: &str) -> u16 {
-    // Parse "EPSG:4326" or "EPSG:32633" etc.
-    if let Some(code) = crs.strip_prefix("EPSG:") {
-        code.parse().unwrap_or(4326)
-    } else {
-        4326
-    }
 }
 
 fn props_u32(props: &serde_json::Value, key: &str) -> Result<u32> {
