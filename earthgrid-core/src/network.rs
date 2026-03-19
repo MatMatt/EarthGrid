@@ -85,7 +85,9 @@ fn load_or_generate_keypair(data_dir: &Path) -> libp2p::identity::Keypair {
 
     if key_path.exists() {
         if let Ok(bytes) = std::fs::read(&key_path) {
-            if let Ok(kp) = libp2p::identity::Keypair::ed25519_from_bytes(bytes) {
+            // ed25519_from_bytes expects exactly 32-byte secret key
+            let secret = if bytes.len() == 64 { bytes[..32].to_vec() } else { bytes };
+            if let Ok(kp) = libp2p::identity::Keypair::ed25519_from_bytes(secret) {
                 info!("Loaded keypair from {}", key_path.display());
                 return kp;
             }
@@ -94,9 +96,10 @@ fn load_or_generate_keypair(data_dir: &Path) -> libp2p::identity::Keypair {
     }
 
     let kp = libp2p::identity::Keypair::generate_ed25519();
-    // Save the secret key bytes
+    // Save the 64-byte keypair (secret + public) for reload
     if let Ok(ed_kp) = kp.clone().try_into_ed25519() {
         let _ = std::fs::create_dir_all(data_dir);
+        // Store full 64 bytes; on reload we extract the 32-byte secret
         if std::fs::write(&key_path, ed_kp.to_bytes()).is_ok() {
             info!("Generated new keypair, saved to {}", key_path.display());
         }
