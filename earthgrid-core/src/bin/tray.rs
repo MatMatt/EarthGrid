@@ -7,6 +7,8 @@ use std::time::Duration;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
 
+use std::path::PathBuf;
+
 const API_BASE: &str = "http://localhost:8400";
 const POLL_SECS: u64 = 5;
 
@@ -16,8 +18,26 @@ const ICON_OFFLINE: &[u8] = include_bytes!("../../assets/tray-offline-32.png");
 
 #[derive(Clone, PartialEq)]
 enum State {
-    Online(String), // status text
+    Online(String),
     Offline,
+}
+
+fn icon_dir() -> PathBuf {
+    let dir = std::env::var("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            PathBuf::from(home).join(".cache")
+        })
+        .join("earthgrid-tray");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
+fn write_icon(name: &str, data: &[u8]) -> PathBuf {
+    let path = icon_dir().join(name);
+    std::fs::write(&path, data).expect("Failed to write icon");
+    path
 }
 
 fn load_icon(png: &[u8]) -> Icon {
@@ -52,6 +72,18 @@ fn poll_node() -> State {
 }
 
 fn main() {
+    // Suppress libayatana deprecation warning
+    std::env::set_var("G_MESSAGES_DEBUG", "none");
+
+    // GTK must be initialized before creating tray icons on Linux
+    #[cfg(target_os = "linux")]
+    gtk::init().expect("Failed to init GTK");
+
+    // Write icon files for GNOME AppIndicator (uses file paths, not RGBA)
+    let online_path = write_icon("earthgrid-online.png", ICON_ONLINE);
+    let offline_path = write_icon("earthgrid-offline.png", ICON_OFFLINE);
+    eprintln!("Icons written to: {}", icon_dir().display());
+
     let icon_online = load_icon(ICON_ONLINE);
     let icon_offline = load_icon(ICON_OFFLINE);
 
@@ -78,6 +110,7 @@ fn main() {
         .with_menu(Box::new(menu))
         .with_icon(icon_offline.clone())
         .with_tooltip("EarthGrid — Offline")
+        .with_temp_dir_path(icon_dir())
         .build()
         .expect("Failed to create tray icon");
 
@@ -95,9 +128,47 @@ fn main() {
     let menu_rx = MenuEvent::receiver();
     let mut last_state = State::Offline;
 
-    // Main loop: handle menu events + update UI from shared state
+    // Use GTK main loop with periodic check (GNOME needs this!)
+    #[cfg(target_os = "linux")]
+    {
+        let shared_for_gtk = Arc::clone(&shared_state);
+        gtk::glib::timeout_add_local(Duration::from_millis(200), move || {
+            // Check menu events
+            if let Ok(event) = menu_rx.try_recv() {
+                if event.id == quit_id {
+                    std::process::exit(0);
+                } else if event.id == dashboard_id {
+                    let _ = open::that(API_BASE);
+                }
+            }
+
+            // Update UI from shared state
+            let current = shared_for_gtk.lock().unwrap().clone();
+            if current != last_state {
+                match &current {
+                    State::Online(info) => {
+                        let _ = tray.set_icon(Some(icon_online.clone()));
+                        let _ = tray.set_tooltip(Some("EarthGrid — Online"));
+                        let _ = status_item.set_text(&format!("Status: Online | {}", info));
+                    }
+                    State::Offline => {
+                        let _ = tray.set_icon(Some(icon_offline.clone()));
+                        let _ = tray.set_tooltip(Some("EarthGrid — Offline"));
+                        let _ = status_item.set_text("Status: Offline");
+                    }
+                }
+                last_state = current;
+            }
+
+            gtk::glib::ControlFlow::Continue
+        });
+
+        gtk::main();
+    }
+
+    // Non-Linux fallback: simple loop
+    #[cfg(not(target_os = "linux"))]
     loop {
-        // Check menu events
         if let Ok(event) = menu_rx.try_recv() {
             if event.id == quit_id {
                 std::process::exit(0);
@@ -106,7 +177,6 @@ fn main() {
             }
         }
 
-        // Update UI from shared state (runs on main thread = safe)
         let current = shared_state.lock().unwrap().clone();
         if current != last_state {
             match &current {
