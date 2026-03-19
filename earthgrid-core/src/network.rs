@@ -58,7 +58,6 @@ pub enum NetworkEvent {
 }
 
 /// Commands sent from the application to the network layer.
-#[derive(Debug)]
 pub enum NetworkCommand {
     /// Send a request to a specific peer.
     SendRequest {
@@ -66,12 +65,30 @@ pub enum NetworkCommand {
         request: EarthGridRequest,
         response_tx: tokio::sync::oneshot::Sender<Result<EarthGridResponse, String>>,
     },
+    /// Send a response back on a request-response channel.
+    SendResponse {
+        channel: request_response::ResponseChannel<EarthGridResponse>,
+        response: EarthGridResponse,
+    },
     /// Announce this node as a provider for a key (collection name).
     Provide { key: String },
     /// Find providers for a key (collection name).
     FindProviders { key: String },
     /// Bootstrap Kademlia from known peers.
     Bootstrap,
+}
+
+// NetworkCommand can't derive Debug because ResponseChannel doesn't impl Debug
+impl std::fmt::Debug for NetworkCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SendRequest { peer, .. } => write!(f, "SendRequest({})", peer),
+            Self::SendResponse { .. } => write!(f, "SendResponse"),
+            Self::Provide { key } => write!(f, "Provide({})", key),
+            Self::FindProviders { key } => write!(f, "FindProviders({})", key),
+            Self::Bootstrap => write!(f, "Bootstrap"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +275,9 @@ async fn swarm_loop(
                     NetworkCommand::SendRequest { peer, request, response_tx } => {
                         let req_id = swarm.behaviour_mut().rpc.send_request(&peer, request);
                         pending_responses.insert(req_id, response_tx);
+                    }
+                    NetworkCommand::SendResponse { channel, response } => {
+                        let _ = swarm.behaviour_mut().rpc.send_response(channel, response);
                     }
                     NetworkCommand::Provide { key } => {
                         let record_key = kad::RecordKey::new(&key_hash(&key));

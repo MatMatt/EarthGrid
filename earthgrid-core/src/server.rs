@@ -670,7 +670,15 @@ pub fn router(state: AppState) -> Router {
 // Start server
 // ---------------------------------------------------------------------------
 
-pub async fn serve(data_dir: std::path::PathBuf, host: String, port: u16) -> anyhow::Result<()> {
+pub async fn serve(
+    data_dir: std::path::PathBuf,
+    host: String,
+    port: u16,
+    p2p_channels: Option<(
+        tokio::sync::mpsc::Receiver<crate::network::NetworkEvent>,
+        tokio::sync::mpsc::Sender<crate::network::NetworkCommand>,
+    )>,
+) -> anyhow::Result<()> {
     use std::env;
 
     let store_path = data_dir.join("store");
@@ -712,6 +720,12 @@ pub async fn serve(data_dir: std::path::PathBuf, host: String, port: u16) -> any
     };
 
     let hb_peers = state.peers.clone();
+    // Clones for P2P handler
+    let state_clone_store = state.store.clone();
+    let state_clone_catalog = state.catalog.clone();
+    let state_node_id = state.node_id.clone();
+    let state_node_name = state.node_name.clone();
+    let state_version = state.version.clone();
     let app = router(state);
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -768,6 +782,93 @@ pub async fn serve(data_dir: std::path::PathBuf, host: String, port: u16) -> any
             }
         }
     });
+
+    // Spawn P2P request handler if libp2p channels are provided
+    if let Some((mut event_rx, cmd_tx)) = p2p_channels {
+        let p2p_store = state_clone_store.clone();
+        let p2p_catalog = state_clone_catalog.clone();
+        let p2p_node_id = state_node_id.clone();
+        let p2p_node_name = state_node_name.clone();
+        let p2p_version = state_version.clone();
+
+        tokio::spawn(async move {
+            use crate::network::{NetworkCommand, NetworkEvent};
+            use crate::transport::{EarthGridRequest, EarthGridResponse};
+
+            while let Some(event) = event_rx.recv().await {
+                match event {
+                    NetworkEvent::InboundRequest { peer: _, request, channel } => {
+                        let response = match request {
+                            EarthGridRequest::GetChunk { hash } => {
+                                let mut store = p2p_store.lock().await;
+                                match store.get(&hash) {
+                                    Ok(Some(data)) => EarthGridResponse::Chunk {
+                                        hash: hash.clone(),
+                                        data,
+                                    },
+                                    _ => EarthGridResponse::ChunkNotFound { hash },
+                                }
+                            }
+                            EarthGridRequest::SearchCatalog { collection, bbox, datetime: _, limit } => {
+                                let catalog = p2p_catalog.lock().await;
+                                let items = catalog
+                                    .search(collection.as_deref(), bbox, limit)
+                                    .unwrap_or_default();
+                                let json_items: Vec<serde_json::Value> = items
+                                    .into_iter()
+                                    .map(|i| serde_json::to_value(i).unwrap_or_default())
+                                    .collect();
+                                let total = json_items.len();
+                                EarthGridResponse::CatalogResults {
+                                    items: json_items,
+                                    total,
+                                }
+                            }
+                            EarthGridRequest::NodeInfo => {
+                                let store = p2p_store.lock().await;
+                                let catalog = p2p_catalog.lock().await;
+                                let collections: Vec<String> = catalog
+                                    .list_collections()
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .map(|c| c.id)
+                                    .collect();
+                                EarthGridResponse::Info {
+                                    node_id: p2p_node_id.clone(),
+                                    node_name: p2p_node_name.clone(),
+                                    version: p2p_version.clone(),
+                                    collections,
+                                    item_count: catalog.item_count(None).unwrap_or(0),
+                                    chunk_count: store.chunk_count(),
+                                    storage_bytes: store.total_bytes(),
+                                }
+                            }
+                            EarthGridRequest::GetPeers => {
+                                EarthGridResponse::Peers { peers: vec![] }
+                            }
+                            EarthGridRequest::ExecuteJob { .. } => {
+                                EarthGridResponse::JobError {
+                                    message: "Job execution not yet supported via P2P".to_string(),
+                                }
+                            }
+                        };
+
+                        // Send response back via the swarm
+                        let _ = cmd_tx.send(NetworkCommand::SendResponse {
+                            channel,
+                            response,
+                        }).await;
+                    }
+                    NetworkEvent::PeerDiscovered { peer_id, addresses } => {
+                        eprintln!("🔗 P2P: Discovered peer {} at {:?}", peer_id, addresses);
+                    }
+                    NetworkEvent::PeerLost(peer_id) => {
+                        eprintln!("🔗 P2P: Lost peer {}", peer_id);
+                    }
+                }
+            }
+        });
+    }
 
     axum::serve(listener, app).await?;
     Ok(())

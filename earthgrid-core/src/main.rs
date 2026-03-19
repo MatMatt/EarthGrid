@@ -186,7 +186,7 @@ fn main() -> anyhow::Result<()> {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(async {
                 // Start libp2p network (if not disabled)
-                if !no_p2p {
+                let p2p_channels = if !no_p2p {
                     let node_name = std::env::var("EARTHGRID_NODE_NAME")
                         .unwrap_or_else(|_| "earthgrid-node".to_string());
 
@@ -198,19 +198,22 @@ fn main() -> anyhow::Result<()> {
                     };
 
                     match earthgrid_core::network::start(net_config).await {
-                        Ok((_event_rx, _cmd_tx, peer_id)) => {
+                        Ok((event_rx, cmd_tx, peer_id)) => {
                             println!("🔗 libp2p peer ID: {}", peer_id);
                             println!("   P2P port: {}", p2p_port);
-                            // TODO: wire event_rx/cmd_tx into server for P2P request handling
+                            Some((event_rx, cmd_tx))
                         }
                         Err(e) => {
                             eprintln!("⚠️  libp2p failed to start: {} (HTTP-only mode)", e);
+                            None
                         }
                     }
-                }
+                } else {
+                    None
+                };
 
-                // Start HTTP server
-                earthgrid_core::server::serve(cli.data_dir.clone(), host, port).await
+                // Start HTTP server (with optional P2P channels)
+                earthgrid_core::server::serve(cli.data_dir.clone(), host, port, p2p_channels).await
             })?;
         }
     }
