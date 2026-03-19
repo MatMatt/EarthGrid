@@ -979,6 +979,64 @@ async fn delete_job(
     }
 }
 
+/// POST /validate — validate an openEO process graph.
+///
+/// Returns a list of validation errors (empty array = valid).
+async fn validate_process_graph(
+    State(_state): State<OpenEOState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    // Extract the process graph from the request body.
+    // Accept both {"process_graph": {...}} and {"process": {"process_graph": {...}}}
+    let pg = body.get("process_graph")
+        .or_else(|| body.get("process").and_then(|p| p.get("process_graph")));
+
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+
+    match pg {
+        None => {
+            errors.push(serde_json::json!({
+                "code": "ProcessGraphMissing",
+                "message": "No process_graph found in request body."
+            }));
+        }
+        Some(pg_val) => {
+            if let Some(nodes) = pg_val.as_object() {
+                // Validate each node: check process_id is known
+                let known_processes = [
+                    "load_collection", "save_result", "ndvi", "reduce_dimension",
+                    "apply", "normalized_difference", "array_element",
+                    "multiply", "add", "subtract", "divide",
+                    "filter_temporal", "filter_bbox", "filter_bands",
+                ];
+                for (node_id, node) in nodes {
+                    let process_id = node.get("process_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if process_id.is_empty() {
+                        errors.push(serde_json::json!({
+                            "code": "ProcessIdMissing",
+                            "message": format!("Node '{}' has no process_id.", node_id)
+                        }));
+                    } else if !known_processes.contains(&process_id) {
+                        // Unknown process — warn but don't fail (backend may support more)
+                        errors.push(serde_json::json!({
+                            "code": "ProcessUnsupported",
+                            "message": format!("Process '{}' is not supported by this backend.", process_id),
+                            "level": "warning"
+                        }));
+                    }
+                }
+            } else {
+                errors.push(serde_json::json!({
+                    "code": "ProcessGraphInvalid",
+                    "message": "process_graph must be an object of process nodes."
+                }));
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({"errors": errors})))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -997,5 +1055,6 @@ pub fn openeo_router(state: OpenEOState) -> Router {
         .route("/jobs/{job_id}", get(get_job).delete(delete_job))
         .route("/jobs/{job_id}/results", get(get_job_results))
         .route("/jobs/{job_id}/logs", get(get_job_logs))
+        .route("/validate", post(validate_process_graph))
         .with_state(state)
 }

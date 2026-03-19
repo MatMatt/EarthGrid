@@ -9,8 +9,8 @@ use axum::{
     Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
-    routing::{get, post},
+    response::{Html, IntoResponse},
+    routing::{delete, get, patch, post},
     Json,
 };
 use serde::Deserialize;
@@ -29,7 +29,12 @@ use crate::{
     peers::{GossipPeerList, NodeInfo, PeerRegistry},
     replication::Replicator,
     stats::StatsEngine,
+    user_auth::UserAuth,
+    node_identity::NodeIdentity,
 };
+use std::path::PathBuf;
+
+
 
 // ---------------------------------------------------------------------------
 // Shared State
@@ -47,6 +52,12 @@ pub struct AppState {
     pub version: String,
     pub node_id: String,
     pub node_name: String,
+    /// User authentication registry (optional, None if init fails).
+    pub user_auth: Option<Arc<UserAuth>>,
+    /// Node identity keypair (optional, None if init fails).
+    pub node_identity: Option<Arc<NodeIdentity>>,
+    /// Data directory (for config updates like resize).
+    pub data_dir: PathBuf,
 }
 
 // ---------------------------------------------------------------------------
@@ -1392,6 +1403,791 @@ async fn stats_replication_status(State(state): State<AppState>) -> impl IntoRes
     }
 }
 
+// ---------------------------------------------------------------------------
+// Admin: Delete collection
+// ---------------------------------------------------------------------------
+
+async fn admin_delete_collection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(collection_id): Path<String>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_admin(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    let catalog = state.catalog.lock().await;
+    // Check collection exists
+    match catalog.get_collection(&collection_id) {
+        Ok(None) => return err(StatusCode::NOT_FOUND, "Collection not found").into_response(),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Ok(Some(_)) => {}
+    }
+    // Get chunk hashes for all items in this collection before deleting
+    let items = catalog.search(Some(&collection_id), None, None, 1_000_000, 0).unwrap_or_default();
+    let item_count = items.len();
+    let chunk_hashes: Vec<String> = items.iter()
+        .flat_map(|i| i.chunk_hashes.iter().cloned())
+        .collect();
+    // Delete all items + collection in one call
+    if let Err(e) = catalog.delete_collection(&collection_id) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+    }
+    drop(catalog);
+
+    // Attempt to remove chunks from store (best-effort)
+    let removed_chunks = {
+        let mut store = state.store.lock().await;
+        let mut count = 0usize;
+        for hash in &chunk_hashes {
+            if store.delete(hash).unwrap_or(false) {
+                count += 1;
+            }
+        }
+        count
+    };
+
+    state.audit.log("collection_delete", &collection_id, "", true);
+    tracing::info!("Deleted collection {} ({} items, {} chunks removed)", collection_id, item_count, removed_chunks);
+    (StatusCode::OK, Json(serde_json::json!({
+        "status": "deleted",
+        "collection": collection_id,
+        "items_removed": item_count,
+        "chunks_removed": removed_chunks,
+    }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Admin: User management
+// ---------------------------------------------------------------------------
+
+async fn admin_list_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_admin(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match &state.user_auth {
+        Some(ua) => {
+            match ua.list_users() {
+                Ok(users) => {
+                    let count = users.len();
+                    (StatusCode::OK, Json(serde_json::json!({"users": users, "count": count}))).into_response()
+                }
+                Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+            }
+        }
+        None => err(StatusCode::SERVICE_UNAVAILABLE, "User auth not initialized").into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateUserBody {
+    pub username: String,
+    pub role: Option<String>,
+}
+
+async fn admin_create_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateUserBody>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_admin(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    if body.username.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "Missing username").into_response();
+    }
+    match &state.user_auth {
+        Some(ua) => {
+            let role = body.role.as_deref().unwrap_or("member");
+            match ua.add_user(&body.username, role) {
+                Ok(api_key_val) => {
+                    state.audit.log("user_create", &body.username, "", true);
+                    (StatusCode::CREATED, Json(serde_json::json!({
+                        "status": "created",
+                        "username": body.username,
+                        "role": role,
+                        "api_key": api_key_val,
+                    }))).into_response()
+                }
+                Err(e) => err(StatusCode::CONFLICT, &e.to_string()).into_response(),
+            }
+        }
+        None => err(StatusCode::SERVICE_UNAVAILABLE, "User auth not initialized").into_response(),
+    }
+}
+
+async fn admin_delete_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_admin(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match &state.user_auth {
+        Some(ua) => {
+            match ua.revoke_user(&user_id) {
+                Ok(true) => {
+                    state.audit.log("user_delete", &user_id, "", true);
+                    (StatusCode::OK, Json(serde_json::json!({
+                        "status": "deactivated",
+                        "user_id": user_id,
+                    }))).into_response()
+                }
+                Ok(false) => err(StatusCode::NOT_FOUND, "User not found").into_response(),
+                Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+            }
+        }
+        None => err(StatusCode::SERVICE_UNAVAILABLE, "User auth not initialized").into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /node-name — alias for admin/node/name
+// ---------------------------------------------------------------------------
+
+async fn patch_node_name_alias(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<NodeNamePatch>,
+) -> impl IntoResponse {
+    patch_node_name(State(state), headers, Json(body)).await
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /nodes/{node_id} — remove from beacon
+// ---------------------------------------------------------------------------
+
+async fn delete_node(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(node_id): Path<String>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_admin(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    // Remove from peer registry
+    {
+        let mut peers = state.peers.lock().await;
+        peers.remove_by_id(&node_id);
+    }
+    state.audit.log("node_delete", &node_id, "", true);
+    (StatusCode::OK, Json(serde_json::json!({
+        "status": "removed",
+        "node_id": node_id,
+    }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Stats: access statistics
+// ---------------------------------------------------------------------------
+
+async fn stats_access(State(state): State<AppState>) -> impl IntoResponse {
+    match state.stats.replication_advice() {
+        Ok(advice) => {
+            (StatusCode::OK, Json(serde_json::json!({
+                "top_collections": advice,
+                "note": "Access-based replication advice",
+            }))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stats: stats.json (alias for /stats)
+// ---------------------------------------------------------------------------
+
+async fn stats_json_alias(State(state): State<AppState>) -> impl IntoResponse {
+    stats(State(state)).await.into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Stats: uptake (anonymous aggregate)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct UptakePeriodQuery {
+    pub period_days: Option<u64>,
+}
+
+async fn stats_uptake(
+    State(state): State<AppState>,
+    Query(q): Query<UptakePeriodQuery>,
+) -> impl IntoResponse {
+    let period_days = q.period_days.unwrap_or(30);
+    // Use ingest_history as a proxy for uptake data
+    match state.stats.ingest_history(period_days) {
+        Ok(history) => {
+            let total_gb = history.total_bytes as f64 / 1_073_741_824.0;
+            (StatusCode::OK, Json(serde_json::json!({
+                "report_type": "EarthGrid Uptake Statistics",
+                "period_days": period_days,
+                "privacy": "anonymous — no user identification stored",
+                "summary": {
+                    "total_requests": history.total_items,
+                    "total_gb": (total_gb * 1000.0).round() / 1000.0,
+                    "total_bytes": history.total_bytes,
+                },
+                "daily_trend": history.daily.iter().map(|d| serde_json::json!({
+                    "date": d.date,
+                    "items": d.items,
+                    "gb": d.gb,
+                })).collect::<Vec<_>>(),
+                "hourly_trend": history.hourly.iter().map(|h| serde_json::json!({
+                    "hour": h.hour,
+                    "items": h.items,
+                    "bytes": h.bytes,
+                })).collect::<Vec<_>>(),
+            }))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn stats_uptake_csv(
+    State(state): State<AppState>,
+    Query(q): Query<UptakePeriodQuery>,
+) -> impl IntoResponse {
+    let period_days = q.period_days.unwrap_or(30);
+    match state.stats.ingest_history(period_days) {
+        Ok(history) => {
+            let mut csv = String::from("date,items,bytes_ingested,gb_ingested\n");
+            for d in &history.daily {
+                csv.push_str(&format!("{},{},{},{:.3}\n", d.date, d.items, d.bytes, d.gb));
+            }
+            let disp = format!("attachment; filename=\"earthgrid_uptake_{}d.csv\"", period_days);
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                axum::http::header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("text/csv"),
+            );
+            if let Ok(val) = axum::http::HeaderValue::from_str(&disp) {
+                headers.insert(axum::http::header::CONTENT_DISPOSITION, val);
+            }
+            (StatusCode::OK, headers, csv).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Replicate/items — list items available for replication
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ReplicateItemsQuery {
+    pub collection: Option<String>,
+    pub limit: Option<usize>,
+}
+
+async fn replicate_items(
+    State(state): State<AppState>,
+    Query(q): Query<ReplicateItemsQuery>,
+) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(10000).min(100_000);
+    let catalog = state.catalog.lock().await;
+    let collection = q.collection.as_deref();
+    match catalog.search(collection, None, None, limit, 0) {
+        Ok(items) => {
+            let count = items.len();
+            (StatusCode::OK, Json(serde_json::json!({
+                "node_id": state.node_id,
+                "node_name": state.node_name,
+                "count": count,
+                "items": items,
+            }))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// POST /resize — update storage allocation
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ResizeQuery {
+    pub size_gb: Option<f64>,
+}
+
+async fn resize_storage(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ResizeQuery>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_admin(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    let size_gb = match q.size_gb {
+        Some(v) if v > 0.0 => v,
+        _ => return err(StatusCode::BAD_REQUEST, "size_gb required and must be > 0").into_response(),
+    };
+    // Update config.json if it exists
+    let config_path = state.data_dir.join("config.json");
+    if config_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&content) {
+                cfg["storage_limit_gb"] = serde_json::json!(size_gb);
+                let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+            }
+        }
+    }
+    state.audit.log("resize", &format!("size_gb={}", size_gb), "", true);
+    (StatusCode::OK, Json(serde_json::json!({
+        "status": "resized",
+        "new_gb": size_gb,
+        "note": "Restart node for new limit to take effect on ChunkStore",
+    }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// GET /chunk-map/{collection_id}/{item_id}
+// ---------------------------------------------------------------------------
+
+async fn chunk_map(
+    State(state): State<AppState>,
+    Path((collection_id, item_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let catalog = state.catalog.lock().await;
+    match catalog.get_collection_item(&collection_id, &item_id) {
+        Ok(Some(item)) => {
+            let props = &item.properties;
+            let total_chunks = item.chunk_hashes.len();
+            (StatusCode::OK, Json(serde_json::json!({
+                "item_id": item_id,
+                "collection": collection_id,
+                "total_chunks": total_chunks,
+                "chunks": item.chunk_hashes,
+                "tile_size": props.get("earthgrid:tile_size").unwrap_or(&serde_json::json!(512)),
+                "tile_cols": props.get("earthgrid:tile_cols").unwrap_or(&serde_json::json!(1)),
+                "tile_rows": props.get("earthgrid:tile_rows").unwrap_or(&serde_json::json!(1)),
+                "width": props.get("earthgrid:width"),
+                "height": props.get("earthgrid:height"),
+                "dtype": props.get("earthgrid:dtype"),
+                "crs": props.get("earthgrid:crs"),
+                "node_url": "",
+            }))).into_response()
+        }
+        Ok(None) => err(StatusCode::NOT_FOUND, "Item not found").into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GET /point/{collection_id}/{item_id}
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct PointQuery {
+    pub lon: f64,
+    pub lat: f64,
+}
+
+async fn point_extract(
+    State(state): State<AppState>,
+    Path((collection_id, item_id)): Path<(String, String)>,
+    Query(q): Query<PointQuery>,
+) -> impl IntoResponse {
+    let catalog = state.catalog.lock().await;
+    let item = match catalog.get_collection_item(&collection_id, &item_id) {
+        Ok(Some(i)) => i,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "Item not found").into_response(),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    };
+    drop(catalog);
+
+    let props = &item.properties;
+    let width = props.get("earthgrid:width").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let height = props.get("earthgrid:height").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let tile_size = props.get("earthgrid:tile_size").and_then(|v| v.as_u64()).unwrap_or(512) as usize;
+    let tile_cols = props.get("earthgrid:tile_cols").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+    let dtype = props.get("earthgrid:dtype").and_then(|v| v.as_str()).unwrap_or("uint16");
+
+    if width == 0 || height == 0 {
+        return err(StatusCode::BAD_REQUEST, "Item has no spatial dimensions").into_response();
+    }
+
+    let bbox = item.bbox; // [west, south, east, north]
+    let lon = q.lon;
+    let lat = q.lat;
+
+    // Quick bounds check
+    if lon < bbox[0] || lon > bbox[2] || lat < bbox[1] || lat > bbox[3] {
+        return err(StatusCode::BAD_REQUEST, "Point outside item extent").into_response();
+    }
+
+    let res_x = (bbox[2] - bbox[0]) / width as f64;
+    let res_y = (bbox[3] - bbox[1]) / height as f64;
+    let col = ((lon - bbox[0]) / res_x) as usize;
+    let row = ((bbox[3] - lat) / res_y) as usize; // y-axis inverted
+
+    let col = col.min(width - 1);
+    let row = row.min(height - 1);
+
+    let tile_col = col / tile_size;
+    let tile_row = row / tile_size;
+    let tile_idx = tile_row * tile_cols + tile_col;
+
+    if tile_idx >= item.chunk_hashes.len() {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "Tile index out of range").into_response();
+    }
+    let sha = &item.chunk_hashes[tile_idx];
+    let mut store = state.store.lock().await;
+    let chunk_data = match store.get(sha) {
+        Ok(Some(d)) => d,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "Chunk not found").into_response(),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    };
+    drop(store);
+
+    let tile_w = tile_size.min(width - tile_col * tile_size);
+    let local_col = col % tile_size;
+    let local_row = row % tile_size;
+
+    let (bpp, is_float) = match dtype {
+        "uint8" | "int8" => (1usize, false),
+        "uint16" | "int16" => (2, false),
+        "uint32" | "int32" => (4, false),
+        "float32" => (4, true),
+        "float64" => (8, true),
+        _ => (2, false),
+    };
+
+    let pixel_offset = (local_row * tile_w + local_col) * bpp;
+    if pixel_offset + bpp > chunk_data.len() {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "Pixel offset exceeds chunk size").into_response();
+    }
+
+    let bytes = &chunk_data[pixel_offset..pixel_offset + bpp];
+    let value: serde_json::Value = if is_float && bpp == 4 {
+        let f = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        serde_json::json!(f)
+    } else if is_float && bpp == 8 {
+        let f = f64::from_le_bytes(bytes.try_into().unwrap_or([0u8; 8]));
+        serde_json::json!(f)
+    } else if bpp == 1 {
+        serde_json::json!(bytes[0])
+    } else if bpp == 2 {
+        let v = u16::from_le_bytes([bytes[0], bytes[1]]);
+        serde_json::json!(v)
+    } else {
+        let v = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        serde_json::json!(v)
+    };
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "value": value,
+        "lon": lon,
+        "lat": lat,
+        "pixel": [col, row],
+        "tile": [tile_col, tile_row],
+        "item_id": item_id,
+        "collection": collection_id,
+        "dtype": dtype,
+    }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Federation: exchange key
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct ExchangeKeyBody {
+    pub node_name: Option<String>,
+    pub node_id: Option<String>,
+    pub api_key: Option<String>,
+    pub public_key: Option<String>,
+    pub timestamp: Option<u64>,
+    pub signature: Option<String>,
+}
+
+async fn federation_exchange_key(
+    State(state): State<AppState>,
+    Json(body): Json<ExchangeKeyBody>,
+) -> impl IntoResponse {
+    if body.signature.is_none() {
+        return err(StatusCode::BAD_REQUEST, "Missing signature in payload").into_response();
+    }
+    // Verify signature using NodeIdentity if available
+    let peer_name = body.node_name.clone().unwrap_or_default();
+    let peer_pubkey = body.public_key.clone().unwrap_or_default();
+
+    if let Some(ni) = &state.node_identity {
+        // Verify the peer signature
+        let msg = format!(
+            "{}|{}|{}|{}",
+            peer_name,
+            body.node_id.as_deref().unwrap_or(""),
+            body.api_key.as_deref().unwrap_or(""),
+            body.timestamp.unwrap_or(0)
+        );
+        let sig = body.signature.as_deref().unwrap_or("");
+        if !NodeIdentity::verify_request(&peer_pubkey, sig, &msg) {
+            state.audit.log("key_exchange_rejected", &format!("peer={} invalid_signature", peer_name), "", false);
+            return err(StatusCode::FORBIDDEN, "Invalid signature — key exchange rejected").into_response();
+        }
+
+        // Register peer in user_auth if available
+        if let Some(ua) = &state.user_auth {
+            let username = format!("node:{}", peer_name);
+            let _ = ua.add_user(&username, "member");
+        }
+
+        state.audit.log("key_exchange_ok", &format!("peer={}", peer_name), "", true);
+
+        // Return our signed payload
+        let payload = ni.sign_exchange(&state.node_name, &state.node_id, &state.auth.api_key);
+        return (StatusCode::OK, Json(serde_json::to_value(payload).unwrap_or_default())).into_response();
+    }
+
+    // No node identity — return basic info
+    state.audit.log("key_exchange_ok", &format!("peer={} (no sig verify)", peer_name), "", true);
+    (StatusCode::OK, Json(serde_json::json!({
+        "node_name": state.node_name,
+        "node_id": state.node_id,
+        "public_key": "",
+        "note": "Node identity not configured",
+    }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Federation: user sync
+// ---------------------------------------------------------------------------
+
+async fn federation_list_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match &state.user_auth {
+        Some(ua) => {
+            match ua.list_users() {
+                Ok(users) => (StatusCode::OK, Json(serde_json::json!({"users": users}))).into_response(),
+                Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+            }
+        }
+        None => (StatusCode::OK, Json(serde_json::json!({"users": []}))).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ImportUsersBody {
+    pub users: Vec<serde_json::Value>,
+}
+
+async fn federation_import_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ImportUsersBody>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    let mut added = 0usize;
+    let mut skipped = 0usize;
+    if let Some(ua) = &state.user_auth {
+        for user in &body.users {
+            let username = user.get("username").and_then(|v| v.as_str()).unwrap_or("");
+            let role = user.get("role").and_then(|v| v.as_str()).unwrap_or("member");
+            if username.is_empty() { skipped += 1; continue; }
+            match ua.add_user(username, role) {
+                Ok(_) => added += 1,
+                Err(_) => skipped += 1, // likely already exists
+            }
+        }
+    } else {
+        skipped = body.users.len();
+    }
+    state.audit.log("user_sync", &format!("added={} skipped={}", added, skipped), "", true);
+    (StatusCode::OK, Json(serde_json::json!({
+        "added": added,
+        "updated": 0,
+        "skipped": skipped,
+    }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// HTML: Dashboard + UI
+// ---------------------------------------------------------------------------
+
+async fn dashboard(State(state): State<AppState>) -> impl IntoResponse {
+    let catalog = state.catalog.lock().await;
+    let store = state.store.lock().await;
+    let item_count = catalog.item_count(None).unwrap_or(0);
+    let collections = catalog.list_collections().unwrap_or_default();
+    let total_bytes = store.total_bytes();
+    let chunk_count = store.chunk_count();
+    drop(catalog);
+    drop(store);
+
+    let cols_html: String = collections.iter().map(|c| {
+        format!("<li><strong>{}</strong> — {}</li>", c.id, c.description)
+    }).collect::<Vec<_>>().join("\n");
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="earthgrid-api" content="">
+<title>EarthGrid Node Dashboard</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #0a0a1a; color: #e0e0e0; }}
+  h1 {{ color: #4fc3f7; }}
+  .card {{ background: #111; border: 1px solid #222; border-radius: 8px; padding: 16px; margin: 12px 0; }}
+  .stat {{ display: inline-block; margin: 8px 16px 8px 0; }}
+  .stat .val {{ font-size: 2em; font-weight: bold; color: #4fc3f7; }}
+  .stat .lbl {{ color: #888; font-size: 0.85em; }}
+  ul {{ list-style: none; padding: 0; }}
+  li {{ padding: 4px 0; border-bottom: 1px solid #222; }}
+  a {{ color: #4fc3f7; }}
+</style>
+</head>
+<body>
+<h1>🌍 EarthGrid Node</h1>
+<div class="card">
+  <h2>{node_name}</h2>
+  <div class="stat"><div class="val">{item_count}</div><div class="lbl">Items</div></div>
+  <div class="stat"><div class="val">{chunk_count}</div><div class="lbl">Chunks</div></div>
+  <div class="stat"><div class="val">{storage_gb:.1} GB</div><div class="lbl">Storage Used</div></div>
+  <div class="stat"><div class="val">{col_count}</div><div class="lbl">Collections</div></div>
+</div>
+<div class="card">
+  <h3>Collections</h3>
+  <ul>{cols_html}</ul>
+</div>
+<div class="card">
+  <h3>Quick Links</h3>
+  <ul>
+    <li><a href="/node-info">/node-info</a> — Node info JSON</li>
+    <li><a href="/stats">/stats</a> — Statistics</li>
+    <li><a href="/stac/collections">/stac/collections</a> — STAC Collections</li>
+    <li><a href="/peers">/peers</a> — Federation peers</li>
+    <li><a href="/ui">/ui</a> — Management UI</li>
+  </ul>
+</div>
+<p style="color:#555;font-size:0.8em">EarthGrid v{version} | Node ID: {node_id}</p>
+</body>
+</html>"#,
+        node_name = state.node_name,
+        item_count = item_count,
+        chunk_count = chunk_count,
+        storage_gb = total_bytes as f64 / 1_073_741_824.0,
+        col_count = collections.len(),
+        cols_html = cols_html,
+        version = state.version,
+        node_id = state.node_id,
+    );
+
+    Html(html).into_response()
+}
+
+async fn ui_page(State(state): State<AppState>) -> impl IntoResponse {
+    let catalog = state.catalog.lock().await;
+    let store = state.store.lock().await;
+    let item_count = catalog.item_count(None).unwrap_or(0);
+    let collections = catalog.list_collections().unwrap_or_default();
+    let total_bytes = store.total_bytes();
+    let chunk_count = store.chunk_count();
+    drop(catalog);
+    drop(store);
+
+    let cols_rows: String = collections.iter().map(|c| {
+        format!("<tr><td>{}</td><td>{}</td><td>{}</td></tr>", c.id, c.title, c.description)
+    }).collect::<Vec<_>>().join("\n");
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EarthGrid Node UI</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; margin: 0; background: #0a0a1a; color: #e0e0e0; }}
+  nav {{ background: #111; padding: 12px 20px; border-bottom: 1px solid #222; }}
+  nav h2 {{ margin: 0; color: #4fc3f7; display: inline; }}
+  main {{ padding: 20px; }}
+  .card {{ background: #111; border: 1px solid #222; border-radius: 8px; padding: 16px; margin: 12px 0; }}
+  table {{ width: 100%; border-collapse: collapse; }}
+  th {{ text-align: left; color: #4fc3f7; border-bottom: 1px solid #333; padding: 8px; }}
+  td {{ padding: 8px; border-bottom: 1px solid #1a1a2e; }}
+  input, select {{ background: #0d0d1a; color: #e0e0e0; border: 1px solid #333; border-radius: 4px; padding: 6px 10px; }}
+  button {{ background: #4fc3f7; color: #000; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }}
+  button:hover {{ background: #29b6f6; }}
+  .metric {{ display: inline-block; margin: 0 16px 0 0; }}
+  .metric .val {{ font-size: 1.8em; font-weight: bold; color: #4fc3f7; }}
+  .metric .lbl {{ color: #888; font-size: 0.8em; }}
+</style>
+</head>
+<body>
+<nav><h2>🌍 EarthGrid Node Management</h2></nav>
+<main>
+<div class="card">
+  <h3>Node: {node_name}</h3>
+  <div class="metric"><div class="val">{item_count}</div><div class="lbl">Items</div></div>
+  <div class="metric"><div class="val">{chunk_count}</div><div class="lbl">Chunks</div></div>
+  <div class="metric"><div class="val">{storage_gb:.2} GB</div><div class="lbl">Storage</div></div>
+  <div class="metric"><div class="val">{col_count}</div><div class="lbl">Collections</div></div>
+</div>
+<div class="card">
+  <h3>Collections</h3>
+  <table>
+    <thead><tr><th>ID</th><th>Title</th><th>Description</th></tr></thead>
+    <tbody>{cols_rows}</tbody>
+  </table>
+</div>
+<div class="card">
+  <h3>Quick Actions</h3>
+  <p>
+    <a href="/stats"><button>View Stats</button></a>
+    <a href="/stac/collections"><button>STAC API</button></a>
+    <a href="/peers"><button>Peers</button></a>
+    <a href="/audit"><button>Audit Log</button></a>
+    <a href="/dashboard"><button>Public Dashboard</button></a>
+  </p>
+</div>
+<div class="card">
+  <h3>API Reference</h3>
+  <ul>
+    <li><code>GET /node-info</code> — Full node status</li>
+    <li><code>GET /stats</code> — Storage &amp; traffic stats</li>
+    <li><code>POST /ingest</code> — Ingest a STAC item</li>
+    <li><code>GET /stac/search</code> — STAC search</li>
+    <li><code>GET /chunks/{{sha}}</code> — Download chunk</li>
+    <li><code>POST /fetch</code> — Fetch from Element84</li>
+    <li><code>POST /federation/sync</code> — Sync with peers</li>
+  </ul>
+</div>
+</main>
+<p style="padding:0 20px;color:#555;font-size:0.8em">EarthGrid v{version} | {node_id}</p>
+</body>
+</html>"#,
+        node_name = state.node_name,
+        item_count = item_count,
+        chunk_count = chunk_count,
+        storage_gb = total_bytes as f64 / 1_073_741_824.0,
+        col_count = collections.len(),
+        cols_rows = cols_rows,
+        version = state.version,
+        node_id = state.node_id,
+    );
+
+    Html(html).into_response()
+}
+
 // nodes list — mirrors /peers but returns node-centric view
 async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
     let peers = state.peers.lock().await;
@@ -1407,6 +2203,121 @@ async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
         .collect();
     let count = nodes.len();
     (StatusCode::OK, Json(serde_json::json!({ "nodes": nodes, "count": count }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// openEO: /processes, /validate, /jobs/{id}
+// ---------------------------------------------------------------------------
+
+/// GET /processes — openEO process descriptions
+async fn openeo_processes() -> impl IntoResponse {
+    let processes = serde_json::json!({
+        "processes": [
+            {
+                "id": "load_collection",
+                "summary": "Load a collection",
+                "description": "Loads a collection from the current back-end by its id.",
+                "parameters": [
+                    {"name": "id", "description": "Collection identifier.", "schema": {"type": "string"}},
+                    {"name": "spatial_extent", "description": "Spatial extent.", "schema": {"type": "object"}},
+                    {"name": "temporal_extent", "description": "Temporal extent.", "schema": {"type": "array"}},
+                    {"name": "bands", "description": "Band names.", "schema": {"type": "array"}}
+                ],
+                "returns": {"description": "A data cube.", "schema": {"type": "object"}}
+            },
+            {
+                "id": "ndvi",
+                "summary": "Normalized Difference Vegetation Index",
+                "description": "Computes NDVI from red and NIR bands.",
+                "parameters": [
+                    {"name": "data", "description": "Input data cube.", "schema": {"type": "object"}},
+                    {"name": "red", "description": "Red band name.", "schema": {"type": "string"}, "default": "B04"},
+                    {"name": "nir", "description": "NIR band name.", "schema": {"type": "string"}, "default": "B08"}
+                ],
+                "returns": {"description": "NDVI data cube.", "schema": {"type": "object"}}
+            },
+            {
+                "id": "save_result",
+                "summary": "Save processed data",
+                "description": "Save the result as a file.",
+                "parameters": [
+                    {"name": "data", "description": "Input data cube.", "schema": {"type": "object"}},
+                    {"name": "format", "description": "Output format (GTiff, netCDF, PNG).", "schema": {"type": "string"}}
+                ],
+                "returns": {"description": "Saved file path.", "schema": {"type": "string"}}
+            },
+            {
+                "id": "reduce_dimension",
+                "summary": "Reduce a dimension",
+                "description": "Reduces a dimension by applying a reducer.",
+                "parameters": [
+                    {"name": "data", "description": "Input data cube.", "schema": {"type": "object"}},
+                    {"name": "reducer", "description": "A reducer process.", "schema": {"type": "object"}},
+                    {"name": "dimension", "description": "Dimension name.", "schema": {"type": "string"}}
+                ],
+                "returns": {"description": "Reduced data cube.", "schema": {"type": "object"}}
+            }
+        ],
+        "links": []
+    });
+    Json(processes)
+}
+
+/// POST /validate — validate an openEO process graph
+async fn openeo_validate(
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let process_graph = body.get("process_graph").or_else(|| body.get("process"));
+    match process_graph {
+        Some(pg) => {
+            // Basic validation: check it's an object with at least one node
+            if let Some(obj) = pg.as_object() {
+                if obj.is_empty() {
+                    return (StatusCode::OK, Json(serde_json::json!({
+                        "valid": false,
+                        "errors": [{"code": "EmptyGraph", "message": "Process graph is empty"}]
+                    }))).into_response();
+                }
+                // Check each node has process_id
+                let mut errors = Vec::new();
+                for (key, node) in obj {
+                    if node.get("process_id").is_none() {
+                        errors.push(serde_json::json!({
+                            "code": "MissingProcessId",
+                            "message": format!("Node '{}' missing process_id", key)
+                        }));
+                    }
+                }
+                if errors.is_empty() {
+                    (StatusCode::OK, Json(serde_json::json!({"valid": true, "errors": []}))).into_response()
+                } else {
+                    (StatusCode::OK, Json(serde_json::json!({"valid": false, "errors": errors}))).into_response()
+                }
+            } else {
+                (StatusCode::OK, Json(serde_json::json!({
+                    "valid": false,
+                    "errors": [{"code": "InvalidGraph", "message": "process_graph must be an object"}]
+                }))).into_response()
+            }
+        }
+        None => {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": "Missing process_graph in request body"
+            }))).into_response()
+        }
+    }
+}
+
+/// GET /jobs/{job_id} — openEO job status (stub)
+async fn openeo_job_status(
+    Path(job_id): Path<String>,
+) -> impl IntoResponse {
+    // EarthGrid currently only supports synchronous processing
+    (StatusCode::NOT_FOUND, Json(serde_json::json!({
+        "id": job_id,
+        "status": "error",
+        "message": "Batch jobs not yet supported. Use synchronous /process endpoint."
+    }))).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -1482,8 +2393,42 @@ pub fn router(state: AppState) -> Router {
         .route("/stats/bandwidth", get(stats_bandwidth))
         .route("/stats/replication", get(stats_replication_status))
         .route("/bandwidth", get(bandwidth_handler))
-        // Nodes list
+        // Nodes list + delete
         .route("/nodes", get(list_nodes))
+        .route("/nodes/{node_id}", delete(delete_node))
+        // Admin: collections
+        .route("/admin/collections/{collection_id}", delete(admin_delete_collection))
+        // Admin: users
+        .route("/admin/users", get(admin_list_users).post(admin_create_user))
+        .route("/admin/users/{user_id}", delete(admin_delete_user))
+        // PATCH /node-name (alias)
+        .route("/node-name", patch(patch_node_name_alias))
+        // Stats: access + uptake
+        .route("/stats/access", get(stats_access))
+        .route("/stats.json", get(stats_json_alias))
+        .route("/stats/uptake", get(stats_uptake))
+        .route("/stats/uptake/csv", get(stats_uptake_csv))
+        // Replication items list
+        .route("/replicate/items", get(replicate_items))
+        // Resize storage
+        .route("/resize", post(resize_storage))
+        // Chunk map
+        .route("/chunk-map/{collection_id}/{item_id}", get(chunk_map))
+        // Point extraction
+        .route("/point/{collection_id}/{item_id}", get(point_extract))
+        // Federation: key exchange + user sync
+        .route("/federation/exchange-key", post(federation_exchange_key))
+        .route("/federation/users", get(federation_list_users).post(federation_import_users))
+        // HTML dashboard + UI
+        .route("/dashboard", get(dashboard))
+        .route("/ui", get(ui_page))
+        // openEO compatibility aliases (without /stac/ prefix)
+        .route("/collections", get(list_collections))
+        .route("/collections/{id}", get(get_collection))
+        // openEO processes + validate + jobs
+        .route("/processes", get(openeo_processes))
+        .route("/validate", post(openeo_validate))
+        .route("/jobs/{job_id}", get(openeo_job_status))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -1536,6 +2481,30 @@ pub async fn serve(
         }
     }
 
+    // Optional: user auth DB
+    let user_auth_opt = {
+        let ua_path = data_dir.join("users.db");
+        match UserAuth::new(&ua_path) {
+            Ok(ua) => Some(Arc::new(ua)),
+            Err(e) => {
+                eprintln!("⚠️  UserAuth init failed: {}", e);
+                None
+            }
+        }
+    };
+
+    // Optional: node identity
+    let node_identity_opt = {
+        let key_path = data_dir.join("node.key");
+        match NodeIdentity::load_or_generate(&key_path) {
+            Ok(ni) => Some(Arc::new(ni)),
+            Err(e) => {
+                eprintln!("⚠️  NodeIdentity init failed: {}", e);
+                None
+            }
+        }
+    };
+
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         catalog: Arc::new(Mutex::new(catalog)),
@@ -1547,6 +2516,9 @@ pub async fn serve(
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_id,
         node_name: node_name.clone(),
+        user_auth: user_auth_opt,
+        node_identity: node_identity_opt,
+        data_dir: data_dir.clone(),
     };
 
     // Conditionally build beacon router (EARTHGRID_BEACON=true)

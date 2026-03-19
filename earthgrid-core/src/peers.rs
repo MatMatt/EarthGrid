@@ -116,6 +116,19 @@ impl PeerRegistry {
         self.peers.remove(url.trim_end_matches('/'));
     }
 
+    /// Remove a peer by node_id (for admin DELETE /nodes/{node_id}).
+    pub fn remove_by_id(&mut self, node_id: &str) -> bool {
+        let key = self.peers.iter()
+            .find(|(_, p)| p.node_id == node_id)
+            .map(|(k, _)| k.clone());
+        if let Some(k) = key {
+            self.peers.remove(&k);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn get(&self, url: &str) -> Option<&Peer> {
         self.peers.get(url.trim_end_matches('/'))
     }

@@ -359,6 +359,16 @@ impl Catalog {
             .execute("DELETE FROM items WHERE id = ?1", params![id])?;
         Ok(affected > 0)
     }
+
+    /// Delete all items in a collection, then delete the collection record.
+    pub fn delete_collection(&self, collection_id: &str) -> Result<usize> {
+        let items_deleted = self
+            .conn
+            .execute("DELETE FROM items WHERE collection = ?1", params![collection_id])?;
+        self.conn
+            .execute("DELETE FROM collections WHERE id = ?1", params![collection_id])?;
+        Ok(items_deleted)
+    }
 }
 
 #[cfg(test)]
