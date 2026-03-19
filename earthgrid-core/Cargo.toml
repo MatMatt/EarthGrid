@@ -39,10 +39,16 @@ libp2p = { version = "0.54", features = [
     "ed25519",
     "cbor",
 ] }
-gdal = "0.17"
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Optional GDAL for advanced GeoTIFF (COG, reprojection)
+gdal = { version = "0.17", optional = true }
+
+[features]
+default = []
+gdal-support = ["gdal"]
 
 [dev-dependencies]
 tempfile = "3"
