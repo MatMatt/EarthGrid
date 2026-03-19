@@ -98,3 +98,13 @@ entry = {
 with open('$HISTORY_FILE', 'a') as f:
     f.write(json.dumps(entry) + '\n')
 "
+
+# --- Auto-commit stats.json to GitHub Pages ---
+cd "$REPO"
+if git diff --quiet docs/stats.json 2>/dev/null; then
+  : # no changes
+else
+  git add docs/stats.json
+  git commit -q -m "chore: auto-update stats.json [skip ci]"
+  git push -q origin master 2>/dev/null || true
+fi
