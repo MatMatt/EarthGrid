@@ -1,16 +1,16 @@
 {
-  "updated": "2026-03-19T19:00:01Z",
+  "updated": "2026-03-19T19:10:01Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 1,
     "nodes_total": 1,
-    "total_bytes": 663153605880,
+    "total_bytes": 664139514296,
     "available_storage_gb": 5000.0,
     "redundancy": 1.0
   },
   "coverage": {
     "sentinel-2-l2a": {
-      "items": 3875,
+      "items": 3881,
       "tiles": 1,
       "area_km2": 12670
     }
@@ -515,8 +515,8 @@
               46.0
             ],
             "tile_id": "32TPR",
-            "item_count": 72,
-            "date_count": 12,
+            "item_count": 74,
+            "date_count": 13,
             "dates": [
               "2018-04-14",
               "2018-04-22",
@@ -525,6 +525,7 @@
               "2018-07-18",
               "2018-07-31",
               "2018-08-05",
+              "2025-06-11",
               "2025-06-13",
               "2025-06-14",
               "2025-06-19",
@@ -633,8 +634,8 @@
               47.9
             ],
             "tile_id": "32TNT",
-            "item_count": 58,
-            "date_count": 12,
+            "item_count": 60,
+            "date_count": 13,
             "dates": [
               "2018-04-07",
               "2018-04-10",
@@ -644,6 +645,7 @@
               "2018-07-18",
               "2018-07-31",
               "2018-08-05",
+              "2025-06-11",
               "2025-06-13",
               "2025-06-14",
               "2025-06-19",
@@ -795,8 +797,8 @@
               46.9
             ],
             "tile_id": "32TQS",
-            "item_count": 38,
-            "date_count": 10,
+            "item_count": 40,
+            "date_count": 11,
             "dates": [
               "2018-04-07",
               "2018-04-14",
@@ -804,6 +806,7 @@
               "2018-07-18",
               "2018-07-31",
               "2018-08-05",
+              "2025-06-11",
               "2025-06-13",
               "2025-06-14",
               "2025-06-19",
@@ -1084,8 +1087,8 @@
     "daily_trend": []
   },
   "ingest": {
-    "total_items_fetched": 445,
-    "total_gb_fetched": 15.36,
+    "total_items_fetched": 451,
+    "total_gb_fetched": 16.26,
     "collections": 1,
     "daily": [
       {
@@ -1095,8 +1098,8 @@
       },
       {
         "date": "2026-03-19",
-        "items": 114,
-        "gb": 15.36
+        "items": 120,
+        "gb": 16.258
       }
     ],
     "hourly": [
@@ -1124,11 +1127,16 @@
         "hour": "2026-03-19T18:00",
         "items": 51,
         "gb": 7.692
+      },
+      {
+        "hour": "2026-03-19T19:00",
+        "items": 6,
+        "gb": 0.898
       }
     ]
   },
-  "items": 3875,
-  "chunks": 1351214,
+  "items": 3881,
+  "chunks": 1353208,
   "km2_requested": 0,
   "operations": [
     {
@@ -1197,9 +1205,9 @@
           "node_name": "node-alpha",
           "owner": "",
           "anonymous": true,
-          "score": 29001,
-          "items": 3875,
-          "gb_stored": 617.6,
+          "score": 29007,
+          "items": 3881,
+          "gb_stored": 618.5,
           "gb_pledged": 5000.0,
           "gb_served": 0.0,
           "streak": 1,
@@ -1328,8 +1336,8 @@
       "nodes_total": 2,
       "nodes_alive": 1,
       "storage_pledged_gb": 5070.0,
-      "storage_used_gb": 666.5,
-      "storage_utilization_pct": 13.1,
+      "storage_used_gb": 667.4,
+      "storage_utilization_pct": 13.2,
       "data_served_gb": 0.0,
       "estimated_replication_factor": 1.0,
       "factors": {
@@ -1361,14 +1369,14 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 277198.62348365784,
+          "remaining_seconds": 276598.4826581478,
           "remaining_human": "3d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 3875.0,
+              "score": 3881.0,
               "group": ""
             },
             {
@@ -1387,14 +1395,14 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 277198.62348365784,
+          "remaining_seconds": 276598.4826581478,
           "remaining_human": "3d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 617.61,
+              "score": 618.53,
               "group": ""
             },
             {
@@ -1413,7 +1421,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 277198.62348365784,
+          "remaining_seconds": 276598.4826581478,
           "remaining_human": "3d 4h",
           "participants": 0,
           "top3": []
@@ -1426,14 +1434,14 @@
           "period": "monthly",
           "start_ts": 1772323200.0,
           "end_ts": 1775001600.0,
-          "remaining_seconds": 1054798.6234836578,
+          "remaining_seconds": 1054198.4826581478,
           "remaining_human": "12d 4h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 29001.0,
+              "score": 29007.0,
               "group": ""
             },
             {
