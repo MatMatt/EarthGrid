@@ -381,6 +381,11 @@ if (document.readyState === 'loading') {
 </div>
 
 <div class="section">
+<h2>🏅 Active Challenges</h2>
+<div id="challengesList"><em style="color:var(--dim)">Loading...</em></div>
+</div>
+
+<div class="section">
 <h2>🎖️ Achievements</h2>
 <div id="achievementShowcase" style="display:flex;flex-wrap:wrap;gap:0.6rem"><em style="color:var(--dim)">Loading...</em></div>
 </div>
@@ -488,7 +493,17 @@ function renderLeaderboard(data) {
   for (const e of entries) {
     h += '<tr><td class="lb-rank' + rankClass(e.rank) + '">' + rankIcon(e.rank) + '</td>';
     if (currentBoard === 'nodes') {
-      h += '<td class="lb-name">' + (e.node_name||e.node_id) + '</td>';
+      const name = e.node_name || e.node_id;
+      const nameHtml = e.node_url
+        ? '<a href="' + e.node_url + '" target="_blank" style="color:var(--accent);text-decoration:none" title="Open node dashboard">' + name + ' ↗</a>'
+        : name;
+      const sponsorHtml = e.sponsor_name
+        ? '<div style="font-size:0.65rem;color:var(--dim)">' +
+          (e.sponsor_url ? '<a href="' + e.sponsor_url + '" target="_blank" style="color:var(--dim)">' : '') +
+          'Sponsored by ' + e.sponsor_name +
+          (e.sponsor_url ? '</a>' : '') + '</div>'
+        : '';
+      h += '<td class="lb-name">' + nameHtml + sponsorHtml + '</td>';
       h += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
       h += '<td>' + (e.items||0).toLocaleString() + '</td>';
       h += '<td>' + (e.gb_stored||0) + ' GB</td>';
@@ -678,8 +693,60 @@ async function loadEconomy(fromStats) {
 // Gamification loaded from stats.json in load()
 // Refresh every 60s
 // Live refresh only when API available
+async function loadChallenges(fromStats) {
+  try {
+    let data;
+    if (EARTHGRID_API) {
+      const r = await fetch(EARTHGRID_API + '/gamification/challenges');
+      if (r.ok) data = await r.json();
+    }
+    if (!data || !data.challenges) {
+      document.getElementById('challengesList').innerHTML = '<em style="color:var(--dim)">No active challenges</em>';
+      return;
+    }
+    renderChallenges(data.challenges);
+  } catch(e) {
+    document.getElementById('challengesList').innerHTML = '<em style="color:var(--dim)">Could not load challenges</em>';
+  }
+}
+
+function renderChallenges(challenges) {
+  if (!challenges || challenges.length === 0) {
+    document.getElementById('challengesList').innerHTML = '<em style="color:var(--dim)">No active challenges right now</em>';
+    return;
+  }
+  let h = '<div style="display:flex;flex-wrap:wrap;gap:0.8rem">';
+  for (const ch of challenges) {
+    const medals = ['🥇','🥈','🥉'];
+    let top = '';
+    if (ch.top3 && ch.top3.length > 0) {
+      for (let i = 0; i < ch.top3.length; i++) {
+        const e = ch.top3[i];
+        const score = typeof e.score === 'number' ? (e.score >= 1 ? e.score.toLocaleString() : e.score.toFixed(2)) : e.score;
+        top += '<div style="display:flex;justify-content:space-between;font-size:0.8rem;padding:2px 0">' +
+          '<span>' + medals[i] + ' ' + (e.display_name || e.node_id.slice(0,8)) + '</span>' +
+          '<span style="color:var(--green);font-weight:600">' + score + '</span></div>';
+      }
+    } else {
+      top = '<div style="font-size:0.8rem;color:var(--dim)">No entries yet — be first!</div>';
+    }
+    const periodBadge = ch.period === 'weekly'
+      ? '<span style="background:var(--accent);color:var(--bg);font-size:0.65rem;padding:1px 6px;border-radius:6px;font-weight:700">WEEKLY</span>'
+      : '<span style="background:var(--orange);color:var(--bg);font-size:0.65rem;padding:1px 6px;border-radius:6px;font-weight:700">MONTHLY</span>';
+    h += '<div style="flex:1;min-width:220px;max-width:320px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:1rem">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">' +
+      '<strong style="font-size:0.9rem">' + ch.title + '</strong>' + periodBadge + '</div>' +
+      '<div style="font-size:0.75rem;color:var(--dim);margin-bottom:0.5rem">' + ch.description +
+      ' · <span style="color:var(--accent)">' + (ch.remaining_human || '') + ' left</span>' +
+      ' · ' + (ch.participants || 0) + ' participants</div>' +
+      top + '</div>';
+  }
+  h += '</div>';
+  document.getElementById('challengesList').innerHTML = h;
+}
+
 if (EARTHGRID_API) setInterval(() => { loadLeaderboard();
-    loadEconomy(); loadFeed(); }, 60000);
+    loadEconomy(); loadFeed(); loadChallenges(); }, 60000);
 </script>
 
 <div class="section">
@@ -1221,6 +1288,12 @@ async function load() {
     window._lastStats = d;
     // Load gamification from stats.json data
     loadLeaderboard(d);
+    // Load challenges from stats.json or API
+    if (d && d.gamification && d.gamification.challenges) {
+      renderChallenges(d.gamification.challenges.challenges || []);
+    } else {
+      loadChallenges();
+    }
     loadEconomy(d);
     loadAchievements(d);
     loadFeed(d);

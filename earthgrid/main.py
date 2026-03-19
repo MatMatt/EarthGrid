@@ -504,7 +504,11 @@ async def _register_with_beacon():
                     "preferred_bbox": settings.preferred_bbox,
                     "replication_factor": settings.replication_factor,
                     "storage_limit_gb": settings.storage_limit_gb,
-        "auto_update": settings.auto_update,
+                    "auto_update": settings.auto_update,
+                    "sponsor_name": settings.sponsor_name,
+                    "sponsor_url": settings.sponsor_url,
+                    "node_url": settings.node_url,
+                    "group": settings.group,
                 },
             )
     except Exception as e:
@@ -557,6 +561,13 @@ async def _beacon_heartbeat_loop():
                         "stats_month": __import__('json').dumps(load_tracker.stats_for_month(load_tracker._month())),
                     },
                 )
+                # Update challenge scores
+                try:
+                    gamification_engine.rotate_challenges()
+                    gamification_engine.update_challenge_scores()
+                except Exception:
+                    pass  # non-critical
+
                 # Report items for replication tracking
                 try:
                     item_ids = [item.id for item in catalog.search(limit=10000)]
@@ -920,13 +931,25 @@ async def startup():
     # Auto-register self in gamification (all nodes participate by default)
     try:
         from .gamification_endpoints import engine
-        engine.ensure_node_registered(settings.node_id, node_name=settings.node_name)
+        engine.ensure_node_registered(settings.node_id, node_name=settings.node_name,
+                                             sponsor_name=settings.sponsor_name,
+                                             sponsor_url=settings.sponsor_url,
+                                             node_url=settings.node_url)
         engine.record_heartbeat(
             settings.node_id,
             peers_count=len(federation.peers),
             uptime_seconds=0,
             storage_pledged_gb=settings.storage_limit_gb,
         )
+        # Seed challenges and auto-join group
+        engine.seed_challenges()
+        if settings.group:
+            try:
+                engine.create_group(settings.group, settings.group, "system",
+                                    description=f"Auto-created from node config")
+            except ValueError:
+                pass  # group already exists
+            engine.set_node_group(settings.node_id, settings.group)
     except Exception as e:
         import logging
         logging.getLogger("earthgrid").debug(f"Gamification self-register: {e}")

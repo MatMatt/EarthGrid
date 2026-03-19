@@ -167,16 +167,27 @@ async def network_stats():
 
 @router.get("/economy")
 async def network_economy():
-    """Network economy health indicator.
-    
-    Measures whether the P2P network is healthy enough to be useful:
-    - Storage: enough pledged capacity vs. data stored
-    - Availability: data redundancy across nodes
-    - Activity: active nodes contributing
-    - Efficiency: data reuse (served / stored ratio)
-    
-    Returns a composite score 0-100 with traffic-light status.
-    """
+    """Network economy health indicator."""
     engine = _get_engine()
     return engine.economy_health()
+
+
+# --- Challenges ---
+
+@router.get("/challenges")
+async def list_challenges():
+    """List active challenges with top-3."""
+    engine = _get_engine()
+    engine.rotate_challenges()
+    return {"challenges": engine.get_active_challenges()}
+
+
+@router.get("/challenges/{challenge_id}")
+async def challenge_detail(challenge_id: int):
+    """Full ranking for a specific challenge."""
+    engine = _get_engine()
+    result = engine.get_challenge_results(challenge_id)
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+    return result
 

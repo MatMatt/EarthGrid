@@ -58,6 +58,10 @@ class RegisteredNode:
     stats_month: dict = field(default_factory=dict)
     last_seen: float = 0.0
     bbox_index: list[list[float]] = field(default_factory=list)  # per-collection bboxes
+    sponsor_name: str = ""
+    sponsor_url: str = ""
+    node_url: str = ""
+    group: str = ""
 
     @property
     def alive(self) -> bool:
@@ -95,6 +99,10 @@ class RegisteredNode:
             "alive": self.alive,
             "reachable": self.url is not None or self.reachable_via_ws,
             "last_seen": self.last_seen,
+            "sponsor_name": self.sponsor_name,
+            "sponsor_url": self.sponsor_url,
+            "node_url": self.node_url,
+            "group": self.group,
         }
 
 
@@ -225,11 +233,18 @@ class BeaconRegistry:
         """Persist a node to SQLite (INSERT OR REPLACE)."""
         with self._db_lock:
             with sqlite3.connect(self._db_path) as conn:
+                # Migrate: add new columns if missing
+                existing = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+                for col, default in [("sponsor_name", "''"), ("sponsor_url", "''"),
+                                     ("node_url", "''"), ("group_id", "''")]:
+                    if col not in existing:
+                        conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}")
                 conn.execute(
                     """INSERT OR REPLACE INTO nodes
                        (node_id, node_name, url, collections, item_count,
-                        chunk_count, chunks_bytes, can_source, storage_limit_gb, last_seen)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        chunk_count, chunks_bytes, can_source, storage_limit_gb, last_seen,
+                        sponsor_name, sponsor_url, node_url, group_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         node.node_id,
                         node.node_name,
@@ -241,6 +256,10 @@ class BeaconRegistry:
                         int(node.can_source),
                         node.storage_limit_gb,
                         node.last_seen,
+                        node.sponsor_name,
+                        node.sponsor_url,
+                        node.node_url,
+                        node.group,
                     ),
                 )
                 conn.commit()
@@ -284,6 +303,10 @@ class BeaconRegistry:
         chunk_count: int = 0,
         chunks_bytes: int = 0,
         can_source: bool = False,
+        sponsor_name: str = "",
+        sponsor_url: str = "",
+        node_url: str = "",
+        group: str = "",
     ) -> RegisteredNode:
         async with self._lock:
             existing = self._nodes_cache.get(node_id)
@@ -302,6 +325,10 @@ class BeaconRegistry:
                 existing.chunk_count = chunk_count
                 existing.chunks_bytes = chunks_bytes
                 existing.can_source = can_source
+                existing.sponsor_name = sponsor_name or existing.sponsor_name
+                existing.sponsor_url = sponsor_url or existing.sponsor_url
+                existing.node_url = node_url or existing.node_url
+                existing.group = group or existing.group
                 self._db_upsert_node(existing)
                 return existing
 
@@ -315,6 +342,10 @@ class BeaconRegistry:
                 chunk_count=chunk_count,
                 chunks_bytes=chunks_bytes,
                 can_source=can_source,
+                sponsor_name=sponsor_name,
+                sponsor_url=sponsor_url,
+                node_url=node_url,
+                group=group,
                 last_seen=time.time(),
             )
             self._nodes_cache[node_id] = node
@@ -609,6 +640,10 @@ async def register_node(
     cpu_cores: int = Query(0),
     cpu_freq_mhz: int = Query(0),
     ram_total_gb: float = Query(0.0),
+    sponsor_name: str = Query(""),
+    sponsor_url: str = Query(""),
+    node_url: str = Query("", description="Public dashboard URL for this node"),
+    group: str = Query("", description="Group this node belongs to"),
 ):
     """Register a data node with this beacon."""
     # Auto-detect peer IP if url is 0.0.0.0 or missing
@@ -632,6 +667,10 @@ async def register_node(
         chunk_count=chunk_count,
         chunks_bytes=chunks_bytes,
         can_source=can_source,
+        sponsor_name=sponsor_name,
+        sponsor_url=sponsor_url,
+        node_url=node_url,
+        group=group,
     )
     # Update replication planner with node preferences
     pref_collections = request.query_params.get("preferred_collections", "")
@@ -723,7 +762,10 @@ async def node_heartbeat(
         node = registry.nodes.get(node_id)
         engine = _gep._engine
         if node and engine:
-            engine.ensure_node_registered(node_id, node_name=node.node_name)
+            engine.ensure_node_registered(node_id, node_name=node.node_name,
+                                                    sponsor_name=node.sponsor_name,
+                                                    sponsor_url=node.sponsor_url,
+                                                    node_url=node.node_url)
             engine.record_heartbeat(
                 node_id,
                 peers_count=0,

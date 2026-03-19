@@ -115,8 +115,16 @@ class GamificationEngine:
                 storage_pledged_gb REAL NOT NULL DEFAULT 0,
                 score INTEGER NOT NULL DEFAULT 0,
                 display_alias TEXT NOT NULL DEFAULT '',
-                anonymous INTEGER NOT NULL DEFAULT 0
+                anonymous INTEGER NOT NULL DEFAULT 0,
+                sponsor_name TEXT NOT NULL DEFAULT '',
+                sponsor_url TEXT NOT NULL DEFAULT '',
+                node_url TEXT NOT NULL DEFAULT ''
             )""")
+            # Migrate: add new columns if missing
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(node_scores)").fetchall()}
+            for col in ["sponsor_name", "sponsor_url", "node_url"]:
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE node_scores ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
             # User scores (aggregated)
             conn.execute("""CREATE TABLE IF NOT EXISTS user_scores (
@@ -178,6 +186,7 @@ class GamificationEngine:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_node_owner ON node_scores(owner_user)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_node_group ON node_scores(group_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ach_entity ON achievements(entity_type, entity_id)")
+        self._init_challenges_db()
 
     # --- Opt-in ---
 
@@ -491,7 +500,9 @@ class GamificationEngine:
     # --- Leaderboards ---
 
 
-    def ensure_node_registered(self, node_id: str, node_name: str = ""):
+    def ensure_node_registered(self, node_id: str, node_name: str = "",
+                               sponsor_name: str = "", sponsor_url: str = "",
+                               node_url: str = ""):
         """Ensure node exists in gamification DB (auto-registered, anonymous by default)."""
         now = int(time.time())
         with sqlite3.connect(self.db_path) as conn:
@@ -499,13 +510,30 @@ class GamificationEngine:
                                      (node_id,)).fetchone()
             if not existing:
                 conn.execute("""INSERT INTO node_scores
-                    (node_id, opted_in, anonymous, display_alias, first_seen, last_seen)
-                    VALUES (?, 1, 1, ?, ?, ?)""",
-                    (node_id, node_name or node_id, now, now))
+                    (node_id, opted_in, anonymous, display_alias, first_seen, last_seen,
+                     sponsor_name, sponsor_url, node_url)
+                    VALUES (?, 1, 1, ?, ?, ?, ?, ?, ?)""",
+                    (node_id, node_name or node_id, now, now,
+                     sponsor_name, sponsor_url, node_url))
                 logger.info(f"Auto-registered node {node_id} in gamification")
-            elif node_name:
-                conn.execute("UPDATE node_scores SET display_alias=?, last_seen=? WHERE node_id=?",
-                             (node_name, now, node_id))
+            else:
+                updates = ["last_seen=?"]
+                params = [now]
+                if node_name:
+                    updates.append("display_alias=?")
+                    params.append(node_name)
+                if sponsor_name:
+                    updates.append("sponsor_name=?")
+                    params.append(sponsor_name)
+                if sponsor_url:
+                    updates.append("sponsor_url=?")
+                    params.append(sponsor_url)
+                if node_url:
+                    updates.append("node_url=?")
+                    params.append(node_url)
+                params.append(node_id)
+                conn.execute(f"UPDATE node_scores SET {','.join(updates)} WHERE node_id=?",
+                             params)
 
     def get_leaderboard(self, board_type: str = "nodes", limit: int = 20,
                         period: str = "all") -> list[dict]:
@@ -516,7 +544,10 @@ class GamificationEngine:
                 rows = conn.execute("""SELECT node_id, owner_user, score,
                     items_ingested, bytes_stored, bytes_served, streak_days,
                     uptime_seconds, max_peers, display_alias, anonymous,
-                    storage_pledged_gb
+                    storage_pledged_gb, group_id,
+                    COALESCE(sponsor_name, '') as sponsor_name,
+                    COALESCE(sponsor_url, '') as sponsor_url,
+                    COALESCE(node_url, '') as node_url
                     FROM node_scores
                     ORDER BY score DESC LIMIT ?""", (limit,)).fetchall()
                 return [{"rank": i+1,
@@ -530,7 +561,11 @@ class GamificationEngine:
                          "gb_pledged": r["storage_pledged_gb"],
                          "gb_served": round((r["bytes_served"] or 0) / (1024**3), 1),
                          "streak": r["streak_days"], "peers": r["max_peers"],
-                         "uptime_days": round((r["uptime_seconds"] or 0) / 86400, 1)}
+                         "uptime_days": round((r["uptime_seconds"] or 0) / 86400, 1),
+                         "group": r["group_id"] or "",
+                         "sponsor_name": r["sponsor_name"],
+                         "sponsor_url": r["sponsor_url"],
+                         "node_url": r["node_url"]}
                         for i, r in enumerate(rows)]
             elif board_type == "users":
                 self.refresh_user_scores()
@@ -849,3 +884,212 @@ class GamificationEngine:
                              (cutoff,)).rowcount
             if c:
                 logger.info(f"Gamification cleanup: removed {c} feed entries (>{retain_days}d)")
+
+    # ===== Challenges System =====
+
+    def _init_challenges_db(self):
+        """Create challenges tables (called from _init_db)."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS challenges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                metric TEXT NOT NULL,
+                period TEXT NOT NULL DEFAULT 'weekly',
+                start_ts REAL NOT NULL,
+                end_ts REAL NOT NULL,
+                created_at REAL NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS challenge_entries (
+                challenge_id INTEGER NOT NULL,
+                node_id TEXT NOT NULL,
+                score REAL NOT NULL DEFAULT 0,
+                last_updated REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (challenge_id, node_id)
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ch_active ON challenges(active)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_che_cid ON challenge_entries(challenge_id)")
+
+    # Challenge templates
+    CHALLENGE_TEMPLATES = [
+        {"title": "Weekly Ingest Champion", "description": "Most items ingested this week",
+         "metric": "items_ingested", "period": "weekly"},
+        {"title": "Storage Hero", "description": "Most GB added this week",
+         "metric": "gb_stored", "period": "weekly"},
+        {"title": "Serving Star", "description": "Most GB served this week",
+         "metric": "gb_served", "period": "weekly"},
+        {"title": "Monthly Marathon", "description": "Highest total score this month",
+         "metric": "score", "period": "monthly"},
+    ]
+
+    def seed_challenges(self):
+        """Create initial challenges for current period if none exist."""
+        self._init_challenges_db()
+        now = time.time()
+        with sqlite3.connect(self.db_path) as conn:
+            active = conn.execute("SELECT COUNT(*) FROM challenges WHERE active=1").fetchone()[0]
+            if active > 0:
+                return  # already seeded
+
+        # Create weekly + monthly
+        import datetime
+        today = datetime.datetime.utcfromtimestamp(now)
+        # Weekly: Mon-Sun
+        weekday = today.weekday()
+        week_start = datetime.datetime(today.year, today.month, today.day) - datetime.timedelta(days=weekday)
+        week_end = week_start + datetime.timedelta(days=7)
+        # Monthly: 1st-last
+        month_start = datetime.datetime(today.year, today.month, 1)
+        if today.month == 12:
+            month_end = datetime.datetime(today.year + 1, 1, 1)
+        else:
+            month_end = datetime.datetime(today.year, today.month + 1, 1)
+
+        with sqlite3.connect(self.db_path) as conn:
+            for tmpl in self.CHALLENGE_TEMPLATES:
+                if tmpl["period"] == "weekly":
+                    start = week_start.timestamp()
+                    end = week_end.timestamp()
+                else:
+                    start = month_start.timestamp()
+                    end = month_end.timestamp()
+                conn.execute(
+                    """INSERT INTO challenges (title, description, metric, period, start_ts, end_ts, created_at, active)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
+                    (tmpl["title"], tmpl["description"], tmpl["metric"], tmpl["period"],
+                     start, end, now))
+        logger.info(f"Seeded {len(self.CHALLENGE_TEMPLATES)} challenges")
+
+    def rotate_challenges(self):
+        """Close expired challenges and create new ones."""
+        self._init_challenges_db()
+        now = time.time()
+        with sqlite3.connect(self.db_path) as conn:
+            expired = conn.execute(
+                "SELECT id, period FROM challenges WHERE active=1 AND end_ts < ?", (now,)
+            ).fetchall()
+            for ch_id, period in expired:
+                conn.execute("UPDATE challenges SET active=0 WHERE id=?", (ch_id,))
+                logger.info(f"Challenge {ch_id} expired ({period})")
+
+        if expired:
+            self.seed_challenges()
+
+    def get_active_challenges(self) -> list[dict]:
+        """Get active challenges with top-3 entries."""
+        self._init_challenges_db()
+        now = time.time()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            challenges = conn.execute(
+                "SELECT * FROM challenges WHERE active=1 ORDER BY end_ts"
+            ).fetchall()
+            result = []
+            for ch in challenges:
+                top3 = conn.execute(
+                    """SELECT ce.node_id, ce.score,
+                              COALESCE(ns.display_alias, ns.owner_user, ce.node_id) as display_name,
+                              ns.group_id as node_group
+                       FROM challenge_entries ce
+                       LEFT JOIN node_scores ns ON ce.node_id = ns.node_id
+                       WHERE ce.challenge_id = ?
+                       ORDER BY ce.score DESC LIMIT 3""",
+                    (ch["id"],)
+                ).fetchall()
+                total_participants = conn.execute(
+                    "SELECT COUNT(*) FROM challenge_entries WHERE challenge_id=? AND score > 0",
+                    (ch["id"],)
+                ).fetchone()[0]
+                remaining_s = max(0, ch["end_ts"] - now)
+                result.append({
+                    "id": ch["id"],
+                    "title": ch["title"],
+                    "description": ch["description"],
+                    "metric": ch["metric"],
+                    "period": ch["period"],
+                    "start_ts": ch["start_ts"],
+                    "end_ts": ch["end_ts"],
+                    "remaining_seconds": remaining_s,
+                    "remaining_human": _format_duration(remaining_s),
+                    "participants": total_participants,
+                    "top3": [{"node_id": r["node_id"], "display_name": r["display_name"],
+                              "score": r["score"], "group": r["node_group"] or ""} for r in top3],
+                })
+            return result
+
+    def get_challenge_results(self, challenge_id: int) -> dict:
+        """Full ranking for a challenge."""
+        self._init_challenges_db()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            ch = conn.execute("SELECT * FROM challenges WHERE id=?", (challenge_id,)).fetchone()
+            if not ch:
+                return {"error": "Challenge not found"}
+            entries = conn.execute(
+                """SELECT ce.node_id, ce.score,
+                          COALESCE(ns.display_alias, ns.owner_user, ce.node_id) as display_name,
+                          ns.group_id as node_group
+                   FROM challenge_entries ce
+                   LEFT JOIN node_scores ns ON ce.node_id = ns.node_id
+                   WHERE ce.challenge_id = ?
+                   ORDER BY ce.score DESC""",
+                (challenge_id,)
+            ).fetchall()
+            return {
+                "id": ch["id"],
+                "title": ch["title"],
+                "description": ch["description"],
+                "metric": ch["metric"],
+                "period": ch["period"],
+                "active": bool(ch["active"]),
+                "rankings": [{"rank": i+1, "node_id": r["node_id"],
+                               "display_name": r["display_name"],
+                               "score": r["score"], "group": r["node_group"] or ""}
+                              for i, r in enumerate(entries)],
+            }
+
+    def update_challenge_scores(self):
+        """Refresh all active challenge scores from node_scores."""
+        self._init_challenges_db()
+        now = time.time()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            challenges = conn.execute(
+                "SELECT id, metric, start_ts FROM challenges WHERE active=1"
+            ).fetchall()
+            nodes = conn.execute("SELECT * FROM node_scores").fetchall()
+            for ch in challenges:
+                metric = ch["metric"]
+                for node in nodes:
+                    # Calculate score based on metric
+                    if metric == "items_ingested":
+                        score = node["items_ingested"]
+                    elif metric == "gb_stored":
+                        score = round(node["bytes_stored"] / (1024**3), 2)
+                    elif metric == "gb_served":
+                        score = round(node["bytes_served"] / (1024**3), 2)
+                    elif metric == "score":
+                        score = node["score"]
+                    else:
+                        score = 0
+                    if score > 0:
+                        conn.execute(
+                            """INSERT INTO challenge_entries (challenge_id, node_id, score, last_updated)
+                               VALUES (?, ?, ?, ?)
+                               ON CONFLICT(challenge_id, node_id) DO UPDATE SET score=?, last_updated=?""",
+                            (ch["id"], node["node_id"], score, now, score, now))
+
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds to human-readable duration."""
+    if seconds <= 0:
+        return "ended"
+    d = int(seconds // 86400)
+    h = int((seconds % 86400) // 3600)
+    m = int((seconds % 3600) // 60)
+    if d > 0:
+        return f"{d}d {h}h"
+    if h > 0:
+        return f"{h}h {m}m"
+    return f"{m}m"

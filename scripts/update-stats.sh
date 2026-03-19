@@ -69,6 +69,7 @@ stats = {
         'achievements': fetch('/gamification/achievements'),
         'feed': fetch('/gamification/feed?limit=30'),
         'economy': fetch('/gamification/economy'),
+        'challenges': fetch('/gamification/challenges'),
     },
 }
 print(json.dumps(stats, indent=2))

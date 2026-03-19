@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     stats_db: str = "./data/stats.db"
     stats_retain_days: int = 90  # Auto-cleanup logs older than this
 
+    # --- Community / Sponsorship ---
+    sponsor_name: str = ""  # e.g. "OpenDataHub", "University of Vienna"
+    sponsor_url: str = ""   # e.g. "https://opendatahub.com"
+    node_url: str = ""      # Public dashboard URL for this node
+    group: str = ""         # Auto-join this group on startup
+
     # --- Beacon ---
     beacon_db: str = "./data/beacon.db"
 
