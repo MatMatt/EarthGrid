@@ -74,3 +74,26 @@ stats = {
 print(json.dumps(stats, indent=2))
 " > "$STATS_FILE"
 
+
+# --- Long-term ingest history log ---
+HISTORY_FILE="$REPO/data/ingest-history.jsonl"
+mkdir -p "$REPO/data"
+python3 -c "
+import json, sys
+from datetime import datetime, timezone
+
+stats = json.load(open('$STATS_FILE'))
+ingest = stats.get('ingest', {})
+entry = {
+    'ts': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'items': ingest.get('total_items_fetched', 0),
+    'gb': ingest.get('total_gb_fetched', 0),
+    'collections': ingest.get('collections', 0),
+    'daily': ingest.get('daily', [])[-1] if ingest.get('daily') else None,
+    'hourly_last': ingest.get('hourly', [])[-1] if ingest.get('hourly') else None,
+    'network_bytes': stats.get('network', {}).get('total_bytes', 0),
+    'nodes_alive': stats.get('network', {}).get('nodes_alive', 0),
+}
+with open('$HISTORY_FILE', 'a') as f:
+    f.write(json.dumps(entry) + '\n')
+"

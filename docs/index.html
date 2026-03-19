@@ -1107,33 +1107,45 @@ async function load() {
     if (chartData.length > 0) {
       const maxItems = Math.max(...chartData.map(d => d.items || 0));
       const maxGB = Math.max(...chartData.map(d => d.gb || 0));
-      const useGB = maxGB > 0;
-      const maxVal = useGB ? maxGB : maxItems;
-      const label = useHourly ? 'Hourly ingest' : 'Daily ingest';
       const totalGB = (ingest.total_gb_fetched||0);
       const totalItems = (ingest.total_items_fetched||0);
-      const summary = totalGB > 0
-        ? totalItems.toLocaleString() + ' items · ' + totalGB.toFixed(1) + ' GB'
-        : totalItems.toLocaleString() + ' items';
-      let bars = '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.75rem;margin-bottom:2px"><span>' + label + '</span><span>' + summary + '</span></div>';
-      bars += '<div style="display:flex;align-items:flex-end;gap:1px;height:80px;background:rgba(255,255,255,0.02);border-radius:4px;padding:4px">';
+
+      // --- Items chart ---
+      const itemLabel = useHourly ? 'Hourly items ingested' : 'Daily items ingested';
+      let bars = '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.75rem;margin-bottom:2px"><span>' + itemLabel + '</span><span>' + totalItems.toLocaleString() + ' total</span></div>';
+      bars += '<div style="display:flex;align-items:flex-end;gap:1px;height:60px;background:rgba(255,255,255,0.02);border-radius:4px;padding:4px">';
       for (const dd of chartData) {
-        const val = useGB ? (dd.gb||0) : (dd.items||0);
-        const h = maxVal > 0 ? Math.max(2, (val / maxVal) * 72) : 2;
+        const h = maxItems > 0 ? Math.max(2, ((dd.items||0) / maxItems) * 52) : 2;
         const ts = useHourly ? dd.hour : dd.date;
-        const gbStr = (dd.gb||0) > 0 ? (dd.gb).toFixed(2) + ' GB · ' : '';
-        const tip = (useHourly ? ts.slice(5) : ts) + ': ' + gbStr + dd.items + ' items';
-        bars += '<div style="flex:1;min-width:2px;height:' + h + 'px;background:var(--green);border-radius:1px 1px 0 0;opacity:0.7" title="' + tip + '"></div>';
+        const tip = (useHourly ? ts.slice(5) : ts) + ': ' + dd.items + ' items';
+        bars += '<div style="flex:1;min-width:2px;height:' + h + 'px;background:var(--green);border-radius:1px 1px 0 0;opacity:0.8;cursor:crosshair" title="' + tip + '"></div>';
       }
       bars += '</div>';
 
-      // X-axis labels — show day boundaries for hourly
+      // --- Volume chart ---
+      const volLabel = useHourly ? 'Hourly volume' : 'Daily volume';
+      const volSummary = totalGB >= 1000 ? (totalGB/1000).toFixed(1) + ' TB' : totalGB.toFixed(1) + ' GB';
+      bars += '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.75rem;margin-bottom:2px;margin-top:12px"><span>' + volLabel + '</span><span>' + volSummary + ' total</span></div>';
+      if (maxGB > 0) {
+        bars += '<div style="display:flex;align-items:flex-end;gap:1px;height:60px;background:rgba(255,255,255,0.02);border-radius:4px;padding:4px">';
+        for (const dd of chartData) {
+          const h = Math.max(2, ((dd.gb||0) / maxGB) * 52);
+          const ts = useHourly ? dd.hour : dd.date;
+          const gbVal = (dd.gb||0);
+          const volStr = gbVal >= 1 ? gbVal.toFixed(1) + ' GB' : (gbVal * 1024).toFixed(0) + ' MB';
+          const tip = (useHourly ? ts.slice(5) : ts) + ': ' + volStr + ' (' + dd.items + ' items)';
+          bars += '<div style="flex:1;min-width:2px;height:' + h + 'px;background:var(--accent);border-radius:1px 1px 0 0;opacity:0.8;cursor:crosshair" title="' + tip + '"></div>';
+        }
+        bars += '</div>';
+      } else {
+        bars += '<div style="height:60px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:0.75rem;background:rgba(255,255,255,0.02);border-radius:4px">Volume tracking started \u2014 data will appear with next ingest</div>';
+      }
+
+      // X-axis labels
       if (useHourly && chartData.length > 6) {
         const days = [...new Set(chartData.map(d => d.hour.slice(0,10)))];
         bars += '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.7rem;margin-top:2px">';
-        for (const day of days) {
-          bars += '<span>' + day.slice(5) + '</span>';
-        }
+        for (const day of days) { bars += '<span>' + day.slice(5) + '</span>'; }
         bars += '</div>';
       } else {
         const first = useHourly ? chartData[0].hour : chartData[0].date;
