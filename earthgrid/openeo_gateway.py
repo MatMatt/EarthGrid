@@ -421,9 +421,14 @@ class OpenEOGateway:
 
     async def _federated_execute(self, process_graph: dict,
                                   collection_id: str) -> bytes | None:
-        """Try to execute a process graph on a peer that has the data.
+        """Execute a process graph across peers that have the data.
 
-        Tries peers in order of item_count (most data first).
+        Phase 2: Parallel fan-out to multiple peers, merge results.
+        Steps:
+          1. Ask beacon which peers have items for this collection
+          2. For each peer with data: forward the process graph in parallel
+          3. If multiple peers return results: mosaic the GeoTIFFs
+          4. If only one peer: return its result directly
         Returns GeoTIFF bytes on success, None if no peer could handle it.
         """
         peers = await self._find_peers_for_collection(collection_id)
@@ -436,13 +441,103 @@ class OpenEOGateway:
             f"{[p['node_name'] for p in peers]}"
         )
 
-        for peer in peers:
-            result = await self._delegate_to_peer(peer, process_graph)
-            if result is not None:
-                return result
+        # Fan out to ALL peers in parallel
+        tasks = [
+            self._delegate_to_peer(peer, process_graph)
+            for peer in peers
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        logger.info("All peers failed or returned no result")
-        return None
+        # Collect successful results
+        geotiff_parts: list[tuple[str, bytes]] = []
+        for peer, result in zip(peers, results):
+            if isinstance(result, Exception):
+                logger.warning(f"Peer {peer['node_name']} raised: {result}")
+                continue
+            if result is not None:
+                geotiff_parts.append((peer['node_name'], result))
+
+        if not geotiff_parts:
+            logger.info("All peers failed or returned no result")
+            return None
+
+        # Single result: return directly
+        if len(geotiff_parts) == 1:
+            name, data = geotiff_parts[0]
+            logger.info(f"Single peer result from {name}: {len(data):,} bytes")
+            return data
+
+        # Multiple results: mosaic into one GeoTIFF
+        logger.info(
+            f"Merging results from {len(geotiff_parts)} peers: "
+            f"{[name for name, _ in geotiff_parts]}"
+        )
+        return self._mosaic_geotiffs(geotiff_parts)
+
+    @staticmethod
+    def _mosaic_geotiffs(parts: list[tuple[str, bytes]]) -> bytes:
+        """Merge multiple GeoTIFF byte buffers into a single mosaic.
+
+        Uses rasterio.merge to combine georeferenced rasters.
+        Later overlapping pixels: last writer wins.
+        """
+        import io
+        import numpy as np
+        import rasterio
+        from rasterio.merge import merge as rio_merge
+
+        # Open all parts as in-memory datasets
+        mem_files = []
+        datasets = []
+        for name, data in parts:
+            mem = rasterio.MemoryFile(data)
+            ds = mem.open()
+            mem_files.append(mem)
+            datasets.append(ds)
+            logger.info(
+                f"  Mosaic part {name}: {ds.width}x{ds.height}, "
+                f"{ds.count} bands, crs={ds.crs}"
+            )
+
+        if not datasets:
+            return parts[0][1]
+
+        try:
+            # Merge all datasets into one mosaic
+            mosaic_arr, mosaic_transform = rio_merge(datasets)
+
+            # Write merged result
+            profile = datasets[0].profile.copy()
+            profile.update(
+                width=mosaic_arr.shape[2],
+                height=mosaic_arr.shape[1],
+                count=mosaic_arr.shape[0],
+                transform=mosaic_transform,
+                compress="lzw",
+            )
+
+            buf = io.BytesIO()
+            with rasterio.open(buf, "w", **profile) as dst:
+                dst.write(mosaic_arr)
+                # Copy band descriptions from first dataset
+                for i in range(1, min(dst.count, datasets[0].count) + 1):
+                    desc = datasets[0].descriptions[i - 1]
+                    if desc:
+                        dst.set_band_description(i, desc)
+
+            buf.seek(0)
+            result = buf.read()
+            logger.info(
+                f"Mosaic complete: {mosaic_arr.shape[2]}x{mosaic_arr.shape[1]}, "
+                f"{mosaic_arr.shape[0]} bands, {len(result):,} bytes"
+            )
+            return result
+
+        finally:
+            for ds in datasets:
+                ds.close()
+            for mf in mem_files:
+                mf.close()
 
     # ------------------------------------------------------------------
     # Process graph helpers
