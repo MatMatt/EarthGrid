@@ -1105,16 +1105,16 @@ async function load() {
     const chartData = useHourly ? iHourly : iDaily;
 
     if (chartData.length > 0) {
-      const maxItems = Math.max(...chartData.map(d => d.items));
-      const label = useHourly ? 'Hourly items ingested' : 'Daily items ingested';
-      let bars = '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.75rem;margin-bottom:2px"><span>' + label + '</span><span>' + (ingest.total_items_fetched||0).toLocaleString() + ' total</span></div>';
+      const maxGB = Math.max(...chartData.map(d => d.gb || 0));
+      const label = useHourly ? 'Hourly GB ingested' : 'Daily GB ingested';
+      let bars = '<div style="display:flex;justify-content:space-between;color:var(--dim);font-size:0.75rem;margin-bottom:2px"><span>' + label + '</span><span>' + (ingest.total_gb_fetched||0).toFixed(1) + ' GB total</span></div>';
       bars += '<div style="display:flex;align-items:flex-end;gap:1px;height:80px;background:rgba(255,255,255,0.02);border-radius:4px;padding:4px">';
       for (const dd of chartData) {
-        const h = maxItems > 0 ? Math.max(2, (dd.items / maxItems) * 72) : 2;
+        const h = maxGB > 0 ? Math.max(2, ((dd.gb||0) / maxGB) * 72) : 2;
         const ts = useHourly ? dd.hour : dd.date;
         const tip = useHourly
-          ? ts.slice(5) + ': ' + dd.items + ' items'
-          : ts + ': ' + dd.items + ' items, ' + dd.gb + ' GB';
+          ? ts.slice(5) + ': ' + (dd.gb||0).toFixed(2) + ' GB (' + dd.items + ' items)'
+          : ts + ': ' + (dd.gb||0).toFixed(2) + ' GB (' + dd.items + ' items)';
         bars += '<div style="flex:1;min-width:2px;height:' + h + 'px;background:var(--green);border-radius:1px 1px 0 0;opacity:0.7" title="' + tip + '"></div>';
       }
       bars += '</div>';
