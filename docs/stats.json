@@ -1,16 +1,16 @@
 {
-  "updated": "2026-03-19T21:10:01Z",
+  "updated": "2026-03-19T21:20:01Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 2,
     "nodes_total": 2,
-    "total_bytes": 719381934788,
+    "total_bytes": 746419502884,
     "available_storage_gb": 5050.0,
     "redundancy": 1.0
   },
   "coverage": {
     "sentinel-2-l2a": {
-      "items": 4266,
+      "items": 4264,
       "tiles": 1,
       "area_km2": 12670
     }
@@ -1094,61 +1094,86 @@
     "daily_trend": []
   },
   "ingest": {
-    "total_items_fetched": 469,
-    "total_gb_fetched": 18.71,
+    "total_items_fetched": 1363,
+    "total_gb_fetched": 4.18,
     "collections": 1,
     "daily": [
       {
         "date": "2026-03-18",
-        "items": 331,
+        "items": 493,
         "gb": 0.0
       },
       {
         "date": "2026-03-19",
-        "items": 138,
-        "gb": 18.714
+        "items": 870,
+        "gb": 4.185
       }
     ],
     "hourly": [
       {
+        "hour": "2026-03-18T14:00",
+        "items": 55,
+        "gb": 0.0
+      },
+      {
+        "hour": "2026-03-18T15:00",
+        "items": 35,
+        "gb": 0.0
+      },
+      {
         "hour": "2026-03-18T19:00",
-        "items": 39,
+        "items": 82,
         "gb": 0.0
       },
       {
         "hour": "2026-03-18T20:00",
-        "items": 128,
+        "items": 306,
         "gb": 0.0
       },
       {
         "hour": "2026-03-18T21:00",
-        "items": 164,
+        "items": 15,
+        "gb": 0.0
+      },
+      {
+        "hour": "2026-03-19T05:00",
+        "items": 44,
+        "gb": 0.0
+      },
+      {
+        "hour": "2026-03-19T06:00",
+        "items": 240,
+        "gb": 0.0
+      },
+      {
+        "hour": "2026-03-19T07:00",
+        "items": 174,
+        "gb": 0.0
+      },
+      {
+        "hour": "2026-03-19T08:00",
+        "items": 136,
+        "gb": 0.0
+      },
+      {
+        "hour": "2026-03-19T09:00",
+        "items": 128,
+        "gb": 0.0
+      },
+      {
+        "hour": "2026-03-19T10:00",
+        "items": 117,
         "gb": 0.0
       },
       {
         "hour": "2026-03-19T16:00",
-        "items": 63,
-        "gb": 7.668
-      },
-      {
-        "hour": "2026-03-19T18:00",
-        "items": 51,
-        "gb": 7.692
-      },
-      {
-        "hour": "2026-03-19T19:00",
-        "items": 20,
-        "gb": 2.489
-      },
-      {
-        "hour": "2026-03-19T20:00",
-        "items": 4,
-        "gb": 0.865
+        "items": 31,
+        "gb": 4.185
       }
     ]
   },
   "items": 3899,
-  "chunks": 1358674,
+  "chunks": 1417703,
   "km2_requested": 0,
   "operations": [
     {
@@ -1217,12 +1242,12 @@
           "node_name": "node-alpha",
           "owner": "",
           "anonymous": true,
-          "score": 29025,
+          "score": 29028,
           "items": 3899,
-          "gb_stored": 621.1,
+          "gb_stored": 646.4,
           "gb_pledged": 5000.0,
           "gb_served": 0.0,
-          "streak": 1,
+          "streak": 2,
           "peers": 0,
           "uptime_days": 12.5,
           "group": "",
@@ -1237,13 +1262,32 @@
           "owner": "",
           "anonymous": true,
           "score": 619,
-          "items": 367,
-          "gb_stored": 48.9,
-          "gb_pledged": 70.0,
+          "items": 365,
+          "gb_stored": 48.8,
+          "gb_pledged": 50.0,
+          "gb_served": 0.0,
+          "streak": 2,
+          "peers": 0,
+          "uptime_days": 0.0,
+          "group": "",
+          "sponsor_name": "",
+          "sponsor_url": "",
+          "node_url": ""
+        },
+        {
+          "rank": 3,
+          "node_id": "af352e13442d",
+          "node_name": "free-cove-af35",
+          "owner": "",
+          "anonymous": true,
+          "score": 364,
+          "items": 0,
+          "gb_stored": 0.0,
+          "gb_pledged": 50.0,
           "gb_served": 0.0,
           "streak": 1,
           "peers": 0,
-          "uptime_days": 0.0,
+          "uptime_days": 11.2,
           "group": "",
           "sponsor_name": "",
           "sponsor_url": "",
@@ -1342,27 +1386,27 @@
       "feed": []
     },
     "economy": {
-      "score": 54,
+      "score": 40,
       "status": "yellow",
       "label": "Growing",
-      "nodes_total": 2,
-      "nodes_alive": 2,
-      "storage_pledged_gb": 5070.0,
-      "storage_used_gb": 670.0,
-      "storage_utilization_pct": 13.2,
+      "nodes_total": 3,
+      "nodes_alive": 1,
+      "storage_pledged_gb": 5100.0,
+      "storage_used_gb": 695.2,
+      "storage_utilization_pct": 13.6,
       "data_served_gb": 0.0,
-      "estimated_replication_factor": 1.09,
+      "estimated_replication_factor": 1.0,
       "factors": {
         "storage_headroom": {
           "score": 100,
           "weight": 0.3
         },
         "node_diversity": {
-          "score": 50,
+          "score": 20,
           "weight": 0.25
         },
         "data_redundancy": {
-          "score": 40,
+          "score": 15,
           "weight": 0.25
         },
         "data_reuse": {
@@ -1381,7 +1425,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 269398.00251317024,
+          "remaining_seconds": 268798.67362475395,
           "remaining_human": "3d 2h",
           "participants": 2,
           "top3": [
@@ -1394,7 +1438,7 @@
             {
               "node_id": "302b5372648f",
               "display_name": "wild-mesa-9687",
-              "score": 367.0,
+              "score": 365.0,
               "group": ""
             }
           ]
@@ -1407,20 +1451,20 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 269398.00251317024,
+          "remaining_seconds": 268798.67362475395,
           "remaining_human": "3d 2h",
           "participants": 2,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 621.07,
+              "score": 646.4,
               "group": ""
             },
             {
               "node_id": "302b5372648f",
               "display_name": "wild-mesa-9687",
-              "score": 48.9,
+              "score": 48.76,
               "group": ""
             }
           ]
@@ -1433,7 +1477,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 269398.00251317024,
+          "remaining_seconds": 268798.67362475395,
           "remaining_human": "3d 2h",
           "participants": 0,
           "top3": []
@@ -1446,20 +1490,26 @@
           "period": "monthly",
           "start_ts": 1772323200.0,
           "end_ts": 1775001600.0,
-          "remaining_seconds": 1046998.0025131702,
+          "remaining_seconds": 1046398.673624754,
           "remaining_human": "12d 2h",
-          "participants": 2,
+          "participants": 3,
           "top3": [
             {
               "node_id": "baa54e7a606f",
               "display_name": "node-alpha",
-              "score": 29025.0,
+              "score": 29028.0,
               "group": ""
             },
             {
               "node_id": "302b5372648f",
               "display_name": "wild-mesa-9687",
               "score": 619.0,
+              "group": ""
+            },
+            {
+              "node_id": "af352e13442d",
+              "display_name": "free-cove-af35",
+              "score": 364.0,
               "group": ""
             }
           ]
