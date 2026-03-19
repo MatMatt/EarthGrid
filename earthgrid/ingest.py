@@ -114,6 +114,7 @@ def ingest_cog(
     collection_id: str = "default",
     item_id: str | None = None,
     tile_size: int = DEFAULT_TILE_SIZE,
+    extra_properties: dict | None = None,
 ) -> STACItem:
     """Ingest a COG/GeoTIFF: split into spatial tiles (all bands per tile).
 
@@ -146,7 +147,8 @@ def ingest_cog(
     try:
         return _do_ingest(ingest_source, chunk_store, catalog,
                           collection_id, item_id, tile_size,
-                          original_name=file_path.name)
+                          original_name=file_path.name,
+                          extra_properties=extra_properties)
     finally:
         if warped_path:
             warped_path.unlink(missing_ok=True)
@@ -160,6 +162,7 @@ def _do_ingest(
     item_id: str,
     tile_size: int,
     original_name: str | None = None,
+    extra_properties: dict | None = None,
 ) -> STACItem:
     """Core ingest logic — file must be properly georeferenced."""
     with rasterio.open(file_path) as src:
@@ -250,6 +253,10 @@ def _do_ingest(
         "earthgrid:chunk_format": "spatial-tile",
         "earthgrid:transform": native_transform,
     }
+
+    # Merge extra properties (e.g. processing_baseline from upstream)
+    if extra_properties:
+        properties.update(extra_properties)
 
     assets = {
         "data": {

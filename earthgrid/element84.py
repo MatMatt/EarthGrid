@@ -193,6 +193,8 @@ async def search_element84(
             "bbox": item.get("bbox"),
             "assets": item.get("assets", {}),
             "geometry": item.get("geometry"),
+            "processing_baseline": props.get("s2:processing_baseline", ""),
+            "generation_time": props.get("s2:generation_time", ""),
         })
     return results
 
@@ -390,10 +392,19 @@ async def _ingest_item_locally(
                 continue
 
             item_id_full = f"{item['id']}_{band_name}"
-            if catalog.get_item(item_id_full):
-                print(f"    \u2714 {band_name} (already ingested)")
-                results.append({"item_id": item_id_full, "band": band_name, "product": item["id"], "skipped": True})
-                continue
+            upstream_baseline = item.get("processing_baseline", "")
+            existing = catalog.get_item(item_id_full)
+            if existing:
+                existing_baseline = existing.properties.get("earthgrid:processing_baseline", "")
+                if upstream_baseline and existing_baseline and upstream_baseline > existing_baseline:
+                    print(f"    🔄 {band_name} reprocessed: {existing_baseline} → {upstream_baseline}")
+                    logger.info(f"Re-ingesting {item_id_full}: baseline {existing_baseline} → {upstream_baseline}")
+                    # Delete old item so it gets re-ingested below
+                    catalog.delete_item(item_id_full)
+                else:
+                    print(f"    ✔ {band_name} (already ingested, baseline {existing_baseline or '?'})")
+                    results.append({"item_id": item_id_full, "band": band_name, "product": item["id"], "skipped": True})
+                    continue
 
             cog_url = assets[asset_key]["href"]
             print(f"    \u2b07 {band_name}...")
@@ -411,12 +422,19 @@ async def _ingest_item_locally(
                     await bandwidth_manager.acquire(total_bytes, nice_level=10, stream_id=f"e84-{item['id'][:12]}")
 
                 try:
+                    extra_properties = {}
+                    if upstream_baseline:
+                        extra_properties["earthgrid:processing_baseline"] = upstream_baseline
+                    gen_time = item.get("generation_time", "")
+                    if gen_time:
+                        extra_properties["earthgrid:generation_time"] = gen_time
                     item_obj = ingest_cog(
                         file_path=tmp_path,
                         chunk_store=chunk_store,
                         catalog=catalog,
                         collection_id=collection,
                         item_id=f"{item['id']}_{band_name}",
+                        extra_properties=extra_properties,
                     )
                     results.append({"item_id": item_obj.id, "band": band_name, "product": item["id"]})
                     logger.info(f"Ingested {band_name} from {item['id']}")
