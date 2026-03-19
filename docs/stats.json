@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-19T18:20:01Z",
+  "updated": "2026-03-19T18:30:01Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 2,
@@ -1190,7 +1190,7 @@
           "score": 619,
           "items": 367,
           "gb_stored": 48.9,
-          "gb_pledged": 50.0,
+          "gb_pledged": 70.0,
           "gb_served": 0.0,
           "streak": 1,
           "peers": 0,
@@ -1298,7 +1298,7 @@
       "label": "Growing",
       "nodes_total": 2,
       "nodes_alive": 2,
-      "storage_pledged_gb": 5050.0,
+      "storage_pledged_gb": 5070.0,
       "storage_used_gb": 658.6,
       "storage_utilization_pct": 13.0,
       "data_served_gb": 0.0,
@@ -1332,7 +1332,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 279598.51105070114,
+          "remaining_seconds": 278998.5657584667,
           "remaining_human": "3d 5h",
           "participants": 2,
           "top3": [
@@ -1358,7 +1358,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 279598.51105070114,
+          "remaining_seconds": 278998.5657584667,
           "remaining_human": "3d 5h",
           "participants": 2,
           "top3": [
@@ -1384,7 +1384,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 279598.51105070114,
+          "remaining_seconds": 278998.5657584667,
           "remaining_human": "3d 5h",
           "participants": 0,
           "top3": []
@@ -1397,7 +1397,7 @@
           "period": "monthly",
           "start_ts": 1772323200.0,
           "end_ts": 1775001600.0,
-          "remaining_seconds": 1057198.5110507011,
+          "remaining_seconds": 1056598.5657584667,
           "remaining_human": "12d 5h",
           "participants": 2,
           "top3": [
