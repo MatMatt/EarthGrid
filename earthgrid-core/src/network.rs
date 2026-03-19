@@ -11,6 +11,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use futures::StreamExt;
 use libp2p::{
     Multiaddr, PeerId, StreamProtocol, Swarm, SwarmBuilder,
     identify, kad, mdns, ping, relay, dcutr,
@@ -140,9 +141,10 @@ pub async fn start(
             libp2p::noise::Config::new,
             libp2p::yamux::Config::default,
         )?
-        .with_relay_client(|keypair, relay_behaviour| {
-            Ok(relay_behaviour)
-        })?
+        .with_relay_client(
+            libp2p::noise::Config::new,
+            libp2p::yamux::Config::default,
+        )?
         .with_behaviour(|keypair, relay_client| {
             // Kademlia
             let mut kad_config = kad::Config::new(

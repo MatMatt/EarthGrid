@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 // Codec (libp2p CBOR-based request-response)
 // ---------------------------------------------------------------------------
 
-/// Codec marker type for the EarthGrid RPC protocol.
-/// Uses libp2p's built-in CBOR codec.
-pub type EarthGridCodec = libp2p::request_response::cbor::Behaviour<EarthGridRequest, EarthGridResponse>;
+/// Codec type for the EarthGrid RPC protocol.
+/// Uses libp2p's built-in CBOR codec for serialization.
+pub type EarthGridCodec = libp2p::request_response::cbor::Codec<EarthGridRequest, EarthGridResponse>;
 
 // ---------------------------------------------------------------------------
 // Request types
