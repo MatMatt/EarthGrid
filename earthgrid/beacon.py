@@ -14,6 +14,7 @@ import logging
 import sqlite3
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -122,6 +123,7 @@ class BeaconRegistry:
         self._websockets: dict[str, WebSocket] = {}
         self._lock = asyncio.Lock()
         self._db_lock = threading.Lock()
+        self._pending_tunnel_requests: dict[str, asyncio.Future] = {}
 
         # SQLite persistence
         if db_path is None:
@@ -376,6 +378,58 @@ class BeaconRegistry:
             "avg_uptime_hours": round(sum(uptimes) / len(uptimes) / 3600, 1) if uptimes else 0,
             "total_uptime_hours": round(sum(uptimes) / 3600, 1) if uptimes else 0,
         }
+
+    # --- WebSocket Tunnel Proxy ---
+
+    async def tunnel_request(
+        self,
+        node_id: str,
+        method: str,
+        path: str,
+        body: dict | None = None,
+        headers: dict | None = None,
+        timeout: float = 60.0,
+    ) -> dict | None:
+        """Proxy an HTTP request to a node via its WebSocket tunnel.
+
+        Sends the request over the node's WebSocket connection,
+        waits for the response, and returns it.
+        Returns None if node has no WebSocket or times out.
+        """
+        ws = self._websockets.get(node_id)
+        if not ws:
+            return None
+
+        req_id = str(uuid.uuid4())[:8]
+        future = asyncio.get_event_loop().create_future()
+        self._pending_tunnel_requests[req_id] = future
+
+        try:
+            # Send request to node via WebSocket
+            await ws.send_json({
+                "type": "tunnel_request",
+                "request_id": req_id,
+                "method": method,
+                "path": path,
+                "body": body,
+                "headers": headers or {},
+            })
+
+            # Wait for response with timeout
+            result = await asyncio.wait_for(future, timeout=timeout)
+            return result
+        except asyncio.TimeoutError:
+            logger.warning(f"Tunnel request to {node_id} timed out ({timeout}s)")
+            return None
+        except Exception as e:
+            logger.warning(f"Tunnel request to {node_id} failed: {e}")
+            return None
+        finally:
+            self._pending_tunnel_requests.pop(req_id, None)
+
+    def has_tunnel(self, node_id: str) -> bool:
+        """Check if a node has an active WebSocket tunnel."""
+        return node_id in self._websockets
 
     # --- Beacon Federation ---
 
@@ -944,6 +998,12 @@ async def node_websocket(websocket: WebSocket, node_id: str):
                 # Response to a routed search — handled by the search coroutine
                 pass
 
+            elif msg_type == "tunnel_response":
+                # Response to a proxied HTTP request
+                req_id = msg.get("request_id", "")
+                if req_id in registry._pending_tunnel_requests:
+                    registry._pending_tunnel_requests[req_id].set_result(msg)
+
     except WebSocketDisconnect:
         if node:
             node.websocket = None
@@ -952,6 +1012,73 @@ async def node_websocket(websocket: WebSocket, node_id: str):
         if node:
             node.websocket = None
             registry._websockets.pop(node_id, None)
+
+
+# --- WebSocket Tunnel Proxy Endpoint ---
+
+@beacon_app.api_route("/proxy/{node_id}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def tunnel_proxy(node_id: str, path: str, request: Request):
+    """Proxy HTTP requests to nodes via their WebSocket tunnel.
+
+    This enables communication with nodes behind NAT/firewalls.
+    The beacon relays the request over the node's WebSocket connection
+    and returns the response.
+
+    Usage: GET/POST /proxy/<node_id>/health → tunneled to node's /health
+    """
+    node = registry.nodes.get(node_id)
+    if not node:
+        raise HTTPException(404, f"Node {node_id} not found")
+
+    # First try direct HTTP if node has a URL and is reachable
+    if node.url and not registry.has_tunnel(node_id):
+        raise HTTPException(
+            502,
+            f"Node {node_id} has no tunnel and may not be directly reachable"
+        )
+
+    if not registry.has_tunnel(node_id):
+        raise HTTPException(
+            502,
+            f"Node {node_id} has no active WebSocket tunnel"
+        )
+
+    # Read request body
+    body = None
+    if request.method in ("POST", "PUT"):
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+
+    # Forward via WebSocket tunnel
+    result = await registry.tunnel_request(
+        node_id=node_id,
+        method=request.method,
+        path=f"/{path}",
+        body=body,
+        headers=dict(request.headers),
+    )
+
+    if result is None:
+        raise HTTPException(504, f"Tunnel request to {node_id} timed out")
+
+    # Return the tunneled response
+    status_code = result.get("status_code", 200)
+    response_body = result.get("body", {})
+    content_type = result.get("content_type", "application/json")
+
+    if content_type == "application/json":
+        return JSONResponse(content=response_body, status_code=status_code)
+    else:
+        from fastapi.responses import Response
+        import base64
+        raw = base64.b64decode(result.get("body_b64", "")) if result.get("body_b64") else b""
+        return Response(content=raw, status_code=status_code, media_type=content_type)
+
+
+# Add tunnel proxy to beacon_router for --also-beacon mode
+# (catch-all must be added separately since APIRouter doesn't support {path:path} well)
 
 
 # --- Seed Endpoint ---
@@ -1111,3 +1238,4 @@ beacon_router.add_api_route("/replication/tasks/{node_id}", replication_tasks, m
 beacon_router.add_api_route("/replication/report", report_items, methods=["POST"])
 beacon_router.add_api_route("/result", beacon_openeo_result, methods=["POST"])
 beacon_router.add_api_route("/jobs", beacon_openeo_jobs, methods=["POST"])
+beacon_router.add_api_route("/proxy/{node_id}/{path:path}", tunnel_proxy, methods=["GET", "POST", "PUT", "DELETE"])

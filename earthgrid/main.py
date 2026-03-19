@@ -783,6 +783,137 @@ async def _delayed_startup_tasks():
     asyncio.create_task(_speed_measure_loop())
     asyncio.create_task(_auto_eviction_loop())
     asyncio.create_task(_auto_replication_loop())
+    asyncio.create_task(_ws_tunnel_loop())
+
+
+# --- WebSocket Tunnel Client ---
+
+async def _ws_tunnel_loop():
+    """Maintain a persistent WebSocket tunnel to the beacon.
+
+    This allows the beacon to proxy HTTP requests to this node,
+    even when the node is behind NAT/firewall.
+    Reconnects automatically on disconnect.
+    """
+    beacon = settings.beacon_url
+    if settings.also_beacon:
+        # We ARE the beacon — no need for tunnel to ourselves
+        return
+    if not beacon:
+        return
+
+    log = logging.getLogger("earthgrid.tunnel")
+
+    while True:
+        ws_url = beacon.rstrip("/").replace("https://", "wss://").replace("http://", "ws://")
+        ws_url = f"{ws_url}/ws/{settings.node_id}"
+
+        try:
+            import websockets
+            log.info(f"Connecting tunnel to {ws_url}")
+
+            async with websockets.connect(
+                ws_url,
+                ping_interval=30,
+                ping_timeout=10,
+                close_timeout=5,
+                max_size=50 * 1024 * 1024,  # 50 MB for GeoTIFF responses
+            ) as ws:
+                # Register via WebSocket
+                summary = catalog.summary()
+                await ws.send(json.dumps({
+                    "type": "register",
+                    "node_name": settings.node_name,
+                    "url": None,  # behind NAT — no direct URL
+                    "collections": summary["collections"],
+                    "item_count": summary["item_count"],
+                    "chunk_count": chunk_store.chunk_count,
+                    "chunks_bytes": chunk_store.total_bytes,
+                }))
+                reg_resp = json.loads(await ws.recv())
+                log.info(f"Tunnel registered: {reg_resp}")
+
+                # Listen for proxied requests
+                async for raw_msg in ws:
+                    msg = json.loads(raw_msg)
+                    msg_type = msg.get("type", "")
+
+                    if msg_type == "heartbeat_ack":
+                        continue
+
+                    elif msg_type == "tunnel_request":
+                        # Handle proxied HTTP request
+                        asyncio.create_task(
+                            _handle_tunnel_request(ws, msg, log)
+                        )
+
+        except ImportError:
+            log.warning(
+                "websockets package not installed — tunnel disabled. "
+                "Install with: pip install websockets"
+            )
+            return  # Don't retry if package missing
+        except Exception as e:
+            log.warning(f"Tunnel disconnected: {e}")
+
+        # Reconnect after delay
+        await asyncio.sleep(10)
+
+
+async def _handle_tunnel_request(ws, msg: dict, log):
+    """Process a single tunneled HTTP request and send response back."""
+    import base64
+    req_id = msg.get("request_id", "")
+    method = msg.get("method", "GET")
+    path = msg.get("path", "/")
+    body = msg.get("body")
+
+    try:
+        # Make the request to ourselves (localhost)
+        async with httpx.AsyncClient(timeout=300) as client:
+            url = f"http://localhost:{settings.port}{path}"
+            if method == "GET":
+                resp = await client.get(url)
+            elif method == "POST":
+                resp = await client.post(url, json=body)
+            elif method == "PUT":
+                resp = await client.put(url, json=body)
+            elif method == "DELETE":
+                resp = await client.delete(url)
+            else:
+                resp = await client.request(method, url)
+
+        content_type = resp.headers.get("content-type", "application/json")
+
+        # Build response
+        response = {
+            "type": "tunnel_response",
+            "request_id": req_id,
+            "status_code": resp.status_code,
+            "content_type": content_type,
+        }
+
+        if "json" in content_type:
+            try:
+                response["body"] = resp.json()
+            except Exception:
+                response["body"] = resp.text
+        else:
+            # Binary data (e.g. GeoTIFF) — base64 encode
+            response["body_b64"] = base64.b64encode(resp.content).decode()
+
+        await ws.send(json.dumps(response))
+        log.debug(f"Tunnel response for {req_id}: {resp.status_code} ({len(resp.content)} bytes)")
+
+    except Exception as e:
+        log.error(f"Tunnel request handler error: {e}")
+        await ws.send(json.dumps({
+            "type": "tunnel_response",
+            "request_id": req_id,
+            "status_code": 502,
+            "content_type": "application/json",
+            "body": {"error": str(e)},
+        }))
 
 @app.on_event("startup")
 async def startup():
