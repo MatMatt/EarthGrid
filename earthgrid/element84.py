@@ -146,7 +146,12 @@ async def search_element84(
         if iid not in seen:
             seen.add(iid)
             unique.append(item)
-    items = unique[:target]
+    items = unique
+
+    # Sort by date descending BEFORE applying limit — parallel time chunks
+    # return items in arbitrary order, so we must sort first to keep newest.
+    items.sort(key=lambda x: x.get("properties", {}).get("datetime", ""), reverse=True)
+    items = items[:target]
 
     # Filter: keep only items whose MGRS tile intersects the search bbox center
     # This prevents fetching neighboring tiles when bbox is within a single tile
@@ -177,8 +182,7 @@ async def search_element84(
 
     _elapsed = _time.monotonic() - _t0
     print(f"\r  \U0001f50d {len(items)} items found ({_elapsed:.1f}s)        ")
-    # Sort by date descending (client-side, since we removed server-side sort)
-    items.sort(key=lambda x: x.get("properties", {}).get("datetime", ""), reverse=True)
+    # Already sorted above (before limit) — no need to re-sort
     if items:
         print()  # newline after progress counter
 
