@@ -26,6 +26,37 @@ pub struct StacItem {
     pub created_at: f64,
 }
 
+/// Parsed datetime filter from STAC spec.
+/// Supports: single datetime, open/closed ranges ("start/end", "../end", "start/..").
+#[derive(Debug, Clone)]
+pub struct DatetimeFilter {
+    pub start: Option<String>, // inclusive lower bound (ISO 8601)
+    pub end: Option<String>,   // inclusive upper bound (ISO 8601)
+}
+
+impl DatetimeFilter {
+    /// Parse a STAC datetime parameter.
+    /// Accepts: "2020-01-01T00:00:00Z" or "2020-01-01T00:00:00Z/2020-12-31T23:59:59Z"
+    /// or "../2020-12-31" or "2020-01-01/.."
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if let Some((start, end)) = s.split_once('/') {
+            let start = if start == ".." || start.is_empty() { None } else { Some(start.to_string()) };
+            let end = if end == ".." || end.is_empty() { None } else { Some(end.to_string()) };
+            Some(DatetimeFilter { start, end })
+        } else {
+            // Single datetime — treat as exact match by using same value for both bounds
+            Some(DatetimeFilter {
+                start: Some(s.to_string()),
+                end: Some(s.to_string()),
+            })
+        }
+    }
+}
+
 /// SQLite-backed STAC catalog.
 pub struct Catalog {
     conn: Connection,
@@ -187,34 +218,85 @@ impl Catalog {
         }
     }
 
-    /// Search items by collection and/or bounding box.
-    pub fn search(
-        &self,
+    /// Get a single item within a specific collection.
+    pub fn get_collection_item(&self, collection: &str, item_id: &str) -> Result<Option<StacItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at
+             FROM items WHERE id = ?1 AND collection = ?2",
+        )?;
+        let mut rows = stmt.query_map(params![item_id, collection], |row| {
+            let props_str: String = row.get(6)?;
+            let hashes_str: String = row.get(7)?;
+            Ok(StacItem {
+                id: row.get(0)?,
+                collection: row.get(1)?,
+                bbox: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?],
+                properties: serde_json::from_str(&props_str).unwrap_or_default(),
+                chunk_hashes: serde_json::from_str(&hashes_str).unwrap_or_default(),
+                created_at: row.get(8)?,
+            })
+        })?;
+        match rows.next() {
+            Some(Ok(item)) => Ok(Some(item)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    /// Build SQL WHERE clauses and params for search filters.
+    /// Returns (where_clauses, params_vec).
+    fn build_search_where(
         collection: Option<&str>,
         bbox: Option<[f64; 4]>,
-        limit: usize,
-    ) -> Result<Vec<StacItem>> {
-        let mut sql = String::from(
-            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at FROM items WHERE 1=1",
-        );
+        datetime: Option<&DatetimeFilter>,
+    ) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
+        let mut clauses = String::from(" WHERE 1=1");
         let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(col) = collection {
-            sql.push_str(" AND collection = ?");
+            clauses.push_str(" AND collection = ?");
             params_vec.push(Box::new(col.to_string()));
         }
 
         if let Some(b) = bbox {
-            // Overlap check: item.west < query.east AND item.east > query.west
-            //                 AND item.south < query.north AND item.north > query.south
-            sql.push_str(" AND bbox_west < ? AND bbox_east > ? AND bbox_south < ? AND bbox_north > ?");
+            // Overlap: item.west < query.east AND item.east > query.west
+            //          AND item.south < query.north AND item.north > query.south
+            clauses.push_str(" AND bbox_west < ? AND bbox_east > ? AND bbox_south < ? AND bbox_north > ?");
             params_vec.push(Box::new(b[2])); // query east
             params_vec.push(Box::new(b[0])); // query west
             params_vec.push(Box::new(b[3])); // query north
             params_vec.push(Box::new(b[1])); // query south
         }
 
-        sql.push_str(&format!(" LIMIT {}", limit));
+        if let Some(dt) = datetime {
+            // Use json_extract to get datetime from properties_json
+            if let Some(ref start) = dt.start {
+                clauses.push_str(" AND json_extract(properties_json, '$.datetime') >= ?");
+                params_vec.push(Box::new(start.clone()));
+            }
+            if let Some(ref end) = dt.end {
+                clauses.push_str(" AND json_extract(properties_json, '$.datetime') <= ?");
+                params_vec.push(Box::new(end.clone()));
+            }
+        }
+
+        (clauses, params_vec)
+    }
+
+    /// Search items by collection, bounding box, datetime, with pagination.
+    pub fn search(
+        &self,
+        collection: Option<&str>,
+        bbox: Option<[f64; 4]>,
+        datetime: Option<&DatetimeFilter>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<StacItem>> {
+        let (where_clause, params_vec) = Self::build_search_where(collection, bbox, datetime);
+        let sql = format!(
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at FROM items{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            where_clause, limit, offset
+        );
 
         let mut stmt = self.conn.prepare(&sql)?;
         let param_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
@@ -238,20 +320,35 @@ impl Catalog {
         Ok(items)
     }
 
+    /// Count items matching the given filters (for numberMatched in pagination).
+    pub fn search_count(
+        &self,
+        collection: Option<&str>,
+        bbox: Option<[f64; 4]>,
+        datetime: Option<&DatetimeFilter>,
+    ) -> Result<usize> {
+        let (where_clause, params_vec) = Self::build_search_where(collection, bbox, datetime);
+        let sql = format!("SELECT COUNT(*) FROM items{}", where_clause);
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = stmt.query_row(param_refs.as_slice(), |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
     /// Count items total or per collection.
     pub fn item_count(&self, collection: Option<&str>) -> Result<usize> {
-        let (sql, count) = if let Some(col) = collection {
+        let count = if let Some(col) = collection {
             let mut stmt = self
                 .conn
                 .prepare("SELECT COUNT(*) FROM items WHERE collection = ?1")?;
             let c: i64 = stmt.query_row(params![col], |row| row.get(0))?;
-            (String::new(), c as usize)
+            c as usize
         } else {
             let mut stmt = self.conn.prepare("SELECT COUNT(*) FROM items")?;
             let c: i64 = stmt.query_row([], |row| row.get(0))?;
-            (String::new(), c as usize)
+            c as usize
         };
-        let _ = sql;
         Ok(count)
     }
 
@@ -317,7 +414,7 @@ mod tests {
             })
             .unwrap();
 
-        let results = catalog.search(Some("s2"), None, 100).unwrap();
+        let results = catalog.search(Some("s2"), None, None, 100, 0).unwrap();
         assert_eq!(results.len(), 3);
     }
 
@@ -346,9 +443,68 @@ mod tests {
             .unwrap();
 
         // Search around Copenhagen
-        let results = catalog.search(None, Some([11.0, 54.0, 14.0, 57.0]), 100).unwrap();
+        let results = catalog.search(None, Some([11.0, 54.0, 14.0, 57.0]), None, 100, 0).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "copenhagen");
+    }
+
+    #[test]
+    fn test_search_by_datetime() {
+        let catalog = Catalog::in_memory().unwrap();
+        catalog
+            .add_item(&StacItem {
+                id: "item-2020".to_string(),
+                collection: "s2".to_string(),
+                bbox: [0.0, 0.0, 1.0, 1.0],
+                properties: serde_json::json!({"datetime": "2020-06-15T00:00:00Z"}),
+                chunk_hashes: vec![],
+                created_at: now_ts(),
+            })
+            .unwrap();
+        catalog
+            .add_item(&StacItem {
+                id: "item-2021".to_string(),
+                collection: "s2".to_string(),
+                bbox: [0.0, 0.0, 1.0, 1.0],
+                properties: serde_json::json!({"datetime": "2021-06-15T00:00:00Z"}),
+                chunk_hashes: vec![],
+                created_at: now_ts(),
+            })
+            .unwrap();
+
+        let dt = DatetimeFilter::parse("2020-01-01T00:00:00Z/2020-12-31T23:59:59Z").unwrap();
+        let results = catalog.search(None, None, Some(&dt), 100, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "item-2020");
+    }
+
+    #[test]
+    fn test_pagination() {
+        let catalog = Catalog::in_memory().unwrap();
+        for i in 0..5 {
+            catalog
+                .add_item(&StacItem {
+                    id: format!("item-{}", i),
+                    collection: "s2".to_string(),
+                    bbox: [0.0, 0.0, 1.0, 1.0],
+                    properties: serde_json::json!({}),
+                    chunk_hashes: vec![],
+                    created_at: i as f64,
+                })
+                .unwrap();
+        }
+        let page1 = catalog.search(None, None, None, 2, 0).unwrap();
+        let page2 = catalog.search(None, None, None, 2, 2).unwrap();
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page2.len(), 2);
+        // Ensure no overlap
+        let ids1: Vec<_> = page1.iter().map(|i| &i.id).collect();
+        let ids2: Vec<_> = page2.iter().map(|i| &i.id).collect();
+        for id in &ids2 {
+            assert!(!ids1.contains(id));
+        }
+        let total = catalog.search_count(None, None, None).unwrap();
+        assert_eq!(total, 5);
     }
 
     #[test]

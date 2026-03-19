@@ -144,7 +144,7 @@ fn main() -> anyhow::Result<()> {
 
         Commands::List { collection, limit } => {
             let catalog = Catalog::new(&catalog_path)?;
-            let items = catalog.search(collection.as_deref(), None, limit)?;
+            let items = catalog.search(collection.as_deref(), None, None, limit, 0)?;
             if items.is_empty() {
                 println!("No items found.");
             } else {
