@@ -44,5 +44,18 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 gdal = "0.17"
 
+tray-icon = "0.19"
+image = { version = "0.25", default-features = false, features = ["png"] }
+ureq = { version = "3", features = ["json"] }
+open = "5"
+
 [dev-dependencies]
 tempfile = "3"
+
+[[bin]]
+name = "earthgrid"
+path = "src/main.rs"
+
+[[bin]]
+name = "earthgrid-tray"
+path = "src/bin/tray.rs"
