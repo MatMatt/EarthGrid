@@ -274,8 +274,14 @@ class Catalog:
                     cell["bands"].add(b)
             else:
                 # Try to extract from item ID (e.g. _B04, _VV, _VH)
-                m = re.search(r'_(B\d{2}|B8A|VV|VH|HH|HV|SCL|TCI|AOT|WVP)(?:_|$)',
-                              item_id, re.IGNORECASE)
+                # Match band at end of ID or before a version suffix
+                # Exclude SAR bands (VV/VH/HH/HV) from Sentinel-2 IDs
+                # (Sentinel-2 tile IDs like 33VVC contain VV but are not SAR bands)
+                is_sar = re.search(r'S1[AB]_', item_id, re.IGNORECASE)
+                if is_sar:
+                    m = re.search(r'_(VV|VH|HH|HV)(?:_|$)', item_id, re.IGNORECASE)
+                else:
+                    m = re.search(r'_(B\d{2}|B8A|SCL|TCI|AOT|WVP)(?:_|$)', item_id, re.IGNORECASE)
                 if m:
                     cell["bands"].add(m.group(1).upper())
 
