@@ -309,7 +309,68 @@ pub async fn execute_sync(
         ));
     }
 
-    // Group items by band and date
+    // Determine which bands are needed
+    let needed_bands: Vec<String> = match op.operation.as_deref() {
+        Some("ndvi") => vec![op.red.clone(), op.nir.clone()],
+        _ => req.bands.clone().unwrap_or_default(),
+    };
+
+    // Check which bands are available locally
+    let mut available_bands_initial: Vec<String> = Vec::new();
+    for item in &items {
+        if let Some(band) = extract_band_from_item_id(&item.id) {
+            if !available_bands_initial.contains(&band) {
+                available_bands_initial.push(band);
+            }
+        }
+    }
+
+    let missing_bands: Vec<String> = needed_bands.iter()
+        .filter(|b| !available_bands_initial.contains(b))
+        .cloned()
+        .collect();
+
+    // Auto-fetch missing bands from Element84
+    let items = if !missing_bands.is_empty() && bbox.is_some() {
+        let (w, s, e, n) = bbox.unwrap();
+        let datetime = req.temporal_extent.as_ref().map(|te| {
+            if te.len() >= 2 { (te[0].as_str(), te[1].as_str()) } else { (te[0].as_str(), te[0].as_str()) }
+        });
+        let (start, end) = datetime.unwrap_or(("2020-01-01", "2030-01-01"));
+
+        tracing::info!("Auto-fetching missing bands {:?} from Element84 (have: {:?})", missing_bands, available_bands_initial);
+        let fetch_bands = if needed_bands.is_empty() { missing_bands.clone() } else { needed_bands.clone() };
+        let fetch_result = crate::fetcher::fetch_and_ingest(
+            store.clone(),
+            catalog.clone(),
+            [w, s, e, n],
+            start,
+            end,
+            50.0,
+            &fetch_bands,
+            10,
+            &req.collection_id,
+        ).await;
+
+        tracing::info!("Auto-fetch done: {} downloaded, {} skipped, {} errors",
+            fetch_result.items_downloaded, fetch_result.items_skipped, fetch_result.errors.len());
+
+        // Re-search catalog after fetch
+        let cat = catalog.lock().await;
+        let refreshed = cat.search(
+            Some(&req.collection_id),
+            bbox_arr,
+            dt_filter.as_ref(),
+            500,
+            0,
+        ).map_err(|e| format!("Catalog re-search error: {}", e))?;
+        drop(cat);
+        refreshed
+    } else {
+        items
+    };
+
+    // Group items by band
     let mut band_items: HashMap<String, Vec<&StacItem>> = HashMap::new();
     for item in &items {
         if let Some(band) = extract_band_from_item_id(&item.id) {
@@ -320,11 +381,14 @@ pub async fn execute_sync(
     match op.operation.as_deref() {
         Some("ndvi") => {
             // Need red (B04) and NIR (B08) bands
+            let avail: Vec<&String> = band_items.keys().collect();
             let red_items = band_items.get(&op.red).ok_or_else(|| {
-                format!("No {} items found. Available: {:?}", op.red, band_items.keys().collect::<Vec<_>>())
+                format!("Failed to find matching data. Needed bands: {:?}. Available in catalog: {:?}. Items checked: {}.",
+                    needed_bands, avail, items.len())
             })?;
             let nir_items = band_items.get(&op.nir).ok_or_else(|| {
-                format!("No {} items found. Available: {:?}", op.nir, band_items.keys().collect::<Vec<_>>())
+                format!("Failed to find matching data. Needed bands: {:?}. Available in catalog: {:?}. Items checked: {}.",
+                    needed_bands, avail, items.len())
             })?;
 
             // Use first matching date
