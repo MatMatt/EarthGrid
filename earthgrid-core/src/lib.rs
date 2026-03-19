@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod bandwidth;
 pub mod beacon;
 pub mod catalog;
 pub mod chunk_store;
