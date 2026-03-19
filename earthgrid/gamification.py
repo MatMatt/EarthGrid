@@ -26,8 +26,7 @@ ACHIEVEMENTS = [
     {"id": "always_on",       "icon": "💪", "name": "Always On",       "desc": "30 consecutive days online",          "threshold": 30,    "field": "streak_days"},
     {"id": "terabyte_club",   "icon": "🏔️", "name": "Terabyte Club",   "desc": "Stored 1 TB+ of data",               "threshold": 1024,  "field": "gb_stored"},
     {"id": "data_relay",      "icon": "📡", "name": "Data Relay",      "desc": "Served 100 GB+ to other nodes",       "threshold": 100,   "field": "gb_served"},
-    {"id": "continental",     "icon": "🌍", "name": "Continental",     "desc": "Data spanning 3+ continents",         "threshold": 3,     "field": "continents"},
-    {"id": "global_citizen",  "icon": "🌐", "name": "Global Citizen",  "desc": "Data from all 6 inhabited continents","threshold": 6,     "field": "continents"},
+
     {"id": "speed_demon",     "icon": "🔥", "name": "Speed Demon",     "desc": "Fastest query response in network",   "threshold": 1,     "field": "speed_rank"},
     {"id": "power_node",      "icon": "⚡", "name": "Power Node",      "desc": "Top 3 in any category for 7+ days",   "threshold": 7,     "field": "top3_streak"},
     {"id": "centurion",       "icon": "💯", "name": "Centurion",       "desc": "100+ days total uptime",              "threshold": 100,   "field": "uptime_days"},
