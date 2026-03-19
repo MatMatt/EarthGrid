@@ -12,4 +12,3 @@ earthgrid-core/target/
 docker/.env
 docs/stats.json
 docs/peers.json
-earthgrid-core/Cargo.lock
