@@ -325,6 +325,126 @@ class OpenEOGateway:
             self._port = 8400
 
     # ------------------------------------------------------------------
+    # Federated Dispatch — send compute to peers that have the data
+    # ------------------------------------------------------------------
+
+    async def _find_peers_for_collection(self, collection_id: str) -> list[dict]:
+        """Ask beacon which nodes have data for a collection.
+
+        Returns list of {url, node_id, node_name, item_count}.
+        """
+        import httpx
+        try:
+            from .config import settings as _s
+            beacon_url = _s.beacon_url
+            node_id = _s.node_id
+        except Exception:
+            return []
+
+        if not beacon_url:
+            return []
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(f"{beacon_url}/nodes",
+                                        params={"alive_only": True})
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+                peers = []
+                for n in data.get("nodes", []):
+                    if n.get("node_id") == node_id:
+                        continue  # skip self
+                    if not n.get("alive"):
+                        continue
+                    node_collections = n.get("collections", [])
+                    if collection_id in node_collections or not node_collections:
+                        peers.append({
+                            "url": n.get("url", ""),
+                            "node_id": n.get("node_id", ""),
+                            "node_name": n.get("node_name", ""),
+                            "item_count": n.get("item_count", 0),
+                        })
+                peers.sort(key=lambda p: p["item_count"], reverse=True)
+                return peers
+        except Exception as e:
+            logger.warning(f"Failed to query beacon for peers: {e}")
+            return []
+
+    async def _delegate_to_peer(self, peer: dict, process_graph: dict,
+                                 timeout: int = 300) -> bytes | None:
+        """Forward an openEO process graph to a peer for execution.
+
+        Returns GeoTIFF bytes on success, None on failure.
+        """
+        import httpx
+        url = peer["url"].rstrip("/")
+        body = {"process": {"process_graph": process_graph}}
+
+        headers = {}
+        try:
+            from .config import settings as _s
+            if _s.api_key:
+                headers["X-API-Key"] = _s.api_key
+        except Exception:
+            pass
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                logger.info(
+                    f"Delegating openEO job to peer {peer['node_name']} ({url})"
+                )
+                resp = await client.post(f"{url}/result", json=body, headers=headers)
+                if resp.status_code == 200:
+                    ct = resp.headers.get("content-type", "")
+                    if "tiff" in ct or "octet" in ct or len(resp.content) > 1000:
+                        logger.info(
+                            f"Peer {peer['node_name']} returned "
+                            f"{len(resp.content):,} bytes"
+                        )
+                        return resp.content
+                    else:
+                        logger.warning(
+                            f"Peer {peer['node_name']} returned unexpected: "
+                            f"{ct}, {len(resp.content)} bytes"
+                        )
+                        return None
+                else:
+                    logger.warning(
+                        f"Peer {peer['node_name']} returned {resp.status_code}: "
+                        f"{resp.text[:200]}"
+                    )
+                    return None
+        except Exception as e:
+            logger.warning(f"Peer delegation to {peer['node_name']} failed: {e}")
+            return None
+
+    async def _federated_execute(self, process_graph: dict,
+                                  collection_id: str) -> bytes | None:
+        """Try to execute a process graph on a peer that has the data.
+
+        Tries peers in order of item_count (most data first).
+        Returns GeoTIFF bytes on success, None if no peer could handle it.
+        """
+        peers = await self._find_peers_for_collection(collection_id)
+        if not peers:
+            logger.info(f"No peers found for collection '{collection_id}'")
+            return None
+
+        logger.info(
+            f"Found {len(peers)} peer(s) for '{collection_id}': "
+            f"{[p['node_name'] for p in peers]}"
+        )
+
+        for peer in peers:
+            result = await self._delegate_to_peer(peer, process_graph)
+            if result is not None:
+                return result
+
+        logger.info("All peers failed or returned no result")
+        return None
+
+    # ------------------------------------------------------------------
     # Process graph helpers
     # ------------------------------------------------------------------
 
@@ -681,6 +801,18 @@ class OpenEOGateway:
             logger.info(f"Temporal search returned 0 items. Falling back to all items in {collection_id}.")
             items = self.catalog.search(collections=[collection_id], limit=500)
             logger.info(f"Collection-all fallback found {len(items)} items.")
+
+        # ── Federated dispatch: ask peers to compute if we lack data ──
+        if not items:
+            logger.info(f"No local data for {collection_id}, trying federated dispatch")
+            peer_result = await self._federated_execute(process_graph, collection_id)
+            if peer_result is not None:
+                logger.info(
+                    f"Federated dispatch succeeded: {len(peer_result):,} bytes "
+                    f"from peer"
+                )
+                return peer_result
+            logger.info("Federated dispatch returned no result, falling back to self-fill")
 
         # Still nothing? try self-fill from CDSE
         if not items:
