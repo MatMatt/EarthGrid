@@ -440,7 +440,7 @@ async def _ingest_item_locally(
                         item_id=f"{item['id']}_{band_name}",
                         extra_properties=extra_properties,
                     )
-                    results.append({"item_id": item_obj.id, "band": band_name, "product": item["id"]})
+                    results.append({"item_id": item_obj.id, "band": band_name, "product": item["id"], "bytes": total_bytes})
                     logger.info(f"Ingested {band_name} from {item['id']}")
                 finally:
                     tmp_path.unlink(missing_ok=True)
