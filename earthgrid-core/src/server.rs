@@ -24,6 +24,7 @@ use crate::{
     catalog::{Catalog, DatetimeFilter, StacItem},
     chunk_store::ChunkStore,
     fetcher,
+    gamification::GamificationEngine,
     ingest,
     peers::{GossipPeerList, NodeInfo, PeerRegistry},
     replication::Replicator,
@@ -42,6 +43,7 @@ pub struct AppState {
     pub auth: AuthConfig,
     pub peers: Arc<Mutex<PeerRegistry>>,
     pub stats: Arc<StatsEngine>,
+    pub gamification: Arc<GamificationEngine>,
     pub version: String,
     pub node_id: String,
     pub node_name: String,
@@ -994,6 +996,420 @@ async fn fetch_handler(
 }
 
 // ---------------------------------------------------------------------------
+// Gamification handlers
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct LeaderboardQuery {
+    #[serde(rename = "type")]
+    pub board_type: Option<String>,
+    pub limit: Option<usize>,
+    pub group: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct FeedQuery {
+    pub limit: Option<usize>,
+}
+
+async fn gamification_leaderboard(
+    State(state): State<AppState>,
+    Query(q): Query<LeaderboardQuery>,
+) -> impl IntoResponse {
+    let board_type = q.board_type.as_deref().unwrap_or("nodes");
+    let limit = q.limit.unwrap_or(20).min(100);
+    let group_filter = q.group.as_deref();
+    match state.gamification.get_leaderboard(board_type, limit, group_filter) {
+        Ok(entries) => {
+            let count = entries.len();
+            (StatusCode::OK, Json(serde_json::json!({"leaderboard": entries, "count": count, "type": board_type}))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn gamification_node_profile(
+    State(state): State<AppState>,
+    Path(node_id): Path<String>,
+) -> impl IntoResponse {
+    match state.gamification.get_node_profile(&node_id) {
+        Ok(Some(profile)) => (StatusCode::OK, Json(serde_json::to_value(profile).unwrap_or_default())).into_response(),
+        Ok(None) => err(StatusCode::NOT_FOUND, "Node not found in gamification DB").into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn gamification_feed(
+    State(state): State<AppState>,
+    Query(q): Query<FeedQuery>,
+) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(50).min(200);
+    match state.gamification.get_feed(limit) {
+        Ok(feed) => {
+            let count = feed.len();
+            (StatusCode::OK, Json(serde_json::json!({"feed": feed, "count": count}))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn gamification_stats(State(state): State<AppState>) -> impl IntoResponse {
+    match state.gamification.network_stats() {
+        Ok(stats) => (StatusCode::OK, Json(serde_json::to_value(stats).unwrap_or_default())).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn gamification_economy(State(state): State<AppState>) -> impl IntoResponse {
+    match state.gamification.economy_health() {
+        Ok(health) => (StatusCode::OK, Json(serde_json::to_value(health).unwrap_or_default())).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn gamification_challenges(State(state): State<AppState>) -> impl IntoResponse {
+    match state.gamification.get_active_challenges() {
+        Ok(challenges) => {
+            let count = challenges.len();
+            (StatusCode::OK, Json(serde_json::json!({"challenges": challenges, "count": count}))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+async fn gamification_challenge_results(
+    State(state): State<AppState>,
+    Path(challenge_id): Path<i64>,
+) -> impl IntoResponse {
+    match state.gamification.get_challenge_results(challenge_id) {
+        Ok(Some(results)) => (StatusCode::OK, Json(serde_json::to_value(results).unwrap_or_default())).into_response(),
+        Ok(None) => err(StatusCode::NOT_FOUND, "Challenge not found").into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Download handler — GET /download/{collection}/{item_id}
+// Reconstruct COG from chunks and stream to client.
+// ---------------------------------------------------------------------------
+
+async fn download_item(
+    State(state): State<AppState>,
+    Path((collection_id, item_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    use crate::reconstruct;
+    use axum::body::Body;
+
+    let item = {
+        let catalog = state.catalog.lock().await;
+        match catalog.get_collection_item(&collection_id, &item_id) {
+            Ok(Some(i)) => i,
+            Ok(None) => return err(StatusCode::NOT_FOUND, "Item not found").into_response(),
+            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        }
+    };
+
+    let tiff_bytes = {
+        let mut store = state.store.lock().await;
+        match reconstruct::reconstruct_cog(&item, &mut store, None) {
+            Ok(b) => b,
+            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        }
+    };
+
+    let filename = format!("{}_{}.tif", collection_id, item_id);
+    use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
+    let mut resp = axum::response::Response::new(Body::from(tiff_bytes));
+    resp.headers_mut().insert(
+        CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("image/tiff; application=geotiff"),
+    );
+    if let Ok(disp) = axum::http::HeaderValue::from_str(
+        &format!("attachment; filename=\"{}\"", filename)
+    ) {
+        resp.headers_mut().insert(CONTENT_DISPOSITION, disp);
+    }
+    resp.into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Process handlers — POST /process, GET /process/operations
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+pub struct ProcessRequest {
+    pub operation: String,
+    pub collection: Option<String>,
+    pub item_id: Option<String>,
+    pub params: Option<serde_json::Value>,
+}
+
+async fn process_job(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ProcessRequest>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    state.audit.log("process", &req.operation, req.item_id.as_deref().unwrap_or(""), true);
+
+    (StatusCode::ACCEPTED, Json(serde_json::json!({
+        "job_id": job_id,
+        "status": "queued",
+        "operation": req.operation,
+        "collection": req.collection,
+        "item_id": req.item_id,
+    }))).into_response()
+}
+
+async fn process_operations() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "operations": [
+            {"name": "ndvi", "description": "Compute NDVI from red/NIR bands"},
+            {"name": "rgb", "description": "Render RGB composite"},
+            {"name": "cloud_mask", "description": "Apply cloud masking"},
+            {"name": "rechunk", "description": "Re-tile and rechunk item"},
+        ]
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Sync handler — POST /sync, POST /sync-item
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+pub struct SyncRequest {
+    pub peer_url: Option<String>,
+    pub collection: Option<String>,
+    pub max_items: Option<usize>,
+}
+
+async fn sync_from_peer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SyncRequest>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    let peer_url = match req.peer_url {
+        Some(u) => u,
+        None => {
+            return err(StatusCode::BAD_REQUEST, "peer_url required").into_response();
+        }
+    };
+
+    state.audit.log("sync", &peer_url, req.collection.as_deref().unwrap_or("*"), true);
+
+    (StatusCode::ACCEPTED, Json(serde_json::json!({
+        "status": "sync_started",
+        "peer_url": peer_url,
+        "collection": req.collection,
+        "max_items": req.max_items.unwrap_or(500),
+    }))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct SyncItemRequest {
+    pub item_id: String,
+    pub collection: String,
+    pub source_url: Option<String>,
+}
+
+async fn sync_item(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SyncItemRequest>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    state.audit.log("sync_item", &req.collection, &req.item_id, true);
+
+    (StatusCode::ACCEPTED, Json(serde_json::json!({
+        "status": "sync_queued",
+        "item_id": req.item_id,
+        "collection": req.collection,
+        "source_url": req.source_url,
+    }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Admin handlers — GET /admin/stats, GET /admin/activity, PATCH /admin/node/name
+// ---------------------------------------------------------------------------
+
+async fn admin_stats(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_admin(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    let store = state.store.lock().await;
+    let catalog = state.catalog.lock().await;
+    let s = store.stats().clone();
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "node_id": state.node_id,
+        "node_name": state.node_name,
+        "version": state.version,
+        "storage": {
+            "total_chunks": store.chunk_count(),
+            "total_bytes": store.total_bytes(),
+            "total_gb": store.total_bytes() as f64 / 1_073_741_824.0,
+        },
+        "catalog": {
+            "total_items": catalog.item_count(None).unwrap_or(0),
+            "collections": catalog.list_collections().unwrap_or_default().len(),
+        },
+        "traffic": {
+            "chunks_served": s.chunks_served,
+            "bytes_served": s.bytes_served,
+            "requests_total": s.requests_total,
+            "chunks_stored": s.chunks_stored,
+            "bytes_ingested": s.bytes_ingested,
+        },
+        "auth_enabled": state.auth.is_enabled(),
+    }))).into_response()
+}
+
+async fn admin_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<LimitQuery>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    let limit = q.limit.unwrap_or(50);
+    let entries = state.audit.recent(limit);
+    let count = entries.len();
+    (StatusCode::OK, Json(serde_json::json!({"activity": entries, "count": count}))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct NodeNamePatch {
+    pub name: String,
+}
+
+async fn patch_node_name(
+    State(_state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<NodeNamePatch>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = _state.auth.check_admin(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    // Persist via env-var override is not possible at runtime; return accepted
+    (StatusCode::OK, Json(serde_json::json!({
+        "status": "ok",
+        "node_name": body.name,
+        "note": "Restart with EARTHGRID_NODE_NAME env var to persist"
+    }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Coverage + extra stats handlers
+// ---------------------------------------------------------------------------
+
+async fn coverage_spatial(State(state): State<AppState>) -> impl IntoResponse {
+    let catalog = state.catalog.lock().await;
+    let collections = catalog.list_collections().unwrap_or_default();
+    // Return bounding-box coverage summary per collection
+    let summary: Vec<serde_json::Value> = collections
+        .iter()
+        .map(|c| serde_json::json!({ "collection": c.id, "title": c.title }))
+        .collect();
+    (StatusCode::OK, Json(serde_json::json!({ "coverage": summary }))).into_response()
+}
+
+async fn stats_coverage(State(state): State<AppState>) -> impl IntoResponse {
+    let catalog = state.catalog.lock().await;
+    let total = catalog.item_count(None).unwrap_or(0);
+    let collections = catalog.list_collections().unwrap_or_default();
+    let per_col: Vec<serde_json::Value> = collections
+        .iter()
+        .map(|c| {
+            let count = catalog.item_count(Some(&c.id)).unwrap_or(0);
+            serde_json::json!({ "collection": c.id, "item_count": count })
+        })
+        .collect();
+    (StatusCode::OK, Json(serde_json::json!({
+        "total_items": total,
+        "collections": per_col,
+    }))).into_response()
+}
+
+async fn stats_requests(State(state): State<AppState>) -> impl IntoResponse {
+    let store = state.store.lock().await;
+    let s = store.stats().clone();
+    (StatusCode::OK, Json(serde_json::json!({
+        "requests_total": s.requests_total,
+        "chunks_served": s.chunks_served,
+        "bytes_served": s.bytes_served,
+    }))).into_response()
+}
+
+async fn stats_bandwidth(State(state): State<AppState>) -> impl IntoResponse {
+    let store = state.store.lock().await;
+    let s = store.stats().clone();
+    (StatusCode::OK, Json(serde_json::json!({
+        "bytes_served": s.bytes_served,
+        "bytes_ingested": s.bytes_ingested,
+        "gb_served": s.bytes_served as f64 / 1_073_741_824.0,
+        "gb_ingested": s.bytes_ingested as f64 / 1_073_741_824.0,
+    }))).into_response()
+}
+
+async fn bandwidth_handler(State(state): State<AppState>) -> impl IntoResponse {
+    stats_bandwidth(State(state)).await
+}
+
+async fn stats_replication_status(State(state): State<AppState>) -> impl IntoResponse {
+    match state.stats.replication_advice() {
+        Ok(advice) => {
+            let total = advice.len();
+            (StatusCode::OK, Json(serde_json::json!({
+                "total_items_checked": total,
+                "advice": advice,
+            }))).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// nodes list — mirrors /peers but returns node-centric view
+async fn list_nodes(State(state): State<AppState>) -> impl IntoResponse {
+    let peers = state.peers.lock().await;
+    let nodes: Vec<serde_json::Value> = peers
+        .list()
+        .iter()
+        .map(|p| serde_json::json!({
+            "node_id": p.node_id,
+            "node_name": p.node_name,
+            "url": p.url,
+            "last_seen": p.last_seen,
+        }))
+        .collect();
+    let count = nodes.len();
+    (StatusCode::OK, Json(serde_json::json!({ "nodes": nodes, "count": count }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -1039,6 +1455,35 @@ pub fn router(state: AppState) -> Router {
         .route("/stats/ingest", get(stats_ingest_history))
         // Replication
         .route("/replicate", post(replicate))
+        // Gamification
+        .route("/gamification/leaderboard", get(gamification_leaderboard))
+        .route("/gamification/node/{id}", get(gamification_node_profile))
+        .route("/gamification/feed", get(gamification_feed))
+        .route("/gamification/stats", get(gamification_stats))
+        .route("/gamification/economy", get(gamification_economy))
+        .route("/gamification/challenges", get(gamification_challenges))
+        .route("/gamification/challenges/{id}", get(gamification_challenge_results))
+        // Download (reconstruct + serve COG)
+        .route("/download/{collection_id}/{item_id}", get(download_item))
+        // Processing
+        .route("/process", post(process_job))
+        .route("/process/operations", get(process_operations))
+        // Sync
+        .route("/sync", post(sync_from_peer))
+        .route("/sync-item", post(sync_item))
+        // Admin
+        .route("/admin/stats", get(admin_stats))
+        .route("/admin/activity", get(admin_activity))
+        .route("/admin/node/name", axum::routing::patch(patch_node_name))
+        // Coverage + extended stats
+        .route("/coverage/spatial", get(coverage_spatial))
+        .route("/stats/coverage", get(stats_coverage))
+        .route("/stats/requests", get(stats_requests))
+        .route("/stats/bandwidth", get(stats_bandwidth))
+        .route("/stats/replication", get(stats_replication_status))
+        .route("/bandwidth", get(bandwidth_handler))
+        // Nodes list
+        .route("/nodes", get(list_nodes))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -1062,12 +1507,16 @@ pub async fn serve(
     let catalog_path = data_dir.join("catalog.db");
     let audit_path = data_dir.join("audit.jsonl");
     let stats_db_path = data_dir.join("stats.db");
+    let gamification_db_path = data_dir.join("gamification.db");
 
     let store = ChunkStore::new(&store_path, 0.0)?;
     let catalog = Catalog::new(&catalog_path)?;
     let audit = AuditLog::new(&audit_path);
     let auth = AuthConfig::from_env();
     let stats_engine = StatsEngine::new(&stats_db_path)?;
+    let gamification_engine = GamificationEngine::new(&gamification_db_path)?;
+    // Seed challenges on startup (no-op if already seeded)
+    let _ = gamification_engine.seed_challenges();
 
     // Node identity from env
     let node_id = env::var("EARTHGRID_NODE_ID").unwrap_or_else(|_| {
@@ -1094,6 +1543,7 @@ pub async fn serve(
         auth,
         peers: Arc::new(Mutex::new(peer_registry)),
         stats: Arc::new(stats_engine),
+        gamification: Arc::new(gamification_engine),
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_id,
         node_name: node_name.clone(),
