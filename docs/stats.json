@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-19T20:40:02Z",
+  "updated": "2026-03-19T20:50:01Z",
   "version": "0.3.2",
   "network": {
     "nodes_alive": 2,
@@ -1381,7 +1381,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 271197.79953837395,
+          "remaining_seconds": 270597.90332341194,
           "remaining_human": "3d 3h",
           "participants": 2,
           "top3": [
@@ -1407,7 +1407,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 271197.79953837395,
+          "remaining_seconds": 270597.90332341194,
           "remaining_human": "3d 3h",
           "participants": 2,
           "top3": [
@@ -1433,7 +1433,7 @@
           "period": "weekly",
           "start_ts": 1773619200.0,
           "end_ts": 1774224000.0,
-          "remaining_seconds": 271197.79953837395,
+          "remaining_seconds": 270597.90332341194,
           "remaining_human": "3d 3h",
           "participants": 0,
           "top3": []
@@ -1446,7 +1446,7 @@
           "period": "monthly",
           "start_ts": 1772323200.0,
           "end_ts": 1775001600.0,
-          "remaining_seconds": 1048797.799538374,
+          "remaining_seconds": 1048197.9033234119,
           "remaining_human": "12d 3h",
           "participants": 2,
           "top3": [
