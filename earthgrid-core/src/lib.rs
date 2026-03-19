@@ -9,6 +9,7 @@ pub mod error;
 pub mod fetcher;
 pub mod ingest;
 pub mod network;
+pub mod openeo;
 pub mod peers;
 pub mod replication;
 pub mod server;
