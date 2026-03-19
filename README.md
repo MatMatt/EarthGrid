@@ -101,7 +101,7 @@ After setup completes, EarthGrid **starts automatically** as a systemd user serv
    Node:     my-node
    Storage:  100 GB at /mnt/data/earthgrid
    Beacon:   yes (also coordinator)
-   Sources:  CDSE (user42@example.org), Element84 (public)
+   Sources:  CDSE (me@example.org), Element84 (public)
    Port:     8400
 
 🌐 WebUI: http://localhost:8400/ui
@@ -274,7 +274,7 @@ earthgrid ops                                  # List processing operations
 
 ```bash
 earthgrid sources list                     # List source accounts
-earthgrid sources add --provider cdse --username user42@example.org
+earthgrid sources add --provider cdse --username me@example.org
 earthgrid sources remove 1                 # Remove by ID
 ```
 
