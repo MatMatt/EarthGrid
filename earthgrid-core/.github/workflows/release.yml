@@ -75,7 +75,6 @@ jobs:
       - name: Install GDAL
         shell: bash -l {0}
         run: conda install -y gdal libgdal
-      - uses: dtolnay/rust-toolchain@stable
       - name: Set GDAL env
         shell: bash -l {0}
         run: |
@@ -107,7 +106,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build
         working-directory: earthgrid-core
-        run: cargo build --release
+        shell: bash -l {0}
+        run: |
+          export LIBPATH="C:\\Miniconda\\envs\\build\\Library\\lib;C:\\Miniconda\\envs\\build\\Library\\bin"
+          cargo build --release
+        env:
+          GDAL_HOME: C:\Miniconda\envs\build\Library
+          GDAL_LIB_DIR: C:\Miniconda\envs\build\Library\lib
+          GDAL_INCLUDE_DIR: C:\Miniconda\envs\build\Library\include
       - name: Package
         run: |
           mkdir dist
