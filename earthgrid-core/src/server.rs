@@ -2544,6 +2544,7 @@ pub async fn serve(
     // Clones for P2P handler
     let state_clone_store = state.store.clone();
     let state_clone_catalog = state.catalog.clone();
+    let state_clone_gamification = state.gamification.clone();
     let state_node_id = state.node_id.clone();
     let state_node_name = state.node_name.clone();
     let state_version = state.version.clone();
@@ -2628,6 +2629,7 @@ pub async fn serve(
         let hb_catalog = state_clone_catalog.clone();
         let hb_node_id = state_node_id.clone();
         let hb_node_name = state_node_name.clone();
+        let hb_gamification = state_clone_gamification.clone();
         let hb_port = port;
         let beacon_url_env = std::env::var("EARTHGRID_BEACON_URL").ok();
 
@@ -2688,6 +2690,18 @@ pub async fn serve(
                             let _ = client.post(&register_url).json(&register_body).send().await;
                         }
                     }
+
+                    // Update gamification DB
+                    let _ = hb_gamification.ensure_node_registered(
+                        &hb_node_id, &hb_node_name, "", "", "",
+                    );
+                    let _ = hb_gamification.record_heartbeat(
+                        &hb_node_id, 0, 0.0, 5000.0,
+                    );
+                    // Sync actual storage stats into gamification DB
+                    let _ = hb_gamification.update_storage_stats(
+                        &hb_node_id, item_count as i64, chunks_bytes as i64,
+                    );
                 }
             });
         }

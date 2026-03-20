@@ -1457,6 +1457,16 @@ impl GamificationEngine {
     // Cleanup
     // -----------------------------------------------------------------------
 
+    /// Sync actual storage stats from node heartbeat
+    pub fn update_storage_stats(&self, node_id: &str, items: i64, bytes_stored: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE node_scores SET items_ingested = MAX(items_ingested, ?1), bytes_stored = MAX(bytes_stored, ?2) WHERE node_id = ?3",
+            rusqlite::params![items, bytes_stored, node_id],
+        )?;
+        Ok(())
+    }
+
     pub fn cleanup(&self, retain_days: u64) -> Result<()> {
         let cutoff = unix_now() - (retain_days as f64 * 86400.0);
         let conn = self.conn.lock().unwrap();
