@@ -1,11 +1,11 @@
 {
-  "updated": "2026-03-20T17:50:01Z",
+  "updated": "2026-03-20T17:59:31Z",
   "version": "",
   "network": {
-    "nodes_alive": 1,
-    "nodes_total": 8,
-    "total_bytes": 4270591781800,
-    "available_storage_gb": 5000.0,
+    "nodes_alive": 0,
+    "nodes_total": 0,
+    "total_bytes": 0,
+    "available_storage_gb": 0,
     "redundancy": 1.0
   },
   "coverage": {
@@ -20,174 +20,253 @@
         "cells": [
           {
             "bbox": [
-              8.0,
-              42.0,
-              9.0,
-              43.0
+              8.999753,
+              42.356322,
+              10.354447,
+              43.352855
             ],
-            "date_count": 10
+            "date_count": 1,
+            "tile_id": "32TNN"
           },
           {
             "bbox": [
-              8.0,
-              45.0,
-              9.0,
-              46.0
+              8.999741,
+              45.056749,
+              10.418904,
+              46.053574
             ],
-            "date_count": 145
+            "date_count": 15,
+            "tile_id": "32TNR"
           },
           {
             "bbox": [
-              8.0,
-              46.0,
-              9.0,
-              47.0
+              8.999737,
+              45.95677,
+              10.442508,
+              46.953709
             ],
-            "date_count": 62
+            "date_count": 9,
+            "tile_id": "32TNS"
           },
           {
             "bbox": [
-              8.0,
-              47.0,
-              9.0,
-              48.0
+              8.999733,
+              46.85664,
+              10.467277,
+              47.853702
             ],
-            "date_count": 5
+            "date_count": 14,
+            "tile_id": "32TNT"
           },
           {
             "bbox": [
-              10.0,
-              44.0,
-              11.0,
-              45.0
+              10.250617,
+              44.135251,
+              11.667621,
+              45.146753
             ],
-            "date_count": 5
+            "date_count": 1,
+            "tile_id": "32TPQ"
           },
           {
             "bbox": [
-              10.0,
-              45.0,
-              11.0,
-              46.0
+              10.270076,
+              45.03419,
+              11.710544,
+              46.046265
             ],
-            "date_count": 3116
+            "date_count": 14,
+            "tile_id": "32TPR"
           },
           {
             "bbox": [
-              10.0,
-              46.0,
-              11.0,
-              47.0
+              10.290484,
+              45.933497,
+              11.755585,
+              46.946168
             ],
-            "date_count": 34
+            "date_count": 434,
+            "tile_id": "32TPS"
           },
           {
             "bbox": [
-              10.0,
-              47.0,
-              11.0,
-              48.0
+              10.311887,
+              46.832628,
+              11.802847,
+              47.845921
             ],
-            "date_count": 5
+            "date_count": 10,
+            "tile_id": "32TPT"
           },
           {
             "bbox": [
-              10.0,
-              54.0,
-              11.0,
-              55.0
+              11.393461,
+              41.404035,
+              12.763136,
+              42.426912
             ],
-            "date_count": 64
+            "date_count": 1,
+            "tile_id": "32TQM"
           },
           {
             "bbox": [
-              10.0,
-              55.0,
-              11.0,
-              56.0
+              11.538707,
+              44.997588,
+              12.999321,
+              46.024365
             ],
-            "date_count": 57
+            "date_count": 3,
+            "tile_id": "32TQR"
           },
           {
             "bbox": [
-              11.0,
-              41.0,
-              12.0,
-              42.0
+              11.579459,
+              45.895735,
+              13.065657,
+              46.923573
             ],
-            "date_count": 10
+            "date_count": 12,
+            "tile_id": "32TQS"
           },
           {
             "bbox": [
-              11.0,
-              44.0,
-              12.0,
-              45.0
+              11.622196,
+              46.793671,
+              13.135258,
+              47.822608
             ],
-            "date_count": 20
+            "date_count": 8,
+            "tile_id": "32TQT"
           },
           {
             "bbox": [
-              11.0,
-              45.0,
-              12.0,
-              46.0
+              8.999728,
+              47.755819,
+              10.493269,
+              48.753013
             ],
-            "date_count": 44
+            "date_count": 1,
+            "tile_id": "32UNU"
           },
           {
             "bbox": [
-              11.0,
-              46.0,
-              12.0,
-              47.0
+              10.527469,
+              54.017542,
+              12.280575,
+              55.036929
             ],
-            "date_count": 20
+            "date_count": 4,
+            "tile_id": "32UPF"
           },
           {
             "bbox": [
-              11.0,
-              47.0,
-              12.0,
-              48.0
+              10.561357,
+              54.915007,
+              12.355968,
+              55.935335
             ],
-            "date_count": 5
+            "date_count": 10,
+            "tile_id": "32UPG"
           },
           {
             "bbox": [
-              11.0,
-              54.0,
-              12.0,
-              55.0
+              10.334331,
+              47.731044,
+              11.852439,
+              48.744984
             ],
-            "date_count": 107
+            "date_count": 1,
+            "tile_id": "32UPU"
           },
           {
             "bbox": [
-              11.0,
-              55.0,
-              12.0,
-              56.0
+              11.667009,
+              47.690851,
+              13.208284,
+              48.720928
             ],
-            "date_count": 49
+            "date_count": 1,
+            "tile_id": "32UQU"
           },
           {
             "bbox": [
-              13.0,
-              54.0,
-              14.0,
-              55.0
+              10.597162,
+              55.811736,
+              12.435716,
+              56.833055
             ],
-            "date_count": 111
+            "date_count": 11,
+            "tile_id": "32VPH"
           },
           {
             "bbox": [
-              13.0,
-              55.0,
-              14.0,
-              56.0
+              11.354954,
+              41.407726,
+              12.723033,
+              42.429361
             ],
-            "date_count": 30
+            "date_count": 1,
+            "tile_id": "33TTG"
+          },
+          {
+            "bbox": [
+              11.872404,
+              54.021431,
+              13.622172,
+              55.038803
+            ],
+            "date_count": 11,
+            "tile_id": "33UUA"
+          },
+          {
+            "bbox": [
+              11.800511,
+              54.919027,
+              13.591601,
+              55.937273
+            ],
+            "date_count": 6,
+            "tile_id": "33UUB"
+          },
+          {
+            "bbox": [
+              13.434602,
+              54.050496,
+              15.152753,
+              55.046986
+            ],
+            "date_count": 8,
+            "tile_id": "33UVA"
+          },
+          {
+            "bbox": [
+              13.398563,
+              54.949066,
+              15.156272,
+              55.945734
+            ],
+            "date_count": 13,
+            "tile_id": "33UVB"
+          },
+          {
+            "bbox": [
+              11.724465,
+              55.815891,
+              13.559301,
+              56.83506
+            ],
+            "date_count": 7,
+            "tile_id": "33VUC"
+          },
+          {
+            "bbox": [
+              13.360438,
+              55.846948,
+              15.159994,
+              56.843812
+            ],
+            "date_count": 3,
+            "tile_id": "33VVC"
           }
         ]
       }
@@ -212,8 +291,8 @@
     "total_bytes": 0,
     "total_items": 0
   },
-  "items": 3899,
-  "chunks": 1417703,
+  "items": 0,
+  "chunks": 0,
   "km2_requested": 0,
   "operations": [
     {
@@ -371,7 +450,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 6h",
-          "remaining_seconds": 194998.74456858635,
+          "remaining_seconds": 194428.05005717278,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -384,7 +463,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 6h",
-          "remaining_seconds": 194998.74456858635,
+          "remaining_seconds": 194428.05005717278,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -397,7 +476,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 6h",
-          "remaining_seconds": 194998.74456858635,
+          "remaining_seconds": 194428.05005717278,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -410,7 +489,7 @@
           "participants": 0,
           "period": "monthly",
           "remaining_human": "11d 6h",
-          "remaining_seconds": 972598.7445685863,
+          "remaining_seconds": 972028.0500571728,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []
