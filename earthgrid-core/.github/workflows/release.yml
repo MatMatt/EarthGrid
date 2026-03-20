@@ -63,12 +63,29 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd /C call {0}
     steps:
       - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          channels: conda-forge
+          activate-environment: build
+      - name: Install GDAL
+        shell: bash -l {0}
+        run: conda install -y gdal libgdal
       - uses: dtolnay/rust-toolchain@stable
       - name: Build all binaries
+        shell: bash -l {0}
         working-directory: earthgrid-core
-        run: cargo build --release --features gdal-bundled
+        run: |
+          export GDAL_HOME="$CONDA_PREFIX/Library"
+          export GDAL_LIB_DIR="$CONDA_PREFIX/Library/lib"
+          cargo build --release
+        env:
+          GDAL_HOME: ${{ env.CONDA_PREFIX }}\Library
+          GDAL_LIB_DIR: ${{ env.CONDA_PREFIX }}\Library\lib
       - name: Package
         run: |
           mkdir dist

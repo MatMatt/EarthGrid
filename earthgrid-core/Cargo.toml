@@ -43,7 +43,6 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 gdal = "0.19"
-gdal-sys = { version = "0.12", optional = true, features = ["bundled"] }
 tray-icon = { version = "0.19", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 ureq = { version = "3", features = ["json"] }
@@ -54,7 +53,6 @@ gtk = { version = "0.18", optional = true }
 
 [features]
 default = []
-gdal-bundled = ["dep:gdal-sys"]
 tray = ["dep:tray-icon", "dep:gtk", "dep:image"]
 
 [dev-dependencies]
