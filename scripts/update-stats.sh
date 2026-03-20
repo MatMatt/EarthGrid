@@ -23,7 +23,7 @@ def fetch(path):
 
 root = fetch('/')
 eg = root.get('earthgrid', {})
-nodes_data = fetch('/nodes')
+nodes_data = fetch('/beacon/nodes')
 coverage = fetch('/stats/coverage')
 uptake = fetch('/stats/uptake?period_days=365')
 ingest = fetch('/stats/ingest?period_days=365')
@@ -58,8 +58,8 @@ stats = {
     'spatial_coverage': fetch('/coverage/spatial'),
     'uptake': uptake,
     'ingest': ingest,
-    'items': eg.get('item_count', 0),
-    'chunks': eg.get('chunks', 0),
+    'items': sum(n.get('item_count', 0) for n in alive) or eg.get('item_count', 0),
+    'chunks': sum(n.get('chunk_count', 0) for n in alive) or eg.get('chunks', 0),
     'km2_requested': requests_data.get('total_km2_queried', requests_data.get('total_km2_requested', 0)),
     'operations': fetch('/process/operations').get('operations', []),
     'gamification': {
