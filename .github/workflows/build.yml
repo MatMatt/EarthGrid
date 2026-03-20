@@ -178,6 +178,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: '{linux-x86_64,macos-arm64,windows-x86_64}'
+          merge-multiple: false
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
