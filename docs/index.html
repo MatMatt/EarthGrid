@@ -212,12 +212,8 @@ function renderCoverageMap(data) {
 
     for (const cell of (colData.cells || [])) {
       const [w, s, e, n] = cell.bbox;
-      // Mercator correction: reduce lat span so cells appear square
-      const midLat = (s + n) * 0.5;
-      const corrH = (e - w) * Math.cos(midLat * Math.PI / 180);
-      const nCorr = s + corrH;
       const pct = covPercent(cell.date_count, colId);
-      const rect = L.rectangle([[s, w], [nCorr, e]], {
+      const rect = L.rectangle([[s, w], [n, e]], {
         color: covColor(cell.date_count, colId),
         weight: 1.5,
         fillOpacity: 0.25,
@@ -234,7 +230,7 @@ function renderCoverageMap(data) {
 
       rect.addTo(covMap);
       covLayers.push(rect);
-      bounds.push([[s, w], [nCorr, e]]);
+      bounds.push([[s, w], [n, e]]);
     }
   }
 
