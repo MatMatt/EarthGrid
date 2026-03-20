@@ -452,20 +452,17 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Fetch { bbox, start, end, collection, bands, limit, cloud_cover } => {
             let port = config_port();
-            let url = format!("http://localhost:{}/fetch", port);
-
-            let mut payload = serde_json::json!({ "limit": limit });
-            if let Some(b) = bbox { payload["bbox"] = serde_json::Value::String(b); }
-            if let Some(s) = start { payload["datetime_start"] = serde_json::Value::String(s); }
-            if let Some(e) = end { payload["datetime_end"] = serde_json::Value::String(e); }
-            if let Some(c) = collection { payload["collection"] = serde_json::Value::String(c); }
-            if let Some(b) = bands { payload["bands"] = serde_json::Value::String(b); }
-            if let Some(cc) = cloud_cover {
-                payload["cloud_cover_max"] = serde_json::json!(cc);
-            }
+            let mut params = vec![format!("limit={}", limit)];
+            if let Some(b) = bbox { params.push(format!("bbox={}", b)); }
+            if let Some(s) = start { params.push(format!("start_date={}", s)); }
+            if let Some(e) = end { params.push(format!("end_date={}", e)); }
+            if let Some(c) = collection { params.push(format!("collection={}", c)); }
+            if let Some(b) = bands { params.push(format!("bands={}", b)); }
+            if let Some(cc) = cloud_cover { params.push(format!("cloud_cover={}", cc)); }
+            let url = format!("http://localhost:{}/fetch?{}", port, params.join("&"));
 
             println!("🛰️  Fetching from {}...", url);
-            match ureq::post(&url).send_json(&payload) {
+            match ureq::post(&url).send("") {
                 Ok(resp) => {
                     let body: serde_json::Value = resp.into_body().read_json()?;
                     println!("{}", serde_json::to_string_pretty(&body)?);
