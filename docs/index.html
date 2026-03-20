@@ -212,8 +212,12 @@ function renderCoverageMap(data) {
 
     for (const cell of (colData.cells || [])) {
       const [w, s, e, n] = cell.bbox;
+      // Mercator correction: reduce lat span so cells appear square
+      const midLat = (s + n) * 0.5;
+      const corrH = (e - w) * Math.cos(midLat * Math.PI / 180);
+      const nCorr = s + corrH;
       const pct = covPercent(cell.date_count, colId);
-      const rect = L.rectangle([[s, w], [n, e]], {
+      const rect = L.rectangle([[s, w], [nCorr, e]], {
         color: covColor(cell.date_count, colId),
         weight: 1.5,
         fillOpacity: 0.25,
@@ -230,7 +234,7 @@ function renderCoverageMap(data) {
 
       rect.addTo(covMap);
       covLayers.push(rect);
-      bounds.push([[s, w], [n, e]]);
+      bounds.push([[s, w], [nCorr, e]]);
     }
   }
 
@@ -1102,65 +1106,127 @@ function fmtBytes(b) { return b >= 1e12 ? (b/1e12).toFixed(1)+' TB' : (b/1e9).to
 function fmtGB(gb) { return gb >= 1000 ? (gb/1000).toFixed(1)+' TB' : gb.toFixed(0)+' GB'; }
 function fmtKm2(k) { return k >= 1e6 ? (k/1e6).toFixed(1)+'M' : k >= 1000 ? (k/1000).toFixed(0)+'k' : k.toFixed(0); }
 
+// GitHub Pages fallback: load from static stats.json
+async function loadFromStatsJson() {
+  const statsUrl = EARTHGRID_API ? EARTHGRID_API + '/stats.json?t=' + Date.now() : 'stats.json?t=' + Date.now();
+  const r = await fetch(statsUrl);
+  if (!r.ok) throw new Error('stats.json not found');
+  const d = await r.json();
+  const net = d.network || {};
+  document.getElementById('vNodes').textContent = net.nodes_alive || 0;
+  document.getElementById('sNodes').classList.remove('loading');
+  document.getElementById('vAvailStorage').textContent = fmtGB(net.available_storage_gb || 0);
+  document.getElementById('sAvailStorage').classList.remove('loading');
+  const redEl = document.getElementById('sRedundancy'); if (redEl) redEl.classList.remove('loading');
+  document.getElementById('vStorage').textContent = fmtBytes(net.total_bytes || 0);
+  document.getElementById('sStorage').classList.remove('loading');
+  document.getElementById('vRequested').textContent = fmtKm2(d.km2_requested || 0);
+  document.getElementById('sRequested').classList.remove('loading');
+  if (d.version) document.getElementById('ver').textContent = d.version;
+  const sensors = d.coverage || {};
+  if (Object.keys(sensors).length > 0) {
+    let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">Tiles</th><th class="num">Dates</th></tr></thead><tbody>';
+    for (const [col, s] of Object.entries(sensors).sort((a,b) => (b[1].items||0) - (a[1].items||0))) {
+      html += '<tr><td class="sensor">' + sensorLabel(col) + '</td><td class="num">' + (s.tiles||0) + '</td><td class="num">' + (s.items||0) + '</td></tr>';
+    }
+    html += '</tbody></table>';
+    document.getElementById('coverageTable').innerHTML = html;
+  }
+  if (d.spatial_coverage) renderCoverageMap(d.spatial_coverage);
+  window._lastStats = d;
+  loadLeaderboard(d);
+  if (d.gamification && d.gamification.challenges) renderChallenges(d.gamification.challenges.challenges || []);
+  else loadChallenges();
+  loadEconomy(d); loadAchievements(d); loadFeed(d);
+}
+
 async function load() {
   try {
-    const statsUrl = EARTHGRID_API ? EARTHGRID_API + '/stats.json?t=' + Date.now() : 'stats.json?t=' + Date.now();
-    const r = await fetch(statsUrl);
-    if (!r.ok) throw new Error('stats.json not found');
-    const d = await r.json();
-    const net = d.network || {};
+    // GitHub Pages: static stats.json fallback
+    if (location.hostname.includes('github.io')) {
+      return loadFromStatsJson();
+    }
 
-    // Stat cards
-    document.getElementById('vNodes').textContent = net.nodes_alive || 0;
+    // Live API: parallel fetch from individual endpoints
+    const api = EARTHGRID_API || '';
+    const [rInfo, rPeers, rCov, rSpatial, rOps, rIngest, rUptake,
+           rLeaderboard, rEconomy, rChallenges, rFeed] = await Promise.allSettled([
+      fetch(api + '/node-info'),
+      fetch(api + '/peers'),
+      fetch(api + '/stats/coverage'),
+      fetch(api + '/coverage/spatial'),
+      fetch(api + '/process/operations'),
+      fetch(api + '/stats/ingest'),
+      fetch(api + '/stats/uptake'),
+      fetch(api + '/gamification/leaderboard'),
+      fetch(api + '/gamification/economy'),
+      fetch(api + '/gamification/challenges'),
+      fetch(api + '/gamification/feed'),
+    ]);
+
+    const json = async (r) => r.status === 'fulfilled' && r.value.ok ? r.value.json() : null;
+    const info = await json(rInfo) || {};
+    const peers = await json(rPeers) || [];
+    const covData = await json(rCov) || {};
+    const spatialCov = await json(rSpatial) || null;
+    const ops = await json(rOps) || [];
+    const ingest = await json(rIngest) || {};
+    const uptakeData = await json(rUptake) || {};
+    const lbData = await json(rLeaderboard) || {};
+    const econData = await json(rEconomy) || {};
+    const challData = await json(rChallenges) || {};
+    const feedData = await json(rFeed) || {};
+
+    // Build a compat object for gamification/tab functions that expect window._lastStats
+    const d = {
+      version: info.version,
+      gamification: { leaderboard: lbData, economy: econData, challenges: challData, feed: feedData },
+      uptake: uptakeData,
+      ingest: ingest,
+    };
+
+    // Stat cards — node-info + peers
+    const peerList = Array.isArray(peers) ? peers : (peers.peers || []);
+    const nodesAlive = peerList.filter(p => p.alive !== false).length + 1; // +1 for self
+    document.getElementById('vNodes').textContent = nodesAlive;
     document.getElementById('sNodes').classList.remove('loading');
 
-    document.getElementById('vAvailStorage').textContent = fmtGB(net.available_storage_gb || 0);
+    const totalStorageGB = (info.storage_gb || 0) + peerList.reduce((s,p) => s + (p.storage_gb || 0), 0);
+    document.getElementById('vAvailStorage').textContent = fmtGB(totalStorageGB);
     document.getElementById('sAvailStorage').classList.remove('loading');
 
     const redEl = document.getElementById('sRedundancy'); if (redEl) redEl.classList.remove('loading');
 
-    document.getElementById('vStorage').textContent = fmtBytes(net.total_bytes || 0);
+    document.getElementById('vStorage').textContent = fmtBytes(info.storage_bytes || 0);
     document.getElementById('sStorage').classList.remove('loading');
 
-    document.getElementById('vRequested').textContent = fmtKm2(d.km2_requested || 0);
+    document.getElementById('vRequested').textContent = fmtKm2(uptakeData.summary ? (uptakeData.summary.total_aoi_km2 || 0) : 0);
     document.getElementById('sRequested').classList.remove('loading');
 
-    if (d.version) document.getElementById('ver').textContent = d.version;
+    if (info.version) document.getElementById('ver').textContent = info.version;
 
-    // Coverage table
-    const sensors = d.coverage || {};
-    if (Object.keys(sensors).length > 0) {
-      let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">Tiles</th><th class="num">Dates</th></tr></thead><tbody>';
-      for (const [col, s] of Object.entries(sensors).sort((a,b) => (b[1].items||0) - (a[1].items||0))) {
-        html += '<tr><td class="sensor">' + sensorLabel(col) + '</td>';
-        html += '<td class="num">' + (s.tiles||0) + '</td>';
-        html += '<td class="num">' + (s.items||0) + '</td></tr>';
+    // Coverage table from /stats/coverage
+    const colList = covData.collections || [];
+    if (colList.length > 0) {
+      let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">Items</th></tr></thead><tbody>';
+      for (const c of colList.sort((a,b) => (b.item_count||0) - (a.item_count||0))) {
+        html += '<tr><td class="sensor">' + sensorLabel(c.collection) + '</td>';
+        html += '<td class="num">' + (c.item_count||0) + '</td></tr>';
       }
       html += '</tbody></table>';
       document.getElementById('coverageTable').innerHTML = html;
     }
 
     // Spatial coverage map
-    const spatialCov = d.spatial_coverage || null;
-    if (spatialCov) {
-      renderCoverageMap(spatialCov);
-    } else {
-      // Try live endpoint if not in stats.json
-      try {
-        const scr = await fetch(EARTHGRID_API + '/coverage/spatial');
-        if (scr.ok) renderCoverageMap(await scr.json());
-      } catch(e) { console.log('No spatial coverage data'); }
-    }
+    if (spatialCov) renderCoverageMap(spatialCov);
 
     // Operations
-    const ops = d.operations || [];
     let oh = '';
-    ops.forEach(o => { oh += '<div class="op"><span class="opname">' + o.name + '</span><br><span style="color:var(--dim)">' + o.description + '</span></div>'; });
+    const opsList = Array.isArray(ops) ? ops : (ops.operations || []);
+    opsList.forEach(o => { oh += '<div class="op"><span class="opname">' + o.name + '</span><br><span style="color:var(--dim)">' + o.description + '</span></div>'; });
     document.getElementById('opsList').innerHTML = oh || '<em>None</em>';
 
-
     // --- Ingest History ---
-    const ingest = d.ingest || {};
     const ig = ingest.total_gb_fetched || 0;
     document.getElementById('vFetched').textContent = ig >= 1000 ? (ig/1000).toFixed(1) + ' TB' : ig.toFixed(1) + ' GB';
     document.getElementById('sFetched').classList.remove('loading');
