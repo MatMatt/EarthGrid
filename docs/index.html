@@ -480,7 +480,7 @@ function fmtTime(ts) {
 
 
 function renderLeaderboard(data) {
-  const entries = data.entries || [];
+  const entries = data.leaderboard || data.entries || [];
   if (entries.length === 0) {
     document.getElementById('leaderboard').innerHTML = '<em style="color:var(--dim)">No participants yet</em>';
     return;
@@ -543,7 +543,7 @@ function renderAchievements(data) {
 }
 
 function renderFeed(data) {
-  const items = data.feed || [];
+  const items = data.entries || data.feed || [];
   if (items.length === 0) {
     document.getElementById('activityFeed').innerHTML = '<em style="color:var(--dim)">No activity yet</em>';
     return;
