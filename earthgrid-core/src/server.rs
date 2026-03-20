@@ -2655,7 +2655,25 @@ pub async fn serve(
                         "collections": collections,
                     });
 
-                    let _ = client.post(&url).json(&body).send().await;
+                    // First attempt: heartbeat (fast path for already-registered nodes)
+                    let resp = client.post(&url).json(&body).send().await;
+                    // If not registered, register first then heartbeat
+                    if let Ok(r) = &resp {
+                        if r.status() == reqwest::StatusCode::NOT_FOUND {
+                            let register_url = url.replace("/beacon/heartbeat", "/beacon/register");
+                            let register_body = serde_json::json!({
+                                "node_id": hb_node_id,
+                                "node_name": hb_node_name,
+                                "url": format!("http://127.0.0.1:{}", hb_port),
+                                "can_source": true,
+                                "item_count": item_count,
+                                "chunk_count": chunk_count,
+                                "chunks_bytes": chunks_bytes,
+                                "collections": collections,
+                            });
+                            let _ = client.post(&register_url).json(&register_body).send().await;
+                        }
+                    }
                 }
             });
         }
