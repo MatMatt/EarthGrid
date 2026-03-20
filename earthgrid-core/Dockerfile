@@ -1,7 +1,7 @@
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y \
-    libgdal32 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgdal34 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY earthgrid-core /usr/local/bin/earthgrid-core
