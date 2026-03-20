@@ -73,6 +73,17 @@ pub struct GridCell {
     pub collection: String,
 }
 
+/// An MGRS tile coverage entry with real tile geometry
+pub struct MgrsTile {
+    pub collection: String,
+    pub tile_id: String,
+    pub west: f64,
+    pub south: f64,
+    pub east: f64,
+    pub north: f64,
+    pub date_count: i64,
+}
+
 impl Catalog {
     /// Open or create a catalog at the given path.
     pub fn new(db_path: &std::path::Path) -> Result<Self> {
@@ -384,6 +395,35 @@ impl Catalog {
         })?;
         let cells: Vec<GridCell> = rows.filter_map(|r| r.ok()).collect();
         Ok(cells)
+    }
+
+    /// Aggregate items by MGRS tile ID (parsed from item ID), returning real tile bboxes.
+    pub fn mgrs_coverage(&self) -> Result<Vec<MgrsTile>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT collection,
+                    SUBSTR(id, INSTR(id, '_') + 1, INSTR(SUBSTR(id, INSTR(id, '_') + 1), '_') - 1) as tile_id,
+                    MIN(bbox_west) as w,
+                    MIN(bbox_south) as s,
+                    MAX(bbox_east) as e,
+                    MAX(bbox_north) as n,
+                    COUNT(DISTINCT SUBSTR(id, INSTR(SUBSTR(id, INSTR(id, '_') + 1), '_') + INSTR(id, '_') + 1, 8)) as date_count
+             FROM items
+             WHERE bbox_west IS NOT NULL
+             GROUP BY collection, tile_id"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(MgrsTile {
+                collection: row.get(0)?,
+                tile_id: row.get(1)?,
+                west: row.get(2)?,
+                south: row.get(3)?,
+                east: row.get(4)?,
+                north: row.get(5)?,
+                date_count: row.get(6)?,
+            })
+        })?;
+        let tiles: Vec<MgrsTile> = rows.filter_map(|r| r.ok()).collect();
+        Ok(tiles)
     }
 
     /// Delete an item by ID.

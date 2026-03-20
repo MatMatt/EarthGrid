@@ -1339,17 +1339,18 @@ async fn patch_node_name(
 
 async fn coverage_spatial(State(state): State<AppState>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
-    // Aggregate items into 1-degree grid cells, grouped by collection
-    let cells = catalog.spatial_grid(1.0).unwrap_or_default();
+    // Use real MGRS tile geometries instead of arbitrary grid cells
+    let tiles = catalog.mgrs_coverage().unwrap_or_default();
 
-    // Group cells by collection for the dashboard format
+    // Group tiles by collection for the dashboard format
     let mut collections: std::collections::HashMap<String, Vec<serde_json::Value>> =
         std::collections::HashMap::new();
-    for c in &cells {
-        collections.entry(c.collection.clone()).or_default().push(
+    for t in &tiles {
+        collections.entry(t.collection.clone()).or_default().push(
             serde_json::json!({
-                "bbox": [c.west, c.south, c.east, c.north],
-                "date_count": c.count,
+                "bbox": [t.west, t.south, t.east, t.north],
+                "tile_id": t.tile_id,
+                "date_count": t.date_count,
             })
         );
     }
