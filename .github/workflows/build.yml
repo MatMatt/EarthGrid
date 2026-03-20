@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install GDAL
-        run: brew install gdal
+        run: brew install gdal pkg-config
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -49,6 +49,9 @@ jobs:
       - name: Build
         working-directory: earthgrid-core
         run: cargo build --release
+        env:
+          GDAL_HOME: /opt/homebrew/opt/gdal
+          PKG_CONFIG_PATH: /opt/homebrew/opt/gdal/lib/pkgconfig
       - name: Strip binary
         run: strip earthgrid-core/target/release/earthgrid-core
       - name: Package
