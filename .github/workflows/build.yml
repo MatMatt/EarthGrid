@@ -16,7 +16,7 @@ jobs:
       - name: Install GDAL
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgdal-dev
+          sudo apt-get install -y libgdal-dev libclang-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install GDAL
-        run: brew install gdal pkg-config
+        run: brew install gdal pkg-config llvm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -77,7 +77,7 @@ jobs:
           activate-environment: build
           environment-file: ""
       - name: Install GDAL
-        run: conda install -y gdal pkg-config
+        run: conda install -y gdal pkg-config clang libclang
       - name: Set GDAL env
         run: |
           CONDA_PREFIX=$(conda info --base)/envs/build

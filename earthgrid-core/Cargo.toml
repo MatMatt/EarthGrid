@@ -42,7 +42,7 @@ libp2p = { version = "0.54", features = [
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-gdal = "0.17"
+gdal = { version = "0.17", features = ["bindgen"] }
 tray-icon = { version = "0.19", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 ureq = { version = "3", features = ["json"] }
