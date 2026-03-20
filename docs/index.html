@@ -449,9 +449,9 @@ const EARTHGRID_API = (() => {
     const meta = document.querySelector('meta[name="earthgrid-api"]');
     if (meta && meta.content) return meta.content.replace(/\/$/, '');
   } catch(e) {}
-  // On GitHub Pages: use the public beacon URL
+  // On GitHub Pages: use local stats.json (no CORS issues)
   if (location.hostname.includes('github.io')) {
-    return 'https://mattiuzzi.zapto.org/earthgrid';
+    return '';
   }
   // Same origin (served by node or proxied)
   return '';
