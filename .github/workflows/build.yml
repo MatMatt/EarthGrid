@@ -13,11 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
+      - name: Install GDAL
         run: |
           sudo apt-get update
           sudo apt-get install -y libgdal-dev
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: earthgrid-core
       - name: Build
         working-directory: earthgrid-core
         run: cargo build --release
@@ -37,9 +40,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
+      - name: Install GDAL
         run: brew install gdal
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: earthgrid-core
       - name: Build
         working-directory: earthgrid-core
         run: cargo build --release
@@ -57,17 +63,29 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash -l {0}
     steps:
       - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          channels: conda-forge
+          activate-environment: build
+          environment-file: ""
       - name: Install GDAL
-        shell: pwsh
+        run: conda install -y gdal pkg-config
+      - name: Set GDAL env
         run: |
-          choco install gdal --no-progress -y
-          $gdalPath = (Get-ChildItem "C:\tools\gdal*" -Directory | Select-Object -First 1).FullName
-          echo "GDAL_HOME=$gdalPath" >> $env:GITHUB_ENV
-          echo "GDAL_LIB_DIR=$gdalPath\lib" >> $env:GITHUB_ENV
-          echo "$gdalPath\bin" >> $env:GITHUB_PATH
+          CONDA_PREFIX=$(conda info --base)/envs/build
+          echo "GDAL_HOME=$CONDA_PREFIX/Library" >> $GITHUB_ENV
+          echo "GDAL_LIB_DIR=$CONDA_PREFIX/Library/lib" >> $GITHUB_ENV
+          echo "GDAL_INCLUDE_DIR=$CONDA_PREFIX/Library/include" >> $GITHUB_ENV
+          echo "$CONDA_PREFIX/Library/bin" >> $GITHUB_PATH
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: earthgrid-core
       - name: Build
         working-directory: earthgrid-core
         run: cargo build --release
