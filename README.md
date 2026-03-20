@@ -266,55 +266,35 @@ All data is stored as **Cloud-Optimized GeoTIFF (COG)** — one format everywher
 
 ```bash
 earthgrid setup                          # Interactive first-time setup
-earthgrid start                          # Install systemd service + start
-earthgrid start --foreground             # Run in foreground (debug)
-earthgrid stop                           # Stop node
-earthgrid status                         # Show storage usage + peers
-earthgrid info                           # Show config
+earthgrid start                          # Start node as background daemon
+earthgrid stop                           # Stop the running daemon
+earthgrid status                         # Show if running + node stats
+earthgrid info                           # Show local storage info
 earthgrid update                         # Git pull + cargo build + restart
-earthgrid resize 100                     # Change storage limit to 100 GB
-earthgrid install-service                # Install systemd service
-earthgrid uninstall-service              # Remove systemd service
+earthgrid resize --size 100              # Change storage limit to 100 GB
+earthgrid install-service                # Install systemd user service
+earthgrid uninstall-service              # Remove systemd user service
+earthgrid serve                          # Start HTTP server (foreground)
 ```
 
 ### Data operations
 
 ```bash
 earthgrid fetch --bbox 12.4,55.6,12.6,55.7 --collection sentinel-2-l2a
-earthgrid fetch --bbox ... --start 2026-03-01 --end 2026-03-12
-earthgrid fetch --bbox ... --limit 0     # Fetch ALL available
-earthgrid sync <peer_url>                # Pull data from a peer
-earthgrid verify                         # Verify chunk integrity
-earthgrid verify --heal                  # Auto-repair corrupted chunks
-earthgrid ops                            # List processing operations
-earthgrid process <item_id> --op ndvi    # Run NDVI on an item
-```
-
-### Data source management
-
-```bash
-earthgrid sources list                   # List source accounts
-earthgrid sources providers              # Available providers
-earthgrid sources add --provider cdse --username me@example.org
-earthgrid sources remove --provider cdse --username me@example.org
-```
-
-### Admin
-
-```bash
-earthgrid admin show-key                 # Show admin API key
-earthgrid admin renew-key                # Generate new key
+earthgrid fetch --bbox ... --start 2025-06-01 --end 2025-06-30
+earthgrid fetch --bbox ... --limit 10    # Limit number of STAC items
+earthgrid fetch --bbox ... --cloud-cover 20  # Max cloud cover %
+earthgrid ingest <file> --collection sentinel-2-l2a  # Ingest a local file
+earthgrid list                           # List items in catalog
+earthgrid list --collection sentinel-2-l2a --limit 20
+earthgrid verify <item_id>               # Verify chunk integrity of an item
 ```
 
 ### Docker
 
 ```bash
-earthgrid docker start                   # Build + start container
-earthgrid docker stop                    # Stop container
-earthgrid docker status                  # Container status
-earthgrid docker logs                    # View logs
-earthgrid docker restart                 # Restart
-earthgrid docker update                  # Rebuild + restart
+docker pull ghcr.io/matmatt/earthgrid-core:latest
+docker run -d -p 8400:8400 -v earthgrid-data:/data ghcr.io/matmatt/earthgrid-core:latest serve
 ```
 
 ---
