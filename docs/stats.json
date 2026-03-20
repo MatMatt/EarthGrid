@@ -1,14 +1,24 @@
 {
-  "updated": "2026-03-20T16:30:02Z",
-  "version": "",
+  "updated": "2026-03-20T16:31:11Z",
+  "version": "0.1.0",
   "network": {
-    "nodes_alive": 0,
-    "nodes_total": 0,
-    "total_bytes": 0,
-    "available_storage_gb": 0,
+    "nodes_alive": 2,
+    "nodes_total": 3,
+    "total_bytes": 747168808740,
+    "available_storage_gb": 5000.0,
     "redundancy": 1.0
   },
-  "coverage": {},
+  "items": 4270,
+  "chunks": 1526034,
+  "coverage": {
+    "collections": [
+      {
+        "collection": "sentinel-2-l2a",
+        "item_count": 3899
+      }
+    ],
+    "total_items": 3899
+  },
   "spatial_coverage": {
     "coverage": [
       {
@@ -16,154 +26,5 @@
         "title": "sentinel-2-l2a"
       }
     ]
-  },
-  "uptake": {
-    "daily_trend": [],
-    "hourly_trend": [],
-    "period_days": 365,
-    "privacy": "anonymous \u2014 no user identification stored",
-    "report_type": "EarthGrid Uptake Statistics",
-    "summary": {
-      "total_bytes": 0,
-      "total_gb": 0.0,
-      "total_requests": 0
-    }
-  },
-  "ingest": {
-    "daily": [],
-    "hourly": [],
-    "period_days": 365,
-    "total_bytes": 0,
-    "total_items": 0
-  },
-  "items": 0,
-  "chunks": 0,
-  "km2_requested": 0,
-  "operations": [
-    {
-      "description": "Compute NDVI from red/NIR bands",
-      "name": "ndvi"
-    },
-    {
-      "description": "Render RGB composite",
-      "name": "rgb"
-    },
-    {
-      "description": "Apply cloud masking",
-      "name": "cloud_mask"
-    },
-    {
-      "description": "Re-tile and rechunk item",
-      "name": "rechunk"
-    }
-  ],
-  "gamification": {
-    "leaderboard_nodes": {
-      "count": 0,
-      "leaderboard": [],
-      "type": "nodes"
-    },
-    "leaderboard_users": {
-      "count": 0,
-      "leaderboard": [],
-      "type": "users"
-    },
-    "leaderboard_groups": {
-      "count": 0,
-      "leaderboard": [],
-      "type": "groups"
-    },
-    "achievements": {},
-    "feed": {
-      "count": 0,
-      "feed": []
-    },
-    "economy": {
-      "data_served_gb": 0.0,
-      "estimated_replication_factor": 0.0,
-      "factors": {
-        "data_redundancy": {
-          "score": 0.0,
-          "weight": 0.25
-        },
-        "data_reuse": {
-          "score": 0.0,
-          "weight": 0.2
-        },
-        "node_diversity": {
-          "score": 0.0,
-          "weight": 0.25
-        },
-        "storage_headroom": {
-          "score": 0.0,
-          "weight": 0.3
-        }
-      },
-      "label": "No nodes",
-      "nodes_alive": 0,
-      "nodes_total": 0,
-      "score": 0,
-      "status": "red",
-      "storage_pledged_gb": 0.0,
-      "storage_used_gb": 0.0,
-      "storage_utilization_pct": 0.0
-    },
-    "challenges": {
-      "challenges": [
-        {
-          "description": "Most items ingested this week",
-          "end_ts": 1774224000.0,
-          "id": 1,
-          "metric": "items_ingested",
-          "participants": 0,
-          "period": "weekly",
-          "remaining_human": "2d 7h",
-          "remaining_seconds": 199797.96440553665,
-          "start_ts": 1773619200.0,
-          "title": "Weekly Ingest Champion",
-          "top3": []
-        },
-        {
-          "description": "Most GB added this week",
-          "end_ts": 1774224000.0,
-          "id": 2,
-          "metric": "gb_stored",
-          "participants": 0,
-          "period": "weekly",
-          "remaining_human": "2d 7h",
-          "remaining_seconds": 199797.96440553665,
-          "start_ts": 1773619200.0,
-          "title": "Storage Hero",
-          "top3": []
-        },
-        {
-          "description": "Most GB served this week",
-          "end_ts": 1774224000.0,
-          "id": 3,
-          "metric": "gb_served",
-          "participants": 0,
-          "period": "weekly",
-          "remaining_human": "2d 7h",
-          "remaining_seconds": 199797.96440553665,
-          "start_ts": 1773619200.0,
-          "title": "Serving Star",
-          "top3": []
-        },
-        {
-          "description": "Highest total score this month",
-          "end_ts": 1775001600.0,
-          "id": 4,
-          "metric": "score",
-          "participants": 0,
-          "period": "monthly",
-          "remaining_human": "11d 7h",
-          "remaining_seconds": 977397.9644055367,
-          "start_ts": 1772323200.0,
-          "title": "Monthly Marathon",
-          "top3": []
-        }
-      ],
-      "count": 4
-    }
   }
 }
