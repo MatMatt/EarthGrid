@@ -65,18 +65,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install GDAL via vcpkg
-        run: |
-          vcpkg install gdal:x64-windows
-          echo "GDAL_HOME=C:\vcpkg\installed\x64-windows" >> $env:GITHUB_ENV
-          echo "GDAL_LIB_DIR=C:\vcpkg\installed\x64-windows\lib" >> $env:GITHUB_ENV
-          echo "C:\vcpkg\installed\x64-windows\bin" >> $env:GITHUB_PATH
       - uses: dtolnay/rust-toolchain@stable
       - name: Build all binaries
         working-directory: earthgrid-core
-        run: cargo build --release
-        env:
-          GDAL_LIB_DIR: C:\vcpkg\installed\x64-windows\lib
+        run: cargo build --release --features gdal-bundled
       - name: Package
         run: |
           mkdir dist
