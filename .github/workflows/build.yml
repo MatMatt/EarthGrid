@@ -31,10 +31,28 @@ jobs:
           mkdir -p dist
           cp earthgrid-core/target/release/earthgrid-core dist/earthgrid-linux-x86_64
           cd dist && tar czf earthgrid-linux-x86_64.tar.gz earthgrid-linux-x86_64
+      - name: Build .deb
+        run: |
+          VERSION=$(grep '^version' earthgrid-core/Cargo.toml | head -1 | grep -oP '"\K[^"]+')
+          mkdir -p deb/DEBIAN deb/usr/bin
+          cat > deb/DEBIAN/control <<EOF
+          Package: earthgrid-core
+          Version: ${VERSION}
+          Architecture: amd64
+          Maintainer: Matteo Mattiuzzi <matteo@mattiuzzi.com>
+          Description: Distributed storage and processing for Earth observation data
+          Depends: libgdal-dev
+          EOF
+          cp earthgrid-core/target/release/earthgrid-core deb/usr/bin/earthgrid-core
+          chmod 755 deb/usr/bin/earthgrid-core
+          chmod 755 deb/DEBIAN
+          dpkg-deb --build deb dist/earthgrid-core_${VERSION}_amd64.deb
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
-          path: dist/earthgrid-linux-x86_64.tar.gz
+          path: |
+            dist/earthgrid-linux-x86_64.tar.gz
+            dist/earthgrid-core_*_amd64.deb
 
   build-macos:
     runs-on: macos-latest
@@ -133,6 +151,7 @@ jobs:
         with:
           files: |
             artifacts/linux-x86_64/earthgrid-linux-x86_64.tar.gz
+            artifacts/linux-x86_64/earthgrid-core_*_amd64.deb
             artifacts/macos-arm64/earthgrid-macos-arm64.tar.gz
             artifacts/windows-x86_64/earthgrid-windows-x86_64.zip
           generate_release_notes: true
