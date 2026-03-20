@@ -145,14 +145,22 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+          path: artifacts/
+      - name: Extract binary to build context
+        run: |
+          cd artifacts/
+          tar xzf earthgrid-linux-x86_64.tar.gz
+          cp earthgrid-linux-x86_64 ../earthgrid-core/earthgrid-core
+          chmod +x ../earthgrid-core/earthgrid-core
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: ./earthgrid-core
           push: true

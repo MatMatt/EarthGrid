@@ -1,30 +1,14 @@
-# Stage 1: Builder
-FROM rust:bookworm AS builder
-
-RUN apt-get update && apt-get install -y \
-    libgdal-dev \
-    libclang-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /build
-COPY . .
-
-RUN cargo build --release
-RUN strip target/release/earthgrid-core
-
-# Stage 2: Runtime
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     libgdal32 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/target/release/earthgrid-core /usr/local/bin/earthgrid-core
+COPY earthgrid-core /usr/local/bin/earthgrid-core
+RUN chmod +x /usr/local/bin/earthgrid-core
 
 EXPOSE 8400
-
-RUN mkdir /data
+RUN mkdir -p /data
 VOLUME ["/data"]
 
 ENTRYPOINT ["earthgrid-core"]
