@@ -54,7 +54,7 @@ stats = {
         'available_storage_gb': total_avail_gb or eg.get('storage_limit_gb', 0),
         'redundancy': round(redundancy, 1),
     },
-    'coverage': coverage.get('sensors', {}),
+    'coverage': {c['collection']: {'items': c.get('item_count',0), 'tiles': c.get('item_count',0)} for c in coverage.get('collections', [])},
     'spatial_coverage': fetch('/coverage/spatial'),
     'uptake': uptake,
     'ingest': ingest,

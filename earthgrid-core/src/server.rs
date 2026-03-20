@@ -1339,13 +1339,28 @@ async fn patch_node_name(
 
 async fn coverage_spatial(State(state): State<AppState>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
-    let collections = catalog.list_collections().unwrap_or_default();
-    // Return bounding-box coverage summary per collection
-    let summary: Vec<serde_json::Value> = collections
-        .iter()
-        .map(|c| serde_json::json!({ "collection": c.id, "title": c.title }))
+    // Aggregate items into 1-degree grid cells, grouped by collection
+    let cells = catalog.spatial_grid(1.0).unwrap_or_default();
+
+    // Group cells by collection for the dashboard format
+    let mut collections: std::collections::HashMap<String, Vec<serde_json::Value>> =
+        std::collections::HashMap::new();
+    for c in &cells {
+        collections.entry(c.collection.clone()).or_default().push(
+            serde_json::json!({
+                "bbox": [c.west, c.south, c.east, c.north],
+                "date_count": c.count,
+            })
+        );
+    }
+    let col_map: serde_json::Value = collections
+        .into_iter()
+        .map(|(k, v)| (k, serde_json::json!({ "cells": v })))
         .collect();
-    (StatusCode::OK, Json(serde_json::json!({ "coverage": summary }))).into_response()
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "collections": col_map,
+    }))).into_response()
 }
 
 async fn stats_coverage(State(state): State<AppState>) -> impl IntoResponse {

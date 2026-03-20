@@ -62,6 +62,17 @@ pub struct Catalog {
     conn: Connection,
 }
 
+
+/// A grid cell for spatial coverage
+pub struct GridCell {
+    pub west: f64,
+    pub south: f64,
+    pub east: f64,
+    pub north: f64,
+    pub count: i64,
+    pub collection: String,
+}
+
 impl Catalog {
     /// Open or create a catalog at the given path.
     pub fn new(db_path: &std::path::Path) -> Result<Self> {
@@ -350,6 +361,29 @@ impl Catalog {
             c as usize
         };
         Ok(count)
+    }
+
+    /// Aggregate items into grid cells of given degree resolution
+    pub fn spatial_grid(&self, cell_deg: f64) -> Result<Vec<GridCell>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT collection,                     CAST(CAST(bbox_west / ?1 AS INTEGER) AS REAL) * ?1 as cw,                     CAST(CAST(bbox_south / ?1 AS INTEGER) AS REAL) * ?1 as cs,                     COUNT(*) as cnt              FROM items              WHERE bbox_west IS NOT NULL              GROUP BY collection, cw, cs"
+        )?;
+        let rows = stmt.query_map(params![cell_deg], |row| {
+            let col: String = row.get(0)?;
+            let w: f64 = row.get(1)?;
+            let s: f64 = row.get(2)?;
+            let cnt: i64 = row.get(3)?;
+            Ok(GridCell {
+                west: w,
+                south: s,
+                east: w + cell_deg,
+                north: s + cell_deg,
+                count: cnt,
+                collection: col,
+            })
+        })?;
+        let cells: Vec<GridCell> = rows.filter_map(|r| r.ok()).collect();
+        Ok(cells)
     }
 
     /// Delete an item by ID.
