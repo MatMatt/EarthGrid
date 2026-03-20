@@ -62,6 +62,18 @@ sudo dpkg -i earthgrid-core_*_amd64.deb
 sudo apt-get install -f  # resolve dependencies if needed
 ```
 
+#### Docker
+
+```bash
+docker pull ghcr.io/matmatt/earthgrid-core:latest
+
+docker run -d \
+  --name earthgrid \
+  -p 8400:8400 \
+  -v earthgrid-data:/data \
+  ghcr.io/matmatt/earthgrid-core:latest serve
+```
+
 ### Prerequisites
 
 | Requirement | Version | Why |
