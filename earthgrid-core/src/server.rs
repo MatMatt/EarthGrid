@@ -997,6 +997,30 @@ async fn fetch_handler(
 
     state.audit.log("fetch", collection, "", result.errors.is_empty());
 
+    // Record ingest stats
+    if result.items_downloaded > 0 {
+        let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
+        let temporal = format!("{}/{}", start_date, end_date);
+        let _ = state.stats.record_download(
+            Some("element84"),
+            Some(collection),
+            None,
+            result.bytes_downloaded as i64,
+            Some("element84"),
+            Some(&bbox_str),
+            None,
+        );
+        let _ = state.stats.record_uptake(
+            collection,
+            Some("fetch"),
+            Some(&bbox_str),
+            Some(&temporal),
+            result.bytes_downloaded as i64,
+            None,
+            None,
+        );
+    }
+
     let status = if result.errors.is_empty() {
         StatusCode::OK
     } else {
@@ -1127,6 +1151,26 @@ async fn download_item(
             Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
         }
     };
+
+    // Record download stats
+    let _ = state.stats.record_download(
+        Some("api"),
+        Some(&collection_id),
+        Some(&item_id),
+        tiff_bytes.len() as i64,
+        None,
+        None,
+        None,
+    );
+    let _ = state.stats.record_uptake(
+        &collection_id,
+        Some("download"),
+        None,
+        None,
+        tiff_bytes.len() as i64,
+        None,
+        None,
+    );
 
     let filename = format!("{}_{}.tif", collection_id, item_id);
     use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};

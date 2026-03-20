@@ -66,6 +66,10 @@ pub struct IngestHistory {
     pub period_days: u64,
     pub total_bytes: i64,
     pub total_items: i64,
+    #[serde(rename = "total_gb_fetched")]
+    pub total_gb_fetched: f64,
+    #[serde(rename = "total_items_fetched")]
+    pub total_items_fetched: i64,
     pub daily: Vec<DailyIngest>,
     pub hourly: Vec<HourlyIngest>,
 }
@@ -477,6 +481,8 @@ impl StatsEngine {
         Ok(IngestHistory {
             period_days,
             total_bytes,
+            total_gb_fetched: total_bytes as f64 / 1_073_741_824.0,
+            total_items_fetched: total_items,
             total_items,
             daily,
             hourly,
