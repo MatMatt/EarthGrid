@@ -136,6 +136,30 @@ jobs:
           name: windows-x86_64
           path: dist/earthgrid-windows-x86_64.zip
 
+  build-docker:
+    needs: [build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./earthgrid-core
+          push: true
+          tags: |
+            ghcr.io/matmatt/earthgrid-core:latest
+            ghcr.io/matmatt/earthgrid-core:${{ github.ref_name }}
+
   release:
     needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
