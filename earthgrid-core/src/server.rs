@@ -2608,6 +2608,59 @@ pub async fn serve(
         }
     });
 
+    // Self-heartbeat: beacon nodes register themselves, non-beacon nodes register with remote beacon
+    {
+        let hb_store = state_clone_store.clone();
+        let hb_catalog = state_clone_catalog.clone();
+        let hb_node_id = state_node_id.clone();
+        let hb_node_name = state_node_name.clone();
+        let hb_port = port;
+        let beacon_url_env = std::env::var("EARTHGRID_BEACON_URL").ok();
+
+        let target_url = if beacon_enabled {
+            Some(format!("http://127.0.0.1:{}/beacon/heartbeat", hb_port))
+        } else {
+            beacon_url_env.map(|u| format!("{}/beacon/heartbeat", u.trim_end_matches('/')))
+        };
+
+        if let Some(url) = target_url {
+            tokio::spawn(async move {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(10))
+                    .build()
+                    .unwrap_or_default();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+                    let item_count = {
+                        let cat = hb_catalog.lock().await;
+                        cat.item_count(None).unwrap_or(0)
+                    };
+                    let (chunk_count, chunks_bytes) = {
+                        let store = hb_store.lock().await;
+                        (store.chunk_count(), store.total_bytes())
+                    };
+                    let collections: Vec<String> = {
+                        let cat = hb_catalog.lock().await;
+                        cat.list_collections().unwrap_or_default().into_iter().map(|c| c.id).collect()
+                    };
+
+                    let body = serde_json::json!({
+                        "node_id": hb_node_id,
+                        "node_name": hb_node_name,
+                        "can_source": true,
+                        "item_count": item_count,
+                        "chunk_count": chunk_count,
+                        "chunks_bytes": chunks_bytes,
+                        "collections": collections,
+                    });
+
+                    let _ = client.post(&url).json(&body).send().await;
+                }
+            });
+        }
+    }
+
     // Spawn P2P request handler if libp2p channels are provided
     if let Some((mut event_rx, cmd_tx)) = p2p_channels {
         let p2p_store = state_clone_store.clone();
