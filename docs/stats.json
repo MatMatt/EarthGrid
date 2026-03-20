@@ -1,21 +1,22 @@
 {
-  "updated": "2026-03-20T17:26:42Z",
+  "updated": "2026-03-20T17:30:01Z",
   "version": "",
   "network": {
-    "nodes_alive": 2,
+    "nodes_alive": 1,
     "nodes_total": 6,
     "total_bytes": 2882464699640,
     "available_storage_gb": 5000.0,
     "redundancy": 1.0
   },
-  "coverage": {},
+  "coverage": {
+    "sentinel-2-l2a": {
+      "items": 3899,
+      "tiles": 3899
+    }
+  },
   "spatial_coverage": {
-    "coverage": [
-      {
-        "collection": "sentinel-2-l2a",
-        "title": "sentinel-2-l2a"
-      }
-    ]
+    "features": [],
+    "type": "FeatureCollection"
   },
   "uptake": {
     "daily_trend": [],
@@ -36,8 +37,8 @@
     "total_bytes": 0,
     "total_items": 0
   },
-  "items": 7798,
-  "chunks": 2835406,
+  "items": 3899,
+  "chunks": 1417703,
   "km2_requested": 0,
   "operations": [
     {
@@ -130,7 +131,7 @@
           "weight": 0.2
         },
         "node_diversity": {
-          "score": 50.0,
+          "score": 20.0,
           "weight": 0.25
         },
         "storage_headroom": {
@@ -139,9 +140,9 @@
         }
       },
       "label": "Growing",
-      "nodes_alive": 2,
+      "nodes_alive": 1,
       "nodes_total": 2,
-      "score": 47,
+      "score": 40,
       "status": "yellow",
       "storage_pledged_gb": 10000.0,
       "storage_used_gb": 646.4,
@@ -157,7 +158,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 6h",
-          "remaining_seconds": 196397.19336795807,
+          "remaining_seconds": 196198.52864956856,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -170,7 +171,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 6h",
-          "remaining_seconds": 196397.19336795807,
+          "remaining_seconds": 196198.52864956856,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -183,7 +184,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 6h",
-          "remaining_seconds": 196397.19336795807,
+          "remaining_seconds": 196198.52864956856,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -196,7 +197,7 @@
           "participants": 0,
           "period": "monthly",
           "remaining_human": "11d 6h",
-          "remaining_seconds": 973997.1933679581,
+          "remaining_seconds": 973798.5286495686,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []
