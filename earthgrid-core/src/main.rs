@@ -379,10 +379,10 @@ fn main() -> anyhow::Result<()> {
                     println!("   Node ID:   {}", body["node_id"].as_str().unwrap_or("?"));
                     println!("   Version:   {}", body["version"].as_str().unwrap_or("?"));
                     println!("   Items:     {}", body["item_count"].as_u64().unwrap_or(0));
-                    println!("   Chunks:    {}", body["chunk_count"].as_u64().unwrap_or(0));
+                    println!("   Chunks:    {}", body["chunks"].as_u64().unwrap_or(0));
                     println!("   Storage:   {:.2} GB",
-                        body["total_bytes"].as_u64().unwrap_or(0) as f64 / 1e9);
-                    println!("   Peers:     {}", body["peer_count"].as_u64().unwrap_or(0));
+                        body["storage_gb"].as_f64().unwrap_or(0.0));
+                    println!("   Peers:     {}", body["peers"].as_u64().unwrap_or(0));
                     println!("   API:       http://localhost:{}", port);
                 }
                 Err(e) => {
