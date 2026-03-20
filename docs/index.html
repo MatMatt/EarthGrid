@@ -211,26 +211,37 @@ function renderCoverageMap(data) {
     if (covFilter !== 'all' && covFilter !== colId) continue;
 
     for (const cell of (colData.cells || [])) {
-      const [w, s, e, n] = cell.bbox;
       const pct = covPercent(cell.date_count, colId);
-      const rect = L.rectangle([[s, w], [n, e]], {
-        color: covColor(cell.date_count, colId),
-        weight: 1.5,
-        fillOpacity: 0.25,
-        opacity: 0.7,
-      });
+      const color = covColor(cell.date_count, colId);
+      let shape;
+      if (cell.polygon) {
+        // Real MGRS tile polygon (from pyproj UTM->WGS84)
+        const latlngs = cell.polygon.map(c => [c[1], c[0]]);
+        shape = L.polygon(latlngs, { color, weight: 1.5, fillOpacity: 0.25, opacity: 0.7 });
+      } else {
+        // Fallback: bbox rectangle
+        const [w, s, e, n] = cell.bbox;
+        shape = L.rectangle([[s, w], [n, e]], { color, weight: 1.5, fillOpacity: 0.25, opacity: 0.7 });
+      }
 
-      rect.on('click', () => showCoverageDetail(colId, cell));
+      shape.on('click', () => showCoverageDetail(colId, cell));
 
-      rect.bindTooltip(
+      shape.bindTooltip(
         sensorLabel(colId) + (cell.tile_id ? ' · Tile ' + cell.tile_id : '') + '<br>' +
         pct.toFixed(1) + '% of archive · ' + cell.date_count + ' dates',
         {className:'', sticky:true}
       );
 
-      rect.addTo(covMap);
-      covLayers.push(rect);
-      bounds.push([[s, w], [n, e]]);
+      shape.addTo(covMap);
+      covLayers.push(shape);
+      if (cell.polygon) {
+        const lats = cell.polygon.map(c => c[1]);
+        const lons = cell.polygon.map(c => c[0]);
+        bounds.push([[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]]);
+      } else {
+        const [w, s, e, n] = cell.bbox;
+        bounds.push([[s, w], [n, e]]);
+      }
     }
   }
 
