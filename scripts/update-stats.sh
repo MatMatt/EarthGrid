@@ -4,63 +4,66 @@
 
 set -euo pipefail
 
-BEACON="http://localhost:8400"
 REPO="/home/matteo/EarthGrid"
 STATS_FILE="$REPO/docs/stats.json"
 
 python3 -c "
-import json, sys, urllib.request
+import json, urllib.request
 from datetime import datetime, timezone
 
-BEACON = 'http://localhost:8400'
+API = 'http://localhost:8400'
 
 def fetch(path):
     try:
-        with urllib.request.urlopen(BEACON + path, timeout=10) as r:
+        with urllib.request.urlopen(API + path, timeout=10) as r:
             return json.loads(r.read())
     except:
         return {}
 
-root = fetch('/')
-eg = root.get('earthgrid', {})
-nodes_data = fetch('/beacon/nodes')
+# Primary data sources (Rust API)
+info = fetch('/node-info')
+peers_data = fetch('/peers')
 coverage = fetch('/stats/coverage')
 uptake = fetch('/stats/uptake?period_days=365')
 ingest = fetch('/stats/ingest?period_days=365')
-requests_data = fetch('/stats/requests')
+stats_data = fetch('/stats')
 
-nodes = nodes_data.get('nodes', [])
-alive = [n for n in nodes if n.get('alive')]
+# Peers
+peers = peers_data.get('peers', [])
+alive_peers = [p for p in peers if p.get('alive', True)]
 
-# Compute totals - fallback to root/earthgrid if /nodes not available
-total_bytes = sum(n.get('chunks_bytes', 0) for n in nodes) or eg.get('chunks_bytes', 0)
-total_avail_gb = sum(n.get('storage_limit_gb', 0) for n in nodes)
-nodes_total = len(nodes) if nodes else (1 if eg.get('item_count', 0) > 0 else 0)
-nodes_alive = len(alive) if nodes else nodes_total
+# Network totals: this node + peers
+self_bytes = info.get('storage_bytes', 0)
+self_gb = info.get('storage_gb', 0)
+peer_bytes = sum(p.get('storage_bytes', p.get('chunks_bytes', 0)) for p in alive_peers)
+peer_gb = sum(p.get('storage_gb', p.get('storage_limit_gb', 0)) for p in alive_peers)
 
-try:
-    rep = fetch('/replication/health')
-    redundancy = rep.get('average_replication', 1.0)
-except:
-    redundancy = 1.0
+nodes_alive = 1 + len(alive_peers)  # self + alive peers
+nodes_total = 1 + len(peers)
 
 stats = {
     'updated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-    'version': eg.get('version', root.get('backend_version', '')),
+    'version': info.get('version', ''),
     'network': {
         'nodes_alive': nodes_alive,
         'nodes_total': nodes_total,
-        'total_bytes': total_bytes,
-        'available_storage_gb': total_avail_gb or eg.get('storage_limit_gb', 0),
-        'redundancy': round(redundancy, 1),
+        'total_bytes': self_bytes + peer_bytes,
+        'available_storage_gb': self_gb + peer_gb,
+        'redundancy': 1.0,
     },
-    'coverage': {c['collection']: {'items': c.get('item_count',0), 'tiles': c.get('item_count',0)} for c in coverage.get('collections', [])},
+    'coverage': {
+        c['collection']: {
+            'items': c.get('item_count', 0),
+            'tiles': c.get('item_count', 0),
+        }
+        for c in coverage.get('collections', [])
+    },
     'spatial_coverage': fetch('/coverage/spatial'),
     'uptake': uptake,
     'ingest': ingest,
-    'items': sum(n.get('item_count', 0) for n in alive) or eg.get('item_count', 0),
-    'chunks': sum(n.get('chunk_count', 0) for n in alive) or eg.get('chunks', 0),
-    'km2_requested': requests_data.get('total_km2_queried', requests_data.get('total_km2_requested', 0)),
+    'items': info.get('items', info.get('item_count', 0)),
+    'chunks': info.get('chunks', 0),
+    'km2_requested': uptake.get('summary', {}).get('total_aoi_km2', 0),
     'operations': fetch('/process/operations').get('operations', []),
     'gamification': {
         'leaderboard_nodes': fetch('/gamification/leaderboard?type=nodes&limit=20'),
@@ -80,7 +83,7 @@ print(json.dumps(stats, indent=2))
 HISTORY_FILE="$REPO/data/ingest-history.jsonl"
 mkdir -p "$REPO/data"
 python3 -c "
-import json, sys
+import json
 from datetime import datetime, timezone
 
 stats = json.load(open('$STATS_FILE'))
