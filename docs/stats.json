@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-20T18:00:02Z",
+  "updated": "2026-03-20T18:10:01Z",
   "version": "",
   "network": {
     "nodes_alive": 0,
@@ -412,10 +412,10 @@
     },
     "economy": {
       "data_served_gb": 0.0,
-      "estimated_replication_factor": 1.0,
+      "estimated_replication_factor": 0.0,
       "factors": {
         "data_redundancy": {
-          "score": 15.0,
+          "score": 0.0,
           "weight": 0.25
         },
         "data_reuse": {
@@ -423,7 +423,7 @@
           "weight": 0.2
         },
         "node_diversity": {
-          "score": 20.0,
+          "score": 0.0,
           "weight": 0.25
         },
         "storage_headroom": {
@@ -431,11 +431,11 @@
           "weight": 0.3
         }
       },
-      "label": "Growing",
-      "nodes_alive": 1,
+      "label": "Needs attention",
+      "nodes_alive": 0,
       "nodes_total": 4,
-      "score": 40,
-      "status": "yellow",
+      "score": 31,
+      "status": "red",
       "storage_pledged_gb": 20000.0,
       "storage_used_gb": 1939.2,
       "storage_utilization_pct": 10.0
@@ -450,7 +450,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 5h",
-          "remaining_seconds": 194397.96182847023,
+          "remaining_seconds": 193798.46045660973,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -463,7 +463,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 5h",
-          "remaining_seconds": 194397.96182847023,
+          "remaining_seconds": 193798.46045660973,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -476,7 +476,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "2d 5h",
-          "remaining_seconds": 194397.96182847023,
+          "remaining_seconds": 193798.46045660973,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -489,7 +489,7 @@
           "participants": 0,
           "period": "monthly",
           "remaining_human": "11d 5h",
-          "remaining_seconds": 971997.9618284702,
+          "remaining_seconds": 971398.4604566097,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []
