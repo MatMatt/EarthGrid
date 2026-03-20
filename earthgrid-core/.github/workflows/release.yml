@@ -76,17 +76,33 @@ jobs:
         shell: bash -l {0}
         run: conda install -y gdal libgdal
       - uses: dtolnay/rust-toolchain@stable
-      - name: Find GDAL and Build
+      - name: Set GDAL env
         shell: bash -l {0}
-        working-directory: earthgrid-core
         run: |
-          echo "CONDA_PREFIX=$CONDA_PREFIX"
-          ls "$CONDA_PREFIX/Library/lib/" | grep -i gdal || true
-          ls "$CONDA_PREFIX/Library/bin/" | grep -i gdal || true
-          export GDAL_LIB_DIR="$CONDA_PREFIX/Library/lib"
-          export GDAL_HOME="$CONDA_PREFIX/Library"
-          export PATH="$CONDA_PREFIX/Library/bin:$PATH"
-          cargo build --release
+          CONDA_PREFIX=$(conda info --base)/envs/build
+          echo "GDAL_HOME=$CONDA_PREFIX/Library" >> $GITHUB_ENV
+          echo "GDAL_LIB_DIR=$CONDA_PREFIX/Library/lib" >> $GITHUB_ENV
+          echo "GDAL_INCLUDE_DIR=$CONDA_PREFIX/Library/include" >> $GITHUB_ENV
+          echo "$CONDA_PREFIX/Library/bin" >> $GITHUB_PATH
+      - name: Create gdal.dll.lib symlink
+        shell: pwsh
+        run: |
+          $lib = "C:\Miniconda\envs\build\Library\lib"
+          $src = Get-ChildItem "$lib" -Filter "gdal*.lib" | Select-Object -First 1
+          if ($src) {
+            Write-Host "Found: $($src.Name)"
+            if ($src.Name -ne "gdal.dll.lib") {
+              Copy-Item "$lib\$($src.Name)" "$lib\gdal.dll.lib"
+              Write-Host "Copied as gdal.dll.lib"
+            }
+          } else {
+            Write-Host "No gdal*.lib found in $lib"
+            Get-ChildItem "$lib" | Select-Object Name
+          }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        working-directory: earthgrid-core
+        run: cargo build --release
       - name: Package
         run: |
           mkdir dist
