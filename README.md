@@ -414,7 +414,7 @@ Live network stats: **[matmatt.github.io/EarthGrid](https://matmatt.github.io/Ea
 
 ## Disclaimer
 
-EarthGrid is provided **"as is"**, without warranty of any kind. Not affiliated with ESA, EEA, Copernicus, USGS, or any other data provider.
+EarthGrid is provided **"as is"**, without warranty of any kind. Not affiliated with ESA, Copernicus, USGS, or any other data provider.
 
 ## License
 
