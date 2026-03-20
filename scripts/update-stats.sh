@@ -38,6 +38,16 @@ self_gb = info.get('storage_gb', 0)
 peer_bytes = sum(p.get('storage_bytes', p.get('chunks_bytes', 0)) for p in alive_peers)
 peer_gb = sum(p.get('storage_gb', p.get('storage_limit_gb', 0)) for p in alive_peers)
 
+# Available storage: check disk free space on /mnt/sda (EarthGrid data dir)
+import shutil
+try:
+    usage = shutil.disk_usage('/mnt/sda')
+    avail_gb = usage.free / (1024**3)
+except:
+    avail_gb = 0
+# Add peer available storage
+avail_gb += sum(p.get('available_gb', p.get('storage_limit_gb', 0)) for p in alive_peers)
+
 nodes_alive = 1 + len(alive_peers)  # self + alive peers
 nodes_total = 1 + len(peers)
 
@@ -48,7 +58,7 @@ stats = {
         'nodes_alive': nodes_alive,
         'nodes_total': nodes_total,
         'total_bytes': self_bytes + peer_bytes,
-        'available_storage_gb': self_gb + peer_gb,
+        'available_storage_gb': round(avail_gb, 1),
         'redundancy': 1.0,
     },
     'coverage': {
