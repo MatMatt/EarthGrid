@@ -166,7 +166,10 @@ fn build_search_body(
         "collections": [collection],
         "bbox": [bbox[0], bbox[1], bbox[2], bbox[3]],
         "limit": limit,
-        "datetime": format!("{}/{}", start_date, end_date),
+        "datetime": format!("{}/{}",
+            if start_date.contains('T') { start_date.to_string() } else { format!("{}T00:00:00Z", start_date) },
+            if end_date.contains('T') { end_date.to_string() } else { format!("{}T23:59:59Z", end_date) }
+        ),
         "query": {
             "eo:cloud_cover": { "lte": cloud_cover }
         },
