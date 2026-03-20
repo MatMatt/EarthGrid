@@ -38,15 +38,16 @@ self_gb = info.get('storage_gb', 0)
 peer_bytes = sum(p.get('storage_bytes', p.get('chunks_bytes', 0)) for p in alive_peers)
 peer_gb = sum(p.get('storage_gb', p.get('storage_limit_gb', 0)) for p in alive_peers)
 
-# Available storage: check disk free space on /mnt/sda (EarthGrid data dir)
-import shutil
+# Available storage: pledged limit from config (not raw disk free)
+import json as _json
 try:
-    usage = shutil.disk_usage('/mnt/sda')
-    avail_gb = usage.free / (1024**3)
+    with open('/home/matteo/.earthgrid/config.json') as _f:
+        _cfg = _json.load(_f)
+    avail_gb = _cfg.get('storage_limit_gb', 0)
 except:
     avail_gb = 0
-# Add peer available storage
-avail_gb += sum(p.get('available_gb', p.get('storage_limit_gb', 0)) for p in alive_peers)
+# Add peer pledged storage
+avail_gb += sum(p.get('storage_limit_gb', p.get('available_gb', 0)) for p in alive_peers)
 
 nodes_alive = 1 + len(alive_peers)  # self + alive peers
 nodes_total = 1 + len(peers)
