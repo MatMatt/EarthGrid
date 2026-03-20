@@ -67,8 +67,23 @@ sudo apt install libgdal-dev
 # macOS
 brew install gdal
 
-# Windows
-# GDAL included via vcpkg or OSGeo4W
+# Windows — choose one of:
+# Option 1: OSGeo4W (recommended, simple installer)
+#   https://trac.osgeo.org/osgeo4w/
+#   Download: https://download.osgeo.org/osgeo4w/v2/osgeo4w-setup.exe
+#   Install GDAL, then set:
+#     set GDAL_HOME=C:\OSGeo4W
+#     set GDAL_LIB_DIR=C:\OSGeo4W\lib
+#
+# Option 2: vcpkg (Microsoft package manager)
+#   https://vcpkg.io
+#   vcpkg install gdal:x64-windows
+#   set GDAL_HOME=C:\vcpkg\installed\x64-windows
+#   set GDAL_LIB_DIR=C:\vcpkg\installed\x64-windows\lib
+#
+# Option 3: conda-forge
+#   conda install -c conda-forge gdal
+#   (GDAL_HOME auto-set by conda environment)
 ```
 
 ### Build from source
