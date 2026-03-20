@@ -49,9 +49,17 @@ Download the latest release for your platform from [**Releases**](https://github
 | 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | `earthgrid-tray-windows-x86_64.exe` |
 
 ```bash
-# Linux / macOS
+# Linux / macOS (binary)
 chmod +x earthgrid-*
 sudo mv earthgrid-linux-x86_64 /usr/local/bin/earthgrid
+```
+
+#### Debian/Ubuntu (.deb package)
+
+```bash
+# Downloads and installs earthgrid-core + GDAL dependency
+sudo dpkg -i earthgrid-core_*_amd64.deb
+sudo apt-get install -f  # resolve dependencies if needed
 ```
 
 ### Prerequisites
