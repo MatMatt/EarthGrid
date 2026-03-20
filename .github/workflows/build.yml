@@ -1,0 +1,102 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgdal-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        working-directory: earthgrid-core
+        run: cargo build --release
+      - name: Strip binary
+        run: strip earthgrid-core/target/release/earthgrid-core
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp earthgrid-core/target/release/earthgrid-core dist/earthgrid-linux-x86_64
+          cd dist && tar czf earthgrid-linux-x86_64.tar.gz earthgrid-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist/earthgrid-linux-x86_64.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install gdal
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        working-directory: earthgrid-core
+        run: cargo build --release
+      - name: Strip binary
+        run: strip earthgrid-core/target/release/earthgrid-core
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp earthgrid-core/target/release/earthgrid-core dist/earthgrid-macos-arm64
+          cd dist && tar czf earthgrid-macos-arm64.tar.gz earthgrid-macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/earthgrid-macos-arm64.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GDAL
+        shell: pwsh
+        run: |
+          choco install gdal --no-progress -y
+          $gdalPath = (Get-ChildItem "C:\tools\gdal*" -Directory | Select-Object -First 1).FullName
+          echo "GDAL_HOME=$gdalPath" >> $env:GITHUB_ENV
+          echo "GDAL_LIB_DIR=$gdalPath\lib" >> $env:GITHUB_ENV
+          echo "$gdalPath\bin" >> $env:GITHUB_PATH
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        working-directory: earthgrid-core
+        run: cargo build --release
+      - name: Package
+        shell: pwsh
+        run: |
+          mkdir dist
+          copy earthgrid-core\target\release\earthgrid-core.exe dist\earthgrid-windows-x86_64.exe
+          Compress-Archive -Path dist\earthgrid-windows-x86_64.exe -DestinationPath dist\earthgrid-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/earthgrid-windows-x86_64.zip
+
+  release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/linux-x86_64/earthgrid-linux-x86_64.tar.gz
+            artifacts/macos-arm64/earthgrid-macos-arm64.tar.gz
+            artifacts/windows-x86_64/earthgrid-windows-x86_64.zip
+          generate_release_notes: true
