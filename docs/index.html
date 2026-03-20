@@ -257,8 +257,10 @@ function showCoverageDetail(colId, cell) {
 
   // Group dates by month for temporal chart
   const months = {};
-  for (const d of cell.dates) {
-    const m = d.substring(0, 7); // YYYY-MM
+  const dates = cell.dates || [];
+  for (const d of dates) {
+    // Handle both YYYYMMDD and YYYY-MM-DD formats
+    const m = d.length === 8 ? d.substring(0,4) + '-' + d.substring(4,6) : d.substring(0, 7);
     months[m] = (months[m] || 0) + 1;
   }
 
@@ -318,15 +320,25 @@ function showCoverageDetail(colId, cell) {
     barsHtml += yearLabels;
   }
 
-  const bandsHtml = cell.bands.length > 0
-    ? cell.bands.map(b => '<code style="margin:0 3px;font-size:0.8rem">' + b + '</code>').join('')
+  const bands = cell.bands || [];
+  const bandsHtml = bands.length > 0
+    ? bands.map(b => '<code style="margin:0 3px;font-size:0.8rem">' + b + '</code>').join('')
     : '<em style="color:var(--dim)">unknown</em>';
+
+  // Compute bbox from polygon if needed
+  const coordsInfo = cell.polygon
+    ? (() => { const lons = cell.polygon.map(c=>c[0]); const lats = cell.polygon.map(c=>c[1]);
+       return [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)]; })()
+    : (cell.bbox || [0,0,0,0]);
+  const itemCount = cell.item_count || (cell.date_count * Math.max(bands.length, 1));
+  const lastDate = cell.last_date || ((cell.dates && cell.dates.length > 0) ? cell.dates[cell.dates.length-1] : '—');
 
   panel.innerHTML =
     '<div style="display:flex;justify-content:space-between;align-items:start">' +
-    '<div><h3 style="margin:0 0 4px;font-size:1.1rem">' + sensorLabel(colId) + '</h3>' +
+    '<div><h3 style="margin:0 0 4px;font-size:1.1rem">' + sensorLabel(colId) +
+    (cell.tile_id ? ' · ' + cell.tile_id : '') + '</h3>' +
     '<div style="font-size:0.8rem;color:var(--dim)">' +
-    cell.bbox.map(v => v.toFixed(1) + '°').join(', ') + '</div></div>' +
+    coordsInfo.map(v => v.toFixed(1) + '°').join(', ') + '</div></div>' +
     '<button onclick="document.getElementById(\'coverageDetail\').style.display=\'none\'" ' +
     'style="background:none;border:none;color:var(--dim);font-size:1.2rem;cursor:pointer">✕</button></div>' +
     '<div style="display:flex;gap:2rem;margin:1rem 0;flex-wrap:wrap">' +
