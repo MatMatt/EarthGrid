@@ -84,20 +84,25 @@ jobs:
           echo "GDAL_LIB_DIR=$CONDA_PREFIX/Library/lib" >> $GITHUB_ENV
           echo "GDAL_INCLUDE_DIR=$CONDA_PREFIX/Library/include" >> $GITHUB_ENV
           echo "$CONDA_PREFIX/Library/bin" >> $GITHUB_PATH
-      - name: Create gdal.dll.lib symlink
+      - name: Create gdal.dll.lib alias
         shell: pwsh
         run: |
           $lib = "C:\Miniconda\envs\build\Library\lib"
+          $bin = "C:\Miniconda\envs\build\Library\bin"
+          Write-Host "=== lib/ contents (gdal*) ==="
+          Get-ChildItem "$lib" -Filter "gdal*" | Select-Object Name | Format-Table
+          Write-Host "=== bin/ contents (gdal*) ==="
+          Get-ChildItem "$bin" -Filter "gdal*" | Select-Object Name | Format-Table
+          # Find the import lib (gdal_i.lib or gdal.lib)
           $src = Get-ChildItem "$lib" -Filter "gdal*.lib" | Select-Object -First 1
           if ($src) {
-            Write-Host "Found: $($src.Name)"
-            if ($src.Name -ne "gdal.dll.lib") {
-              Copy-Item "$lib\$($src.Name)" "$lib\gdal.dll.lib"
-              Write-Host "Copied as gdal.dll.lib"
-            }
+            Write-Host "Source: $($src.FullName)"
+            # Place copy in both lib and bin so linker finds it regardless
+            Copy-Item $src.FullName "$lib\gdal.dll.lib" -Force
+            Copy-Item $src.FullName "$bin\gdal.dll.lib" -Force
+            Write-Host "Placed gdal.dll.lib in lib/ and bin/"
           } else {
-            Write-Host "No gdal*.lib found in $lib"
-            Get-ChildItem "$lib" | Select-Object Name
+            Write-Error "No gdal*.lib found!"
           }
       - uses: dtolnay/rust-toolchain@stable
       - name: Build
