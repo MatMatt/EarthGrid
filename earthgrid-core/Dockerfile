@@ -17,7 +17,7 @@ RUN strip target/release/earthgrid-core
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
-    libgdal34 \
+    libgdal32 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/target/release/earthgrid-core /usr/local/bin/earthgrid-core
