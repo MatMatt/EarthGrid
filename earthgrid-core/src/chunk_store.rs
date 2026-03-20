@@ -50,6 +50,8 @@ pub struct ChunkStore {
     limit_bytes: u64,
     stats: StoreStats,
     stats_path: PathBuf,
+    cached_chunk_count: usize,
+    cached_total_bytes: u64,
 }
 
 impl ChunkStore {
@@ -71,11 +73,37 @@ impl ChunkStore {
             0
         };
 
+        // Scan store once at startup to populate caches
+        let mut cached_chunk_count = 0usize;
+        let mut cached_total_bytes = 0u64;
+        for entry in WalkDir::new(store_path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                let name = entry.file_name().to_string_lossy();
+                if name.len() == 64 {
+                    cached_chunk_count += 1;
+                    if let Ok(meta) = entry.metadata() {
+                        cached_total_bytes += meta.len();
+                    }
+                }
+            }
+        }
+
+        println!(
+            "📦 ChunkStore: {} chunks, {:.1} GB",
+            cached_chunk_count,
+            cached_total_bytes as f64 / 1_073_741_824.0
+        );
+
         Ok(Self {
             store_path: store_path.to_path_buf(),
             limit_bytes,
             stats,
             stats_path,
+            cached_chunk_count,
+            cached_total_bytes,
         })
     }
 
@@ -114,6 +142,10 @@ impl ChunkStore {
             fs::create_dir_all(parent)?;
         }
         fs::write(&path, data)?;
+
+        // Update caches
+        self.cached_chunk_count += 1;
+        self.cached_total_bytes += data.len() as u64;
 
         // Update stats
         self.stats.chunks_stored += 1;
@@ -170,7 +202,12 @@ impl ChunkStore {
     pub fn delete(&mut self, hash: &str) -> Result<bool> {
         let path = self.chunk_path(hash);
         if path.exists() {
+            // Get file size before deleting for cache update
+            let file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             fs::remove_file(&path)?;
+            // Update caches
+            self.cached_chunk_count = self.cached_chunk_count.saturating_sub(1);
+            self.cached_total_bytes = self.cached_total_bytes.saturating_sub(file_size);
             Ok(true)
         } else {
             Ok(false)
@@ -194,28 +231,14 @@ impl ChunkStore {
         chunks
     }
 
-    /// Number of chunks in the store.
+    /// Number of chunks in the store (cached).
     pub fn chunk_count(&self) -> usize {
-        self.list_chunks().len()
+        self.cached_chunk_count
     }
 
-    /// Total bytes used by all chunks.
+    /// Total bytes used by all chunks (cached).
     pub fn total_bytes(&self) -> u64 {
-        let mut total = 0u64;
-        for entry in WalkDir::new(&self.store_path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if entry.file_type().is_file() {
-                let name = entry.file_name().to_string_lossy();
-                if name.len() == 64 {
-                    if let Ok(meta) = entry.metadata() {
-                        total += meta.len();
-                    }
-                }
-            }
-        }
-        total
+        self.cached_total_bytes
     }
 
     /// Get current store statistics.
@@ -352,5 +375,32 @@ mod tests {
         store.put(b"data1").unwrap();
         store.put(b"data2").unwrap();
         assert_eq!(store.stats().chunks_stored, 2);
+    }
+
+    #[test]
+    fn test_cached_counts() {
+        let (mut store, _dir) = test_store();
+        assert_eq!(store.chunk_count(), 0);
+        assert_eq!(store.total_bytes(), 0);
+
+        let data = b"cached count test";
+        store.put(data).unwrap();
+        assert_eq!(store.chunk_count(), 1);
+        assert_eq!(store.total_bytes(), data.len() as u64);
+
+        store.put(b"second chunk").unwrap();
+        assert_eq!(store.chunk_count(), 2);
+    }
+
+    #[test]
+    fn test_delete_updates_cache() {
+        let (mut store, _dir) = test_store();
+        let data = b"to be deleted";
+        let hash = store.put(data).unwrap();
+        assert_eq!(store.chunk_count(), 1);
+
+        store.delete(&hash).unwrap();
+        assert_eq!(store.chunk_count(), 0);
+        assert_eq!(store.total_bytes(), 0);
     }
 }
