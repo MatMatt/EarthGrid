@@ -621,8 +621,23 @@ mod tests {
 
     // --- wrap_netcdf ---
 
+    /// netCDF-4 uses an HDF5 superblock (`\x89HDF`); many GDAL builds (e.g. Windows conda)
+    /// still emit classic netCDF-3 (`CDF` + version byte 1 or 2). Both are valid products.
+    fn assert_valid_netcdf_file(nc: &[u8]) {
+        assert!(nc.len() > 50, "netCDF too small: {} bytes", nc.len());
+        let hdf5_nc4 = nc.len() >= 4 && &nc[..4] == b"\x89HDF";
+        let classic = nc.len() >= 4
+            && &nc[..3] == b"CDF"
+            && (nc[3] == 1 || nc[3] == 2);
+        assert!(
+            hdf5_nc4 || classic,
+            "expected netCDF-4 (HDF5) or classic netCDF magic, got first bytes: {:?}",
+            &nc[..nc.len().min(8)]
+        );
+    }
+
     #[test]
-    fn wrap_netcdf_produces_valid_nc4() {
+    fn wrap_netcdf_produces_valid_file() {
         let meta = RasterMeta {
             width: 4, height: 4, crs: "EPSG:4326".to_string(),
             transform: [0.0, 1.0, 0.0, 4.0, 0.0, -1.0],
@@ -632,9 +647,7 @@ mod tests {
             .flat_map(|v| v.to_le_bytes())
             .collect();
         let nc = wrap_netcdf(&pixels, &meta).expect("wrap_netcdf failed");
-        assert!(nc.len() > 100, "netCDF too small: {} bytes", nc.len());
-        // netCDF-4 is HDF5: magic \x89HDF
-        assert_eq!(&nc[..4], b"\x89HDF", "not an HDF5/netCDF-4 header");
+        assert_valid_netcdf_file(&nc);
     }
 
     #[test]
@@ -675,7 +688,7 @@ mod tests {
             .iter().flat_map(|v| v.to_le_bytes()).collect();
         let (bytes, ct) = wrap_output(&pixels, &meta, "netCDF").unwrap();
         assert_eq!(ct, "application/x-netcdf");
-        assert_eq!(&bytes[..4], b"\x89HDF");
+        assert_valid_netcdf_file(&bytes);
     }
 
     #[test]
