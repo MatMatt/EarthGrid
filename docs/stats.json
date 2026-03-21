@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-21T09:50:01Z",
+  "updated": "2026-03-21T10:00:01Z",
   "version": "0.1.0",
   "network": {
     "nodes_alive": 1,
@@ -10,8 +10,8 @@
   },
   "coverage": {
     "sentinel-2-l2a": {
-      "items": 5216,
-      "tiles": 5216
+      "items": 3899,
+      "tiles": 3899
     }
   },
   "spatial_coverage": {
@@ -1570,7 +1570,7 @@
     "total_items": 3,
     "total_items_fetched": 3
   },
-  "items": 5216,
+  "items": 3899,
   "chunks": 1440435,
   "km2_requested": 0,
   "operations": [
@@ -1671,8 +1671,8 @@
           "metric": "items_ingested",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "1d 14h",
-          "remaining_seconds": 137398.40630483627,
+          "remaining_human": "1d 13h",
+          "remaining_seconds": 136798.7707259655,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -1684,8 +1684,8 @@
           "metric": "gb_stored",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "1d 14h",
-          "remaining_seconds": 137398.40630483627,
+          "remaining_human": "1d 13h",
+          "remaining_seconds": 136798.7707259655,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -1697,8 +1697,8 @@
           "metric": "gb_served",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "1d 14h",
-          "remaining_seconds": 137398.40630483627,
+          "remaining_human": "1d 13h",
+          "remaining_seconds": 136798.7707259655,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -1710,8 +1710,8 @@
           "metric": "score",
           "participants": 0,
           "period": "monthly",
-          "remaining_human": "10d 14h",
-          "remaining_seconds": 914998.4063048363,
+          "remaining_human": "10d 13h",
+          "remaining_seconds": 914398.7707259655,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []
