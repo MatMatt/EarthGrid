@@ -472,9 +472,9 @@ const EARTHGRID_API = (() => {
     const meta = document.querySelector('meta[name="earthgrid-api"]');
     if (meta && meta.content) return meta.content.replace(/\/$/, '');
   } catch(e) {}
-  // On GitHub Pages: use local stats.json (no CORS issues)
+  // On GitHub Pages: use the beacon API (CORS enabled)
   if (location.hostname.includes('github.io')) {
-    return '';
+    return 'https://mattiuzzi.zapto.org/earthgrid';
   }
   // Same origin (served by node or proxied)
   return '';
@@ -768,8 +768,7 @@ function renderChallenges(challenges) {
   document.getElementById('challengesList').innerHTML = h;
 }
 
-if (EARTHGRID_API) setInterval(() => { loadLeaderboard();
-    loadEconomy(); loadFeed(); loadChallenges(); }, 60000);
+setInterval(load, 60000);
 </script>
 
 <div class="section">
@@ -1126,12 +1125,123 @@ function fmtGB(gb) { return gb >= 1000 ? (gb/1000).toFixed(1)+' TB' : gb.toFixed
 function fmtKm2(k) { return k >= 1e6 ? (k/1e6).toFixed(1)+'M' : k >= 1000 ? (k/1000).toFixed(0)+'k' : k.toFixed(0); }
 
 async function load() {
+  const api = EARTHGRID_API || '';
+
+  // Helper to fetch JSON without throwing
+  async function safeJson(url) {
+    try { const r = await fetch(url); return r.ok ? r.json() : null; }
+    catch(e) { return null; }
+  }
+
+  let d = {};
+  let apiOk = false;
+
+  // Fetch all live endpoints in parallel
   try {
-    const statsUrl = EARTHGRID_API ? EARTHGRID_API + '/stats.json?t=' + Date.now() : 'stats.json?t=' + Date.now();
-    const r = await fetch(statsUrl);
-    if (!r.ok) throw new Error('stats.json not found');
-    const d = await r.json();
-    const net = d.network || {};
+    const [nodesData, nodeInfoData, statsData, coverageData, spatialData,
+           uptakeData, ingestData, opsData,
+           lbNodes, lbUsers, lbGroups, achData, feedData, economyData, challengesData] =
+      await Promise.all([
+        safeJson(api + '/beacon/nodes'),
+        safeJson(api + '/node-info'),
+        safeJson(api + '/stats'),
+        safeJson(api + '/stats/coverage'),
+        safeJson(api + '/coverage/spatial'),
+        safeJson(api + '/stats/uptake?period_days=365'),
+        safeJson(api + '/stats/ingest?period_days=365'),
+        safeJson(api + '/process/operations'),
+        safeJson(api + '/gamification/leaderboard?type=nodes&limit=20'),
+        safeJson(api + '/gamification/leaderboard?type=users&limit=20'),
+        safeJson(api + '/gamification/leaderboard?type=groups&limit=20'),
+        safeJson(api + '/gamification/achievements'),
+        safeJson(api + '/gamification/feed?limit=30'),
+        safeJson(api + '/gamification/economy'),
+        safeJson(api + '/gamification/challenges'),
+      ]);
+
+    if (nodesData || statsData || uptakeData || ingestData) {
+      apiOk = true;
+
+      // Build network stats from /beacon/nodes
+      const nodes = (nodesData && nodesData.nodes) || [];
+      const aliveNodes = nodes.filter(n => n.alive);
+      const totalBytesFromNodes = nodes.reduce((s, n) => s + (n.chunks_bytes || 0), 0);
+      const availStorageGB = aliveNodes.reduce((s, n) => {
+        return s + Math.max(0, (n.storage_limit_gb || 0) - (n.chunks_bytes || 0) / 1e9);
+      }, 0);
+
+      d.network = {
+        nodes_alive: aliveNodes.length,
+        nodes_total: nodes.length,
+        total_bytes: (statsData && statsData.total_bytes) || totalBytesFromNodes,
+        available_storage_gb: availStorageGB,
+      };
+      d.nodes = nodes;
+
+      // Version from /node-info
+      if (nodeInfoData && nodeInfoData.version) d.version = nodeInfoData.version;
+
+      // Coverage table from /stats/coverage
+      d.coverage = coverageData || {};
+
+      // Spatial coverage map from /coverage/spatial
+      d.spatial_coverage = spatialData || null;
+
+      // Uptake from /stats/uptake
+      if (uptakeData) {
+        const usum = uptakeData.summary || {};
+        d.uptake = {
+          summary: {
+            total_requests: usum.total_requests || 0,
+            total_gb: usum.total_gb || (statsData ? (statsData.bytes_served || 0) / 1e9 : 0),
+            total_aoi_km2: usum.total_aoi_km2 || 0,
+          },
+          by_collection: uptakeData.by_collection || [],
+          daily_trend: uptakeData.daily_trend || uptakeData.daily || [],
+          top_processes: uptakeData.top_processes || [],
+        };
+        d.km2_requested = usum.total_aoi_km2 || 0;
+      }
+
+      // Ingest from /stats/ingest
+      if (ingestData) d.ingest = ingestData;
+
+      // Operations from /process/operations
+      if (opsData) d.operations = opsData.operations || (Array.isArray(opsData) ? opsData : []);
+
+      // Gamification from individual endpoints
+      d.gamification = {
+        leaderboard_nodes: lbNodes || {},
+        leaderboard_users: lbUsers || {},
+        leaderboard_groups: lbGroups || {},
+        achievements: achData || {},
+        feed: feedData || {},
+        economy: economyData || null,
+        challenges: challengesData || null,
+      };
+
+      d.updated = new Date().toISOString();
+    }
+  } catch(apiErr) {
+    console.warn('Live API error:', apiErr);
+  }
+
+  // Fallback to stats.json if no live data
+  if (!apiOk) {
+    try {
+      const statsUrl = api ? api + '/stats.json?t=' + Date.now() : 'stats.json?t=' + Date.now();
+      const r = await fetch(statsUrl);
+      if (!r.ok) throw new Error('stats.json not found');
+      d = await r.json();
+      console.log('Using stats.json fallback');
+    } catch(fbErr) {
+      console.error('Load error:', fbErr);
+      return;
+    }
+  }
+
+  try {
+  const net = d.network || {};
 
     // Stat cards
     document.getElementById('vNodes').textContent = net.nodes_alive || 0;
@@ -1321,8 +1431,8 @@ async function load() {
     loadAchievements(d);
     loadFeed(d);
 
-  } catch(e) {
-    console.error('Load error:', e);
+  } catch(renderErr) {
+    console.error('Render error:', renderErr);
   }
 }
 load();
