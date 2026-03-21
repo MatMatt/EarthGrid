@@ -262,16 +262,16 @@ code:hover::after { opacity: 0.8; }
           <div id="fetch-map" style="height:340px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:8px"></div>
           <div style="font-size:11px;color:var(--muted)">Draw a rectangle on the map or enter coordinates manually</div>
         </div>
-        <div style="min-width:260px;max-width:300px">
+        <div style="min-width:280px;max-width:360px">
           <div class="form-group" style="margin-bottom:10px">
             <label>Collection</label>
             <select id="fetch-collection" style="width:100%"><option value="sentinel-2-l2a">sentinel-2-l2a</option></select>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
-            <div class="form-group"><label>West</label><input type="number" id="fetch-west" step="0.01" placeholder="9.0"></div>
-            <div class="form-group"><label>East</label><input type="number" id="fetch-east" step="0.01" placeholder="17.0"></div>
-            <div class="form-group"><label>South</label><input type="number" id="fetch-south" step="0.01" placeholder="46.0"></div>
-            <div class="form-group"><label>North</label><input type="number" id="fetch-north" step="0.01" placeholder="49.0"></div>
+            <div class="form-group"><label>West</label><input type="number" id="fetch-west" step="0.01" placeholder="9.0" style="width:100%"></div>
+            <div class="form-group"><label>East</label><input type="number" id="fetch-east" step="0.01" placeholder="17.0" style="width:100%"></div>
+            <div class="form-group"><label>South</label><input type="number" id="fetch-south" step="0.01" placeholder="46.0" style="width:100%"></div>
+            <div class="form-group"><label>North</label><input type="number" id="fetch-north" step="0.01" placeholder="49.0" style="width:100%"></div>
           </div>
           <div class="form-group" style="margin-bottom:10px">
             <label>Date Range</label>
@@ -289,6 +289,7 @@ code:hover::after { opacity: 0.8; }
         </div>
       </div>
       <div id="fetch-result" style="margin-top:8px"></div>
+      <div id="fetch-log" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:12px;color:var(--muted)"></div>
     </div>
 
     <div class="card">
@@ -916,6 +917,18 @@ function syncMapRect() {
   _fetchMap.fitBounds(bounds.pad(0.3));
 }
 
+function fetchLog(msg, type) {
+  const log = document.getElementById('fetch-log');
+  log.style.display = 'block';
+  const line = document.createElement('div');
+  line.style.marginBottom = '2px';
+  const ts = new Date().toLocaleTimeString();
+  const color = type === 'error' ? 'var(--red)' : type === 'success' ? 'var(--green)' : type === 'warn' ? 'var(--yellow)' : 'var(--muted)';
+  line.innerHTML = '<span style="color:var(--muted)">[' + ts + ']</span> <span style="color:' + color + '">' + msg + '</span>';
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
 async function triggerFetch() {
   const w = document.getElementById('fetch-west').value.trim();
   const s = document.getElementById('fetch-south').value.trim();
@@ -930,6 +943,10 @@ async function triggerFetch() {
   const bbox = (w && s && e && n) ? [w,s,e,n].join(',') : '';
   if (!bbox) { showAlert('fetch-result','Draw a rectangle or enter BBox coordinates','error'); return; }
 
+  // Clear old log
+  const log = document.getElementById('fetch-log');
+  log.innerHTML = '';
+
   const params = new URLSearchParams();
   params.set('collection', col);
   params.set('bbox', bbox);
@@ -938,13 +955,38 @@ async function triggerFetch() {
   params.set('cloud_cover', cloud);
   params.set('limit', limit);
 
-  showAlert('fetch-result', '\u23f3 Fetching data... this may take a while', 'info');
+  const areaKm2 = Math.abs((e-w) * (n-s) * 111 * 111 * Math.cos((+s + +n)/2 * Math.PI/180));
+  fetchLog('\u2139 Collection: <b>' + col + '</b>');
+  fetchLog('\u2139 BBox: ' + [w,s,e,n].join(', ') + ' (~' + Math.round(areaKm2).toLocaleString() + ' km\u00b2)');
+  if (start || end) fetchLog('\u2139 Date range: ' + (start||'*') + ' to ' + (end||'*'));
+  fetchLog('\u2139 Cloud cover \u2264 ' + cloud + '%, limit ' + limit + ' scenes');
+  fetchLog('\u23f3 Querying STAC catalog...', 'warn');
+  showAlert('fetch-result', '\u23f3 Fetching...', 'info');
+
   try {
     const data = await apiFetch('/fetch?' + params.toString(), {method:'POST'});
-    const msg = data.message || data.error || JSON.stringify(data).substring(0,200);
-    showAlert('fetch-result', '\u2713 ' + msg, 'success');
+    if (data.items_found !== undefined) {
+      fetchLog('\ud83d\udce1 Found ' + data.items_found + ' matching scenes', 'success');
+    }
+    if (data.items_ingested !== undefined) {
+      fetchLog('\u2705 Ingested ' + data.items_ingested + ' items (' + (data.chunks_stored||'?') + ' chunks)', 'success');
+    }
+    if (data.bytes_downloaded !== undefined) {
+      const mb = (data.bytes_downloaded / 1048576).toFixed(1);
+      fetchLog('\ud83d\udce6 Downloaded ' + mb + ' MB');
+    }
+    if (data.tiles) {
+      fetchLog('\ud83d\uddfa Tiles: ' + (Array.isArray(data.tiles) ? data.tiles.join(', ') : data.tiles));
+    }
+    if (data.skipped) {
+      fetchLog('\u23ed Skipped ' + data.skipped + ' (already stored)', 'warn');
+    }
+    const msg = data.message || data.error || JSON.stringify(data).substring(0,300);
+    fetchLog(msg, data.error ? 'error' : 'success');
+    showAlert('fetch-result', '\u2713 Fetch complete', 'success');
     setTimeout(() => loadItems(), 2000);
   } catch(err) {
+    fetchLog('\u274c ' + err.message, 'error');
     showAlert('fetch-result', 'Error: ' + err.message, 'error');
   }
 }
