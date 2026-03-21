@@ -165,7 +165,6 @@ async fn stats(State(state): State<AppState>) -> Json<serde_json::Value> {
 /// GET / — STAC Landing Page (OGC compliant)
 async fn stac_landing(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        // openEO client compatibility: allow base URL discovery on "/"
         "api_version": "1.2.0",
         "backend_version": state.version,
         "type": "Catalog",
@@ -183,13 +182,23 @@ async fn stac_landing(State(state): State<AppState>) -> Json<serde_json::Value> 
             "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30",
             "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson",
         ],
+        "endpoints": [
+            {"path": "/collections",                        "methods": ["GET"]},
+            {"path": "/collections/{collection_id}",        "methods": ["GET"]},
+            {"path": "/collections/{collection_id}/items",  "methods": ["GET"]},
+            {"path": "/processes",                          "methods": ["GET"]},
+            {"path": "/result",                             "methods": ["POST"]},
+            {"path": "/file_formats",                       "methods": ["GET"]},
+            {"path": "/validate",                           "methods": ["POST"]},
+            {"path": "/jobs/{job_id}",                      "methods": ["GET"]},
+        ],
         "links": [
-            {"rel": "self", "href": "/", "type": "application/json"},
-            {"rel": "root", "href": "/", "type": "application/json"},
-            {"rel": "conformance", "href": "/conformance", "type": "application/json"},
-            {"rel": "data", "href": "/stac/collections", "type": "application/json"},
-            {"rel": "search", "href": "/stac/search", "type": "application/geo+json", "method": "GET"},
-            {"rel": "search", "href": "/stac/search", "type": "application/geo+json", "method": "POST"},
+            {"rel": "self",        "href": "/",                "type": "application/json"},
+            {"rel": "root",        "href": "/",                "type": "application/json"},
+            {"rel": "conformance", "href": "/conformance",     "type": "application/json"},
+            {"rel": "data",        "href": "/collections",     "type": "application/json"},
+            {"rel": "search",      "href": "/stac/search",     "type": "application/geo+json", "method": "GET"},
+            {"rel": "search",      "href": "/stac/search",     "type": "application/geo+json", "method": "POST"},
         ]
     }))
 }
