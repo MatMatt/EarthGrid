@@ -1148,7 +1148,7 @@ async fn validate_process_graph(
 
 pub fn openeo_router(state: OpenEOState) -> Router {
     Router::new()
-        .route("/openeo", get(openeo_capabilities))
+        .route("/", get(openeo_capabilities))
         .route("/.well-known/openeo", get(well_known_openeo))
         .route("/credentials/basic", get(credentials_basic))
         .route("/me", get(me_handler))

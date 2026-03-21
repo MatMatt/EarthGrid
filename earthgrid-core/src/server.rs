@@ -164,6 +164,9 @@ async fn stats(State(state): State<AppState>) -> Json<serde_json::Value> {
 /// GET / — STAC Landing Page (OGC compliant)
 async fn stac_landing(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
+        // openEO client compatibility: allow base URL discovery on "/"
+        "api_version": "1.2.0",
+        "backend_version": state.version,
         "type": "Catalog",
         "id": state.node_id,
         "title": state.node_name,
@@ -187,6 +190,27 @@ async fn stac_landing(State(state): State<AppState>) -> Json<serde_json::Value> 
             {"rel": "search", "href": "/stac/search", "type": "application/geo+json", "method": "GET"},
             {"rel": "search", "href": "/stac/search", "type": "application/geo+json", "method": "POST"},
         ]
+    }))
+}
+
+/// GET /.well-known/openeo — openEO API version discovery
+async fn well_known_openeo_alias(headers: HeaderMap) -> Json<serde_json::Value> {
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost:8400");
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    let base_url = format!("{proto}://{host}/");
+
+    Json(serde_json::json!({
+        "versions": [{
+            "url": base_url,
+            "api_version": "1.2.0",
+            "production": false
+        }]
     }))
 }
 
@@ -2425,6 +2449,7 @@ pub fn router(state: AppState) -> Router {
         .route("/stats", get(stats))
         // STAC Landing + Conformance
         .route("/", get(stac_landing))
+        .route("/.well-known/openeo", get(well_known_openeo_alias))
         .route("/conformance", get(stac_conformance))
         // STAC Collections + Items
         .route("/stac/collections", get(list_collections))
