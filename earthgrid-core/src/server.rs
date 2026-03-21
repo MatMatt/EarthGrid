@@ -2552,11 +2552,37 @@ pub async fn serve(
     let _ = gamification_engine.seed_challenges();
 
     // Node identity from env
-    let node_id = env::var("EARTHGRID_NODE_ID").unwrap_or_else(|_| {
-        uuid::Uuid::new_v4().to_string()
-    });
+    let node_id = env::var("EARTHGRID_NODE_ID")
+        .ok()
+        .or_else(|| {
+            // Read persistent node_id from ~/.earthgrid/.node_id
+            let id_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/.node_id");
+            std::fs::read_to_string(&id_path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let node_name = env::var("EARTHGRID_NODE_NAME")
-        .unwrap_or_else(|_| "earthgrid-node".to_string());
+        .ok()
+        .or_else(|| {
+            let cfg_path = data_dir.parent()
+                .unwrap_or(&data_dir)
+                .join("config.json");
+            // Also try ~/.earthgrid/config.json
+            let paths = [
+                cfg_path,
+                dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json"),
+            ];
+            for p in &paths {
+                if let Ok(c) = std::fs::read_to_string(p) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&c) {
+                        if let Some(n) = v["node_name"].as_str() {
+                            return Some(n.to_string());
+                        }
+                    }
+                }
+            }
+            None
+        })
+        .unwrap_or_else(|| "earthgrid-node".to_string());
 
     // Initial peers from env: comma-separated URLs
     let mut peer_registry = PeerRegistry::new();
