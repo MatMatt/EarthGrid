@@ -429,8 +429,10 @@ mod tests {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
-    /// conda-forge GDAL on Windows (and other minimal builds) often omits the netCDF driver.
-    /// Match georust/gdal: only assert netCDF behaviour when the driver exists.
+    /// Same idea as **georust/gdal** in `src/driver.rs` (e.g. `test_driver_by_extension`):
+    /// netCDF checks live only inside `if DriverManager::get_driver_by_name("netCDF").is_ok() { ... }`.
+    /// That is **not** `#[ignore]`: the test always passes; if the driver is missing, the `if` body
+    /// simply does not run (conda-forge Windows GDAL often ships without the netCDF raster driver).
     fn gdal_netcdf_driver_available() -> bool {
         DriverManager::get_driver_by_name("netCDF").is_ok()
     }
@@ -710,22 +712,18 @@ mod tests {
 
     #[test]
     fn wrap_netcdf_produces_valid_file() {
-        if !gdal_netcdf_driver_available() {
-            eprintln!(
-                "SKIP wrap_netcdf_produces_valid_file: GDAL built without netCDF driver"
-            );
-            return;
+        if gdal_netcdf_driver_available() {
+            let meta = RasterMeta {
+                width: 4, height: 4, crs: "EPSG:4326".to_string(),
+                transform: [0.0, 1.0, 0.0, 4.0, 0.0, -1.0],
+                dtype: "float32".to_string(),
+            };
+            let pixels: Vec<u8> = (0..16).map(|i| i as f32)
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
+            let nc = wrap_netcdf(&pixels, &meta).expect("wrap_netcdf failed");
+            assert_netcdf_bytes_readable_by_gdal(&nc, 4, 4);
         }
-        let meta = RasterMeta {
-            width: 4, height: 4, crs: "EPSG:4326".to_string(),
-            transform: [0.0, 1.0, 0.0, 4.0, 0.0, -1.0],
-            dtype: "float32".to_string(),
-        };
-        let pixels: Vec<u8> = (0..16).map(|i| i as f32)
-            .flat_map(|v| v.to_le_bytes())
-            .collect();
-        let nc = wrap_netcdf(&pixels, &meta).expect("wrap_netcdf failed");
-        assert_netcdf_bytes_readable_by_gdal(&nc, 4, 4);
     }
 
     #[test]
@@ -757,22 +755,18 @@ mod tests {
 
     #[test]
     fn wrap_output_dispatches_netcdf() {
-        if !gdal_netcdf_driver_available() {
-            eprintln!(
-                "SKIP wrap_output_dispatches_netcdf: GDAL built without netCDF driver"
-            );
-            return;
+        if gdal_netcdf_driver_available() {
+            let meta = RasterMeta {
+                width: 2, height: 2, crs: "EPSG:4326".to_string(),
+                transform: [0.0, 1.0, 0.0, 2.0, 0.0, -1.0],
+                dtype: "float32".to_string(),
+            };
+            let pixels: Vec<u8> = [0.1f32, 0.2, 0.3, 0.4]
+                .iter().flat_map(|v| v.to_le_bytes()).collect();
+            let (bytes, ct) = wrap_output(&pixels, &meta, "netCDF").unwrap();
+            assert_eq!(ct, "application/x-netcdf");
+            assert_netcdf_bytes_readable_by_gdal(&bytes, 2, 2);
         }
-        let meta = RasterMeta {
-            width: 2, height: 2, crs: "EPSG:4326".to_string(),
-            transform: [0.0, 1.0, 0.0, 2.0, 0.0, -1.0],
-            dtype: "float32".to_string(),
-        };
-        let pixels: Vec<u8> = [0.1f32, 0.2, 0.3, 0.4]
-            .iter().flat_map(|v| v.to_le_bytes()).collect();
-        let (bytes, ct) = wrap_output(&pixels, &meta, "netCDF").unwrap();
-        assert_eq!(ct, "application/x-netcdf");
-        assert_netcdf_bytes_readable_by_gdal(&bytes, 2, 2);
     }
 
     #[test]
