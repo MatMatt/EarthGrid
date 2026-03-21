@@ -319,6 +319,29 @@ Or set it once in `docker/.env`:
 EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid
 ```
 
+### Run locally (no Docker)
+
+From source:
+
+```bash
+cd earthgrid-core
+cargo run -- --data-dir ~/.earthgrid-data serve --host 0.0.0.0 --port 8400
+```
+
+Health check:
+
+```bash
+curl http://localhost:8400/health
+```
+
+Optional environment variables:
+
+```bash
+export EARTHGRID_NODE_NAME=node-local
+export EARTHGRID_STORE_PATH=$HOME/.earthgrid-data/store
+export EARTHGRID_CATALOG_PATH=$HOME/.earthgrid-data/catalog.db
+```
+
 ---
 
 ## Security Model
