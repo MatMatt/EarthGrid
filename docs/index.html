@@ -100,7 +100,6 @@ a:hover { text-decoration:underline; }
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Data across Grid</div></div>
   <div class="stat loading" id="sUptakeReq"><div class="value" id="vUptakeReq">—</div><div class="label">Requests from Grid (30d)</div></div>
   <div class="stat loading" id="sUptakeGB"><div class="value" id="vUptakeGB">—</div><div class="label">GB Delivered from Grid (30d)</div></div>
-  <div class="stat loading" id="sUptakeKm2"><div class="value" id="vUptakeKm2">—</div><div class="label">km² Served from Grid (30d)</div></div>
   <div class="stat loading" id="sFetched"><div class="value" id="vFetched">—</div><div class="label">GB Ingested into Grid</div></div>
 </div>
 
@@ -1417,8 +1416,7 @@ async function load() {
     document.getElementById('sUptakeReq').classList.remove('loading');
     document.getElementById('vUptakeGB').textContent = (us.total_gb || 0).toFixed(1);
     document.getElementById('sUptakeGB').classList.remove('loading');
-    document.getElementById('vUptakeKm2').textContent = fmtKm2(us.total_aoi_km2 || 0);
-    document.getElementById('sUptakeKm2').classList.remove('loading');
+
 
     // Per-collection table
     const cols = uptake.by_collection || [];
