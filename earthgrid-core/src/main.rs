@@ -471,8 +471,9 @@ fn main() -> anyhow::Result<()> {
                         .unwrap_or_else(|| std::path::PathBuf::from("earthgrid"));
                     // Small delay to let cargo finish replacing the binary
                     std::thread::sleep(std::time::Duration::from_millis(500));
+                    let data_dir_str = cli.data_dir.to_string_lossy().to_string();
                     let child = process::Command::new(&exe)
-                        .arg("serve")
+                        .args(["--data-dir", &data_dir_str, "serve", "--host", "0.0.0.0"])
                         .stdin(process::Stdio::null())
                         .stdout(process::Stdio::null())
                         .stderr(process::Stdio::null())
