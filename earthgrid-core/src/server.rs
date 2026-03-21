@@ -56,6 +56,7 @@ pub struct AppState {
     pub user_auth: Option<Arc<UserAuth>>,
     /// Node identity keypair (optional, None if init fails).
     pub node_identity: Option<Arc<NodeIdentity>>,
+    pub storage_limit_gb: f64,
     /// Data directory (for config updates like resize).
     pub data_dir: PathBuf,
 }
@@ -141,6 +142,7 @@ async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
         "chunks_served": stats.chunks_served,
         "bytes_served": stats.bytes_served,
         "requests_total": stats.requests_total,
+        "storage_limit_gb": state.storage_limit_gb,
     }))
 }
 
@@ -2619,6 +2621,16 @@ pub async fn serve(
         }
     };
 
+    // Read storage_limit_gb from config
+    let storage_limit_gb = {
+        let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+        std::fs::read_to_string(&cfg_path)
+            .ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .and_then(|v| v["storage_limit_gb"].as_f64())
+            .unwrap_or(0.0)
+    };
+
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         catalog: Arc::new(Mutex::new(catalog)),
@@ -2632,6 +2644,7 @@ pub async fn serve(
         node_name: node_name.clone(),
         user_auth: user_auth_opt,
         node_identity: node_identity_opt,
+        storage_limit_gb,
         data_dir: data_dir.clone(),
     };
 
