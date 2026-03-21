@@ -31,6 +31,7 @@ use crate::{
     stats::StatsEngine,
     user_auth::UserAuth,
     node_identity::NodeIdentity,
+    openeo::{ProcessGraph, execute_sync},
 };
 use std::path::PathBuf;
 
@@ -2425,6 +2426,105 @@ async fn openeo_validate(
     }
 }
 
+/// GET /file_formats — openEO output/input format catalogue (minimal)
+async fn openeo_file_formats() -> impl IntoResponse {
+    let geotiff = serde_json::json!({
+        "title": "GeoTIFF",
+        "gis_data_types": ["raster"],
+        "parameters": {}
+    });
+    let geojson = serde_json::json!({
+        "title": "GeoJSON",
+        "gis_data_types": ["vector"],
+        "parameters": {}
+    });
+    let geoparquet = serde_json::json!({
+        "title": "GeoParquet",
+        "gis_data_types": ["vector"],
+        "parameters": {}
+    });
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "input": {
+            "GTiff": geotiff,
+            "GeoTIFF": geotiff,
+            "geotiff": geotiff,
+            "GeoJSON": geojson,
+            "geojson": geojson,
+            "GeoParquet": geoparquet,
+            "geoparquet": geoparquet
+        },
+        "output": {
+            "GTiff": geotiff,
+            "GeoTIFF": geotiff,
+            "geotiff": geotiff,
+            "GeoJSON": geojson,
+            "geojson": geojson,
+            "GeoParquet": geoparquet,
+            "geoparquet": geoparquet
+        }
+    }))).into_response()
+}
+
+/// POST /result — openEO synchronous execution (minimal)
+async fn openeo_result_default(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()));
+
+    if let Err(e) = state.auth.check_write(token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "code": "AuthenticationRequired",
+                "message": e.to_string()
+            })),
+        ).into_response();
+    }
+
+    let graph_value = body
+        .get("process")
+        .and_then(|p| p.get("process_graph"))
+        .cloned()
+        .or_else(|| body.get("process_graph").cloned())
+        .map(|pg| serde_json::json!({ "process_graph": pg }))
+        .unwrap_or(body);
+
+    let graph: ProcessGraph = match serde_json::from_value(graph_value) {
+        Ok(g) => g,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "code": "ProcessGraphInvalid",
+                    "message": format!("Invalid process graph payload: {}", e)
+                })),
+            ).into_response();
+        }
+    };
+
+    match execute_sync(&graph, &state.catalog, &state.store).await {
+        Ok(data) => (
+            StatusCode::OK,
+            [("content-type", "image/tiff")],
+            data,
+        ).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "code": "ProcessGraphInvalid",
+                "message": e
+            })),
+        ).into_response(),
+    }
+}
+
 /// GET /jobs/{job_id} — openEO job status (stub)
 async fn openeo_job_status(
     Path(job_id): Path<String>,
@@ -2546,6 +2646,8 @@ pub fn router(state: AppState) -> Router {
         .route("/collections/{id}", get(get_collection))
         // openEO processes + validate + jobs
         .route("/processes", get(openeo_processes))
+        .route("/file_formats", get(openeo_file_formats))
+        .route("/result", post(openeo_result_default))
         .route("/validate", post(openeo_validate))
         .route("/jobs/{job_id}", get(openeo_job_status))
         .layer(CorsLayer::permissive())

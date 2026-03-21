@@ -248,6 +248,39 @@ fn ensure_three_raster_len(op: &str, a: &[u8], b: &[u8], c: &[u8]) -> Result<(),
     }
 }
 
+fn truncate_pair<'a>(op: &str, a: &'a [u8], b: &'a [u8]) -> Result<(&'a [u8], &'a [u8]), String> {
+    let min_len = a.len().min(b.len());
+    if min_len == 0 {
+        return Err(format!("{op}: empty input buffer"));
+    }
+    if a.len() != b.len() {
+        tracing::warn!(
+            "{}: input size mismatch ({} vs {}), truncating both to {} bytes",
+            op, a.len(), b.len(), min_len
+        );
+    }
+    Ok((&a[..min_len], &b[..min_len]))
+}
+
+fn truncate_three<'a>(
+    op: &str,
+    a: &'a [u8],
+    b: &'a [u8],
+    c: &'a [u8],
+) -> Result<(&'a [u8], &'a [u8], &'a [u8]), String> {
+    let min_len = a.len().min(b.len()).min(c.len());
+    if min_len == 0 {
+        return Err(format!("{op}: empty input buffer"));
+    }
+    if a.len() != b.len() || b.len() != c.len() {
+        tracing::warn!(
+            "{}: input size mismatch ({} / {} / {}), truncating all to {} bytes",
+            op, a.len(), b.len(), c.len(), min_len
+        );
+    }
+    Ok((&a[..min_len], &b[..min_len], &c[..min_len]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::detect_spectral_dtype;
@@ -447,7 +480,13 @@ pub async fn execute_sync(
             format!("Band '{}' not found. Needed: {:?}. Available: {:?}. Items checked: {}.",
                 band, needed_bands, avail, items.len())
         })?;
-        let item = items.first().ok_or_else(|| format!("No items for band '{}'", band))?;
+        // When multiple candidates map to the same logical band (e.g. nir vs nir08),
+        // prefer the densest chunk set as a proxy for highest resolution.
+        let item = items
+            .iter()
+            .max_by_key(|it| it.chunk_hashes.len())
+            .copied()
+            .ok_or_else(|| format!("No items for band '{}'", band))?;
         let mut data = Vec::new();
         for hash in &item.chunk_hashes {
             if let Ok(Some(chunk)) = store_locked.get(hash) {
@@ -465,26 +504,26 @@ pub async fn execute_sync(
             let mut store = store.lock().await;
             let red_data = load_band(&op.red, &mut store)?;
             let nir_data = load_band(&op.nir, &mut store)?;
-            ensure_same_raster_len("NDVI", &red_data, &nir_data)?;
-            let dtype = detect_spectral_dtype(&red_data);
-            Ok(processing::compute_ndvi(&red_data, &nir_data, dtype))
+            let (red_data, nir_data) = truncate_pair("NDVI", &red_data, &nir_data)?;
+            let dtype = detect_spectral_dtype(red_data);
+            Ok(processing::compute_ndvi(red_data, nir_data, dtype))
         }
         Some("ndwi") => {
             let mut store = store.lock().await;
             let green_data = load_band(&op.green, &mut store)?;
             let nir_data = load_band(&op.nir, &mut store)?;
-            ensure_same_raster_len("NDWI", &green_data, &nir_data)?;
-            let dtype = detect_spectral_dtype(&green_data);
-            Ok(processing::compute_ndwi(&green_data, &nir_data, dtype))
+            let (green_data, nir_data) = truncate_pair("NDWI", &green_data, &nir_data)?;
+            let dtype = detect_spectral_dtype(green_data);
+            Ok(processing::compute_ndwi(green_data, nir_data, dtype))
         }
         Some("evi") => {
             let mut store = store.lock().await;
             let blue_data = load_band(&op.blue, &mut store)?;
             let red_data = load_band(&op.red, &mut store)?;
             let nir_data = load_band(&op.nir, &mut store)?;
-            ensure_three_raster_len("EVI", &blue_data, &red_data, &nir_data)?;
-            let dtype = detect_spectral_dtype(&red_data);
-            Ok(processing::compute_evi(&blue_data, &red_data, &nir_data, dtype))
+            let (blue_data, red_data, nir_data) = truncate_three("EVI", &blue_data, &red_data, &nir_data)?;
+            let dtype = detect_spectral_dtype(red_data);
+            Ok(processing::compute_evi(blue_data, red_data, nir_data, dtype))
         }
         Some("cloud_mask") => {
             let mut store = store.lock().await;

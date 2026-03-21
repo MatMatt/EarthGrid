@@ -377,12 +377,13 @@ Every node generates an **Ed25519 keypair** on first start. Peers verify each ot
 
 ## openEO Gateway
 
-EarthGrid includes an openEO v1.2.0 compatible gateway. Missing data is automatically fetched on demand.
+EarthGrid includes an openEO v1.2.0 compatible gateway.
 
 **Python:**
 
 ```python
 import openeo
+
 conn = openeo.connect("http://localhost:8400")
 cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
@@ -395,8 +396,10 @@ cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")
 
 ```r
 library(openeo)
+
 con <- connect("http://localhost:8400")
 p <- processes()
+
 cube <- p$load_collection("sentinel-2-l2a",
     spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
     temporal_extent = c("2026-03-01", "2026-03-12"),
