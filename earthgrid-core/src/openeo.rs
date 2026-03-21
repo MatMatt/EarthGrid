@@ -15,6 +15,9 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use gdal::raster::{Buffer, RasterCreationOptions};
+use gdal::spatial_ref::SpatialRef;
+use gdal::DriverManager;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -221,33 +224,6 @@ fn detect_spectral_dtype(data: &[u8]) -> &'static str {
     }
 }
 
-fn ensure_same_raster_len(op: &str, a: &[u8], b: &[u8]) -> Result<(), String> {
-    if a.len() != b.len() {
-        Err(format!(
-            "{}: band raster size mismatch ({} vs {} bytes); check chunk alignment / same scene",
-            op,
-            a.len(),
-            b.len()
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn ensure_three_raster_len(op: &str, a: &[u8], b: &[u8], c: &[u8]) -> Result<(), String> {
-    if a.len() != b.len() || b.len() != c.len() {
-        Err(format!(
-            "{}: band raster size mismatch ({} / {} / {} bytes)",
-            op,
-            a.len(),
-            b.len(),
-            c.len()
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 fn truncate_pair<'a>(op: &str, a: &'a [u8], b: &'a [u8]) -> Result<(&'a [u8], &'a [u8]), String> {
     let min_len = a.len().min(b.len());
     if min_len == 0 {
@@ -281,6 +257,107 @@ fn truncate_three<'a>(
     Ok((&a[..min_len], &b[..min_len], &c[..min_len]))
 }
 
+/// Extract the output format requested by a `save_result` node (e.g. "GTiff").
+pub fn extract_output_format(graph: &ProcessGraph) -> Option<String> {
+    for node in graph.process_graph.values() {
+        if node.process_id == "save_result" {
+            if let Some(fmt) = node.arguments.get("format").and_then(|v| v.as_str()) {
+                return Some(fmt.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Metadata carried alongside raw pixel output so callers can build a GeoTIFF.
+#[derive(Debug, Clone)]
+pub struct RasterMeta {
+    pub width: usize,
+    pub height: usize,
+    pub crs: String,
+    pub transform: [f64; 6],
+    pub dtype: String,
+}
+
+/// Resolve a user-facing format string to a canonical key.
+pub fn canonical_format(fmt: &str) -> &str {
+    match fmt.to_ascii_lowercase().as_str() {
+        "gtiff" | "geotiff" | "tiff" | "tif" => "GTiff",
+        "geojson" | "json" => "GeoJSON",
+        "geoparquet" | "parquet" => "GeoParquet",
+        _ => "GTiff",
+    }
+}
+
+/// Wrap raw result bytes into the requested output format.
+/// Currently only GTiff is implemented; GeoJSON and GeoParquet are stubbed
+/// for when openEO vector process support is added.
+pub fn wrap_output(pixels: &[u8], meta: &RasterMeta, format: &str) -> Result<(Vec<u8>, &'static str), String> {
+    match canonical_format(format) {
+        "GTiff" => {
+            let bytes = wrap_geotiff(pixels, meta)?;
+            Ok((bytes, "image/tiff"))
+        }
+        "GeoJSON" => Err(
+            "GeoJSON output is not yet implemented. \
+             It will be supported when openEO vector processes are added."
+                .to_string(),
+        ),
+        "GeoParquet" => Err(
+            "GeoParquet output is not yet implemented. \
+             It will be supported when openEO vector processes are added."
+                .to_string(),
+        ),
+        _ => Err(format!("Unsupported output format: {format}")),
+    }
+}
+
+/// Package raw f32 pixel bytes into a proper GeoTIFF using GDAL `/vsimem`.
+pub fn wrap_geotiff(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> {
+    let pixel_count = (meta.width * meta.height) as usize;
+    let expected = pixel_count * 4; // f32
+    if pixels.len() < expected {
+        return Err(format!(
+            "wrap_geotiff: buffer too small ({} bytes, need {} for {}x{} f32)",
+            pixels.len(), expected, meta.width, meta.height
+        ));
+    }
+    let floats: Vec<f32> = pixels[..expected]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+
+    let vsi_path = format!("/vsimem/earthgrid_wrap_{}.tif", uuid::Uuid::new_v4());
+    let driver = DriverManager::get_driver_by_name("GTiff")
+        .map_err(|e| format!("GDAL GTiff driver: {e}"))?;
+    let w = meta.width;
+    let h = meta.height;
+    let mut ds = driver
+        .create_with_band_type_with_options::<f32, _>(
+            &vsi_path, w, h, 1,
+            &RasterCreationOptions::from_iter(["TILED=YES", "COMPRESS=LZW"]),
+        )
+        .map_err(|e| format!("GDAL create: {e}"))?;
+
+    ds.set_geo_transform(&meta.transform)
+        .map_err(|e| format!("GDAL set geotransform: {e}"))?;
+    if let Ok(srs) = SpatialRef::from_definition(&meta.crs) {
+        let _ = ds.set_spatial_ref(&srs);
+    }
+
+    let mut band = ds.rasterband(1).map_err(|e| format!("GDAL rasterband: {e}"))?;
+    let mut buf = Buffer::new((w, h), floats);
+    band.write((0, 0), (w, h), &mut buf)
+        .map_err(|e| format!("GDAL write: {e}"))?;
+    drop(band);
+    drop(ds);
+
+    let bytes = gdal::vsi::get_vsi_mem_file_bytes_owned(&vsi_path)
+        .map_err(|e| format!("GDAL vsimem read: {e}"))?;
+    let _ = gdal::vsi::unlink_mem_file(&vsi_path);
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::detect_spectral_dtype;
@@ -304,6 +381,26 @@ mod tests {
 // ---------------------------------------------------------------------------
 // Band extraction from item ID
 // ---------------------------------------------------------------------------
+
+/// Sentinel-2 band code ↔ common name mapping (bidirectional).
+fn resolve_band_alias(band: &str) -> &str {
+    match band {
+        "B01" => "coastal", "coastal" => "B01",
+        "B02" => "blue",    "blue"    => "B02",
+        "B03" => "green",   "green"   => "B03",
+        "B04" => "red",     "red"     => "B04",
+        "B05" => "rededge1","rededge1"=> "B05",
+        "B06" => "rededge2","rededge2"=> "B06",
+        "B07" => "rededge3","rededge3"=> "B07",
+        "B08" => "nir",     "nir"     => "B08",
+        "B8A" => "nir08",   "nir08"   => "B8A",
+        "B09" => "nir09",   "nir09"   => "B09",
+        "B11" => "swir16",  "swir16"  => "B11",
+        "B12" => "swir22",  "swir22"  => "B12",
+        "SCL" => "scl",     "scl"     => "SCL",
+        _ => band,
+    }
+}
 
 fn extract_band_from_item_id(item_id: &str) -> Option<String> {
     // Match: _B02, _B08, _B8A, _SCL, _TCI etc. at end of ID
@@ -356,7 +453,7 @@ pub async fn execute_sync(
     graph: &ProcessGraph,
     catalog: &Arc<Mutex<Catalog>>,
     store: &Arc<Mutex<ChunkStore>>,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, Option<RasterMeta>), String> {
     let reqs = parse_requirements(graph);
     if reqs.is_empty() {
         return Err("No load_collection found in process graph".to_string());
@@ -475,74 +572,128 @@ pub async fn execute_sync(
 
     let avail: Vec<&String> = band_items.keys().collect();
 
-    let load_band = |band: &str, store_locked: &mut ChunkStore| -> Result<Vec<u8>, String> {
-        let items = band_items.get(band).ok_or_else(|| {
+    fn is_tiff(data: &[u8]) -> bool {
+        data.len() >= 4
+            && ((data[0] == b'I' && data[1] == b'I' && data[2] == 42 && data[3] == 0)
+                || (data[0] == b'M' && data[1] == b'M' && data[2] == 0 && data[3] == 42))
+    }
+
+    /// Read a TIFF blob via GDAL → (f32 pixels, RasterMeta).
+    fn decode_tiff(raw: &[u8]) -> Result<(Vec<u8>, RasterMeta), String> {
+        let tmp = std::env::temp_dir().join(format!("eg_band_{}.tif", uuid::Uuid::new_v4()));
+        std::fs::write(&tmp, raw).map_err(|e| format!("write tmp tiff: {e}"))?;
+        let ds = gdal::Dataset::open(&tmp).map_err(|e| format!("GDAL open tmp: {e}"))?;
+        let (w, h) = ds.raster_size();
+        let gt = ds.geo_transform().map_err(|e| format!("GDAL geotransform: {e}"))?;
+        let crs = ds.spatial_ref().ok()
+            .map(|s| format!("EPSG:{}", s.auth_code().unwrap_or(4326)))
+            .unwrap_or_else(|| "EPSG:4326".to_string());
+        let band = ds.rasterband(1).map_err(|e| format!("GDAL band 1: {e}"))?;
+        let buf = band.read_as::<f32>((0, 0), (w, h), (w, h), None)
+            .map_err(|e| format!("GDAL read: {e}"))?;
+        let pixels: Vec<u8> = buf.data().iter().flat_map(|v| v.to_le_bytes()).collect();
+        drop(band);
+        drop(ds);
+        let _ = std::fs::remove_file(&tmp);
+        let meta = RasterMeta {
+            width: w, height: h, crs,
+            transform: [gt[0], gt[1], gt[2], gt[3], gt[4], gt[5]],
+            dtype: "float32".to_string(),
+        };
+        Ok((pixels, meta))
+    }
+
+    fn meta_from_item(item: &StacItem) -> Option<RasterMeta> {
+        let p = &item.properties;
+        let width = p.get("earthgrid:width")?.as_u64()? as usize;
+        let height = p.get("earthgrid:height")?.as_u64()? as usize;
+        let crs = p.get("earthgrid:crs")?.as_str()?.to_string();
+        let dtype = p.get("earthgrid:dtype").and_then(|v| v.as_str()).unwrap_or("float32").to_string();
+        let tf = p.get("earthgrid:transform")?.as_array()?;
+        if tf.len() < 6 { return None; }
+        let transform = [
+            tf[0].as_f64()?, tf[1].as_f64()?, tf[2].as_f64()?,
+            tf[3].as_f64()?, tf[4].as_f64()?, tf[5].as_f64()?,
+        ];
+        Some(RasterMeta { width, height, crs, transform, dtype })
+    }
+
+    // Load a band: reassemble chunks, decode TIFF if applicable, return (f32 pixels, meta).
+    let load_band = |band: &str, store_locked: &mut ChunkStore| -> Result<(Vec<u8>, Option<RasterMeta>), String> {
+        let resolved = band_items.get(band)
+            .or_else(|| band_items.get(resolve_band_alias(band)));
+        let items = resolved.ok_or_else(|| {
             format!("Band '{}' not found. Needed: {:?}. Available: {:?}. Items checked: {}.",
                 band, needed_bands, avail, items.len())
         })?;
-        // When multiple candidates map to the same logical band (e.g. nir vs nir08),
-        // prefer the densest chunk set as a proxy for highest resolution.
         let item = items
             .iter()
             .max_by_key(|it| it.chunk_hashes.len())
             .copied()
             .ok_or_else(|| format!("No items for band '{}'", band))?;
-        let mut data = Vec::new();
+        let mut raw = Vec::new();
         for hash in &item.chunk_hashes {
             if let Ok(Some(chunk)) = store_locked.get(hash) {
-                data.extend_from_slice(&chunk);
+                raw.extend_from_slice(&chunk);
             }
         }
-        if data.is_empty() {
+        if raw.is_empty() {
             return Err(format!("Could not load chunk data for band '{}'", band));
         }
-        Ok(data)
+        if is_tiff(&raw) {
+            let (pixels, meta) = decode_tiff(&raw)?;
+            Ok((pixels, Some(meta)))
+        } else {
+            let meta = meta_from_item(item);
+            Ok((raw, meta))
+        }
     };
 
     match op.operation.as_deref() {
         Some("ndvi") => {
             let mut store = store.lock().await;
-            let red_data = load_band(&op.red, &mut store)?;
-            let nir_data = load_band(&op.nir, &mut store)?;
+            let (red_data, meta) = load_band(&op.red, &mut store)?;
+            let (nir_data, _) = load_band(&op.nir, &mut store)?;
             let (red_data, nir_data) = truncate_pair("NDVI", &red_data, &nir_data)?;
             let dtype = detect_spectral_dtype(red_data);
-            Ok(processing::compute_ndvi(red_data, nir_data, dtype))
+            Ok((processing::compute_ndvi(red_data, nir_data, dtype), meta))
         }
         Some("ndwi") => {
             let mut store = store.lock().await;
-            let green_data = load_band(&op.green, &mut store)?;
-            let nir_data = load_band(&op.nir, &mut store)?;
+            let (green_data, meta) = load_band(&op.green, &mut store)?;
+            let (nir_data, _) = load_band(&op.nir, &mut store)?;
             let (green_data, nir_data) = truncate_pair("NDWI", &green_data, &nir_data)?;
             let dtype = detect_spectral_dtype(green_data);
-            Ok(processing::compute_ndwi(green_data, nir_data, dtype))
+            Ok((processing::compute_ndwi(green_data, nir_data, dtype), meta))
         }
         Some("evi") => {
             let mut store = store.lock().await;
-            let blue_data = load_band(&op.blue, &mut store)?;
-            let red_data = load_band(&op.red, &mut store)?;
-            let nir_data = load_band(&op.nir, &mut store)?;
+            let (blue_data, _) = load_band(&op.blue, &mut store)?;
+            let (red_data, meta) = load_band(&op.red, &mut store)?;
+            let (nir_data, _) = load_band(&op.nir, &mut store)?;
             let (blue_data, red_data, nir_data) = truncate_three("EVI", &blue_data, &red_data, &nir_data)?;
             let dtype = detect_spectral_dtype(red_data);
-            Ok(processing::compute_evi(blue_data, red_data, nir_data, dtype))
+            Ok((processing::compute_evi(blue_data, red_data, nir_data, dtype), meta))
         }
         Some("cloud_mask") => {
             let mut store = store.lock().await;
-            let scl_data = load_band(&op.scl, &mut store)?;
-            Ok(processing::cloud_mask(&scl_data))
+            let (scl_data, meta) = load_band(&op.scl, &mut store)?;
+            Ok((processing::cloud_mask(&scl_data), meta))
         }
         _ => {
             let first = &items[0];
             let mut store = store.lock().await;
-            let mut data = Vec::new();
+            let mut raw = Vec::new();
             for hash in &first.chunk_hashes {
                 if let Ok(Some(chunk)) = store.get(hash) {
-                    data.extend_from_slice(&chunk);
+                    raw.extend_from_slice(&chunk);
                 }
             }
-            if data.is_empty() {
+            if raw.is_empty() {
                 return Err("No chunk data found".to_string());
             }
-            Ok(data)
+            let meta = meta_from_item(first);
+            Ok((raw, meta))
         }
     }
 }
@@ -893,23 +1044,37 @@ async fn openeo_result(
     if state.app.auth.check_write(token).is_err() {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"code": "AuthenticationRequired", "message": "API key required"}))
-                .into_response(),
-        );
+            Json(serde_json::json!({"code": "AuthenticationRequired", "message": "API key required"})),
+        ).into_response();
     }
 
     match execute_sync(&graph, &state.app.catalog, &state.app.store).await {
-        Ok(data) => {
-            let headers = [
-                ("content-type", "application/octet-stream"),
-                ("content-disposition", "attachment; filename=\"result.tif\""),
-            ];
-            (StatusCode::OK, (headers, data).into_response())
+        Ok((data, meta)) => {
+            let fmt = extract_output_format(&graph).unwrap_or_else(|| "GTiff".to_string());
+            if let Some(ref m) = meta {
+                match wrap_output(&data, m, &fmt) {
+                    Ok((output, ct)) => (
+                        StatusCode::OK,
+                        [(axum::http::header::CONTENT_TYPE, ct)],
+                        output,
+                    ).into_response(),
+                    Err(e) => (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"code": "FormatError", "message": e})),
+                    ).into_response(),
+                }
+            } else {
+                (
+                    StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+                    data,
+                ).into_response()
+            }
         }
         Err(e) => (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"code": "ProcessingError", "message": e})).into_response(),
-        ),
+            Json(serde_json::json!({"code": "ProcessingError", "message": e})),
+        ).into_response(),
     }
 }
 
@@ -981,7 +1146,7 @@ async fn create_job(
         }
 
         match execute_sync(&graph, &catalog, &store).await {
-            Ok(data) => {
+            Ok((data, _meta)) => {
                 if let Some(j) = jobs.lock().await.get_mut(&jid) {
                     j.status = "finished".to_string();
                     j.data = Some(data);

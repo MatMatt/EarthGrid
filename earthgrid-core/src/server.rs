@@ -31,7 +31,7 @@ use crate::{
     stats::StatsEngine,
     user_auth::UserAuth,
     node_identity::NodeIdentity,
-    openeo::{ProcessGraph, execute_sync},
+    openeo::{ProcessGraph, execute_sync, extract_output_format, wrap_output},
 };
 use std::path::PathBuf;
 
@@ -2509,12 +2509,23 @@ async fn openeo_result_default(
         }
     };
 
+    let fmt = extract_output_format(&graph).unwrap_or_else(|| "GTiff".to_string());
     match execute_sync(&graph, &state.catalog, &state.store).await {
-        Ok(data) => (
-            StatusCode::OK,
-            [("content-type", "image/tiff")],
-            data,
-        ).into_response(),
+        Ok((data, meta)) => {
+            if let Some(ref m) = meta {
+                match wrap_output(&data, m, &fmt) {
+                    Ok((output, ct)) => {
+                        (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ct)], output).into_response()
+                    }
+                    Err(e) => (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"code": "FormatError", "message": e})),
+                    ).into_response(),
+                }
+            } else {
+                (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "application/octet-stream")], data).into_response()
+            }
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
