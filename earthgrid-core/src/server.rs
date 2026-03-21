@@ -4,6 +4,7 @@
 //! Phase 2: Peers + Federation (sync, federated search)
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::{
     Router,
@@ -59,8 +60,18 @@ pub struct AppState {
     pub storage_limit_gb: f64,
     /// Data directory (for config updates like resize).
     pub data_dir: PathBuf,
+    /// Counter for active fetch/ingest requests (replication yields when > 0).
+    pub active_requests: Arc<AtomicUsize>,
 }
 
+
+/// RAII guard that decrements an AtomicUsize counter on drop.
+struct ActiveRequestGuard(Arc<AtomicUsize>);
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -427,6 +438,9 @@ async fn ingest(
         state.audit.log("ingest", "auth_fail", "", false);
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
+
+    state.active_requests.fetch_add(1, Ordering::Relaxed);
+    let _guard = ActiveRequestGuard(state.active_requests.clone());
 
     let item: StacItem = match serde_json::from_value(
         payload.get("item").cloned().unwrap_or_default()
@@ -884,6 +898,9 @@ async fn ingest_file_endpoint(
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
+    state.active_requests.fetch_add(1, Ordering::Relaxed);
+    let _guard = ActiveRequestGuard(state.active_requests.clone());
+
     let file_path = match payload.get("path").and_then(|v| v.as_str()) {
         Some(p) => std::path::PathBuf::from(p),
         None => return err(StatusCode::BAD_REQUEST, "Missing 'path' field").into_response(),
@@ -1042,6 +1059,9 @@ async fn fetch_handler(
         state.audit.log("fetch", "auth_fail", "", false);
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
+
+    state.active_requests.fetch_add(1, Ordering::Relaxed);
+    let _guard = ActiveRequestGuard(state.active_requests.clone());
 
     // Resolve bbox: explicit bbox, or from tile name, or error
     let tile_filter = q.tile.as_ref().map(|t| t.trim().to_uppercase());
@@ -2646,6 +2666,7 @@ pub async fn serve(
         node_identity: node_identity_opt,
         storage_limit_gb,
         data_dir: data_dir.clone(),
+        active_requests: Arc::new(AtomicUsize::new(0)),
     };
 
     // Conditionally build beacon router (EARTHGRID_BEACON=true)
@@ -2657,6 +2678,7 @@ pub async fn serve(
     // Clones for P2P handler
     let state_clone_store = state.store.clone();
     let state_clone_catalog = state.catalog.clone();
+    let state_active_requests = state.active_requests.clone();
     let state_clone_gamification = state.gamification.clone();
     let state_node_id = state.node_id.clone();
     let state_node_name = state.node_name.clone();
@@ -2741,6 +2763,7 @@ pub async fn serve(
     {
         let repl_store = state_clone_store.clone();
         let repl_catalog = state_clone_catalog.clone();
+        let repl_active = state_active_requests.clone();
 
         tokio::spawn(async move {
             // Initial delay: wait 30s for peers to be discovered
@@ -2753,15 +2776,25 @@ pub async fn serve(
                 };
 
                 if !urls.is_empty() {
-                    let replicator = Replicator::new(repl_store.clone(), repl_catalog.clone());
-                    for url in &urls {
-                        let result = replicator.sync_from_peer(url, &[], 0, false).await;
-                        if result.chunks_downloaded > 0 || !result.errors.is_empty() {
-                            eprintln!(
-                                "🔄 Auto-replicate from {}: {} items, {} chunks ({} bytes), {} errors",
-                                url, result.items_processed, result.chunks_downloaded,
-                                result.bytes_downloaded, result.errors.len()
-                            );
+                    // Yield to active fetch/ingest requests
+                    if repl_active.load(Ordering::Relaxed) > 0 {
+                        eprintln!("🔄 Auto-replication: skipping cycle — {} active request(s)", repl_active.load(Ordering::Relaxed));
+                    } else {
+                        let replicator = Replicator::new(repl_store.clone(), repl_catalog.clone());
+                        for url in &urls {
+                            // Check again before each peer (request may have started)
+                            if repl_active.load(Ordering::Relaxed) > 0 {
+                                eprintln!("🔄 Auto-replication: pausing mid-cycle — active request(s) detected");
+                                break;
+                            }
+                            let result = replicator.sync_from_peer(url, &[], 0, false).await;
+                            if result.chunks_downloaded > 0 || !result.errors.is_empty() {
+                                eprintln!(
+                                    "🔄 Auto-replicate from {}: {} items, {} chunks ({} bytes), {} errors",
+                                    url, result.items_processed, result.chunks_downloaded,
+                                    result.bytes_downloaded, result.errors.len()
+                                );
+                            }
                         }
                     }
                 }
