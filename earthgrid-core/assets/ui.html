@@ -1,0 +1,1348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EarthGrid Node</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --orange: #db6d28;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; }
+a { color: var(--accent); text-decoration: none; }
+
+/* Layout */
+.header { background: var(--card); border-bottom: 1px solid var(--border); padding: 0 20px; display: flex; align-items: center; gap: 16px; height: 52px; position: sticky; top: 0; z-index: 100; }
+.logo { font-weight: 700; font-size: 16px; color: var(--accent); letter-spacing: -0.5px; display: flex; align-items: center; gap: 8px; }
+.logo svg { flex-shrink: 0; }
+.node-badge { background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+.beacon-badge { background: #1f3a1f; border: 1px solid var(--green); color: var(--green); border-radius: 20px; padding: 3px 10px; font-size: 12px; }
+.spacer { flex: 1; }
+.refresh-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: var(--radius); padding: 5px 10px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 5px; transition: all 0.2s; }
+.refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+.refresh-btn.spinning svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Tabs */
+.tabs { display: flex; background: var(--card); border-bottom: 1px solid var(--border); padding: 0 20px; overflow-x: auto; }
+.tab { padding: 12px 16px; cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; white-space: nowrap; transition: all 0.15s; user-select: none; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Content */
+.content { padding: 20px; max-width: 1200px; margin: 0 auto; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Cards */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.card-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 12px; }
+.grid { display: grid; gap: 16px; }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 768px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+@media (min-width: 500px) and (max-width: 768px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+
+/* Stats */
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.stat-value { font-size: 24px; font-weight: 700; color: var(--text); line-height: 1; }
+.stat-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* Progress bar */
+.progress-wrap { margin-top: 8px; }
+.progress-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.progress-bar { background: var(--bg); border-radius: 4px; height: 6px; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.5s; }
+.progress-fill.warn { background: var(--yellow); }
+.progress-fill.danger { background: var(--red); }
+
+/* Status indicators */
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.red { background: var(--red); }
+.dot.yellow { background: var(--yellow); }
+.status-row { display: flex; align-items: center; gap: 8px; }
+.status-label { color: var(--muted); font-size: 12px; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; border-radius: var(--radius); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: var(--bg); color: var(--muted); font-weight: 500; text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 8px 12px; border-bottom: 1px solid #1f2937; vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+.truncate { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Tags */
+.tag { display: inline-block; background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.3); color: var(--accent); border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+.tag.green { background: rgba(63,185,80,0.1); border-color: rgba(63,185,80,0.3); color: var(--green); }
+.tag.red { background: rgba(248,81,73,0.1); border-color: rgba(248,81,73,0.3); color: var(--red); }
+.tag.orange { background: rgba(219,109,40,0.1); border-color: rgba(219,109,40,0.3); color: var(--orange); }
+
+/* Forms */
+.form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-group label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+input, select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; font-family: var(--font); outline: none; transition: border-color 0.15s; }
+input:focus, select:focus { border-color: var(--accent); }
+input::placeholder { color: var(--muted); }
+.btn { background: var(--accent); color: #0d1117; border: none; border-radius: var(--radius); padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; white-space: nowrap; }
+.btn:hover { opacity: 0.85; }
+.btn.secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+.btn.secondary:hover { border-color: var(--accent); color: var(--accent); }
+.btn.danger { background: var(--red); }
+.btn.small { padding: 4px 10px; font-size: 12px; }
+
+/* Pagination */
+.pagination { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.page-info { color: var(--muted); font-size: 12px; flex: 1; }
+
+/* Search */
+.search-wrap { position: relative; }
+.search-wrap input { padding-left: 30px; width: 100%; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+
+/* Empty state */
+.empty { text-align: center; padding: 40px; color: var(--muted); }
+.empty-icon { font-size: 32px; margin-bottom: 8px; }
+
+/* Collection list */
+.collection-list { display: flex; flex-direction: column; gap: 6px; }
+.collection-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); }
+.collection-name { font-weight: 500; color: var(--text); }
+.collection-count { color: var(--muted); font-size: 12px; }
+
+/* Log entries */
+.log-entry { font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; padding: 5px 0; border-bottom: 1px solid #1a2028; display: flex; gap: 10px; }
+.log-ts { color: var(--muted); flex-shrink: 0; }
+.log-ok-true { color: var(--green); }
+.log-ok-false { color: var(--red); }
+
+/* Loading */
+.loading { display: flex; align-items: center; gap: 8px; color: var(--muted); padding: 20px; }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+
+/* Node cards */
+.node-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.node-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.node-name { font-weight: 600; }
+.node-id { font-family: monospace; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.node-stats { display: flex; gap: 12px; flex-wrap: wrap; }
+.node-stat { font-size: 12px; color: var(--muted); }
+.node-stat span { color: var(--text); font-weight: 500; }
+
+/* Alerts */
+.alert { padding: 10px 14px; border-radius: var(--radius); font-size: 13px; margin-bottom: 12px; }
+.alert.success { background: rgba(63,185,80,0.1); border: 1px solid rgba(63,185,80,0.3); color: var(--green); }
+.alert.error { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); color: var(--red); }
+.alert.info { background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.3); color: var(--accent); }
+
+/* Kv row */
+.kv { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #1a2028; }
+.kv:last-child { border-bottom: none; }
+.kv-key { color: var(--muted); }
+.kv-val { font-weight: 500; text-align: right; word-break: break-all; max-width: 70%; }
+
+.score-badge { display:inline-flex; align-items:center; gap:4px; background:var(--accent); color:#0d1117; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:700; }
+.score-info-btn { cursor:pointer; opacity:0.6; transition:opacity 0.15s; font-size:13px; }
+.score-info-btn:hover { opacity:1; }
+.score-modal-bg { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:1000; display:flex; align-items:center; justify-content:center; }
+.score-modal { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:480px; width:90%; max-height:80vh; overflow-y:auto; }
+.score-modal h3 { margin:0 0 12px; font-size:16px; }
+.score-modal table { width:100%; border-collapse:collapse; font-size:13px; }
+.score-modal td { padding:6px 8px; border-bottom:1px solid var(--border); }
+.score-modal td:last-child { text-align:right; font-weight:600; color:var(--accent); }
+.score-modal .close-btn { float:right; cursor:pointer; font-size:18px; opacity:0.5; }
+.score-modal .close-btn:hover { opacity:1; }
+
+/* Copy button */
+.copy-wrap { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+.copy-btn { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); cursor: pointer; padding: 2px 5px; font-size: 11px; line-height: 1; opacity: 0.5; transition: opacity 0.15s, color 0.15s; vertical-align: middle; }
+.copy-btn:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.copy-btn.copied { color: var(--green); border-color: var(--green); opacity: 1; }
+code { position: relative; background: rgba(88,166,255,0.08); padding: 2px 6px; border-radius: 4px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; cursor: pointer; }
+code:hover { background: rgba(88,166,255,0.15); }
+code::after { content: '📋'; font-size: 10px; margin-left: 4px; opacity: 0.4; }
+code:hover::after { opacity: 0.8; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+    </svg>
+    EarthGrid
+  </div>
+  <span class="node-badge" id="header-node-name">—</span>
+  <span class="beacon-badge" id="header-beacon" style="display:none">⬡ Beacon</span>
+  <div class="spacer"></div>
+  <button class="refresh-btn" id="refresh-btn" onclick="refreshCurrent()">
+    <svg id="refresh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <path d="M23 4v6h-6M1 20v-6h6"/>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+    </svg>
+    Refresh
+  </button>
+  <span style="font-size:11px;color:var(--muted)" id="last-updated"></span>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('status')">📡 Status</div>
+  <div class="tab" onclick="switchTab('data')">🗂 Data</div>
+  <div class="tab" onclick="switchTab('network')">🌐 Network</div>
+  <div class="tab" onclick="switchTab('accounts')">👤 Accounts</div>
+  <div class="tab" onclick="switchTab('activity')">⚡ Activity</div>
+  <div class="tab" onclick="switchTab('logs')">📋 Logs</div>
+</div>
+
+<div class="content">
+
+  <!-- STATUS TAB -->
+  <div class="tab-panel active" id="panel-status">
+    <div class="grid grid-4" style="margin-bottom:16px" id="status-stats">
+      <div class="stat"><div class="stat-label">Node Name</div><div class="stat-value" id="s-name" style="font-size:16px;cursor:pointer" title="Click to rename" onclick="startNodeRename()">—</div><div class="stat-sub" id="s-id">—</div></div>
+      <div class="stat"><div class="stat-label">Version</div><div class="stat-value" id="s-version" style="font-size:18px">—</div><div class="stat-sub" id="s-items">— items</div></div>
+      <div class="stat"><div class="stat-label">Chunks</div><div class="stat-value" id="s-chunks">—</div><div class="stat-sub" id="s-chunks-bytes">—</div></div>
+      <div class="stat"><div class="stat-label">Coverage</div><div class="stat-value" id="s-area">—</div><div class="stat-sub">km²</div></div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-title">Beacon Connection</div>
+        <div id="beacon-info">
+          <div class="loading"><div class="spinner"></div> Loading…</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Storage</div>
+        <div id="storage-info">
+          <div class="loading"><div class="spinner"></div> Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Collections</div>
+      <div id="collections-list">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DATA TAB -->
+  <div class="tab-panel" id="panel-data">
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Fetch New Data</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>BBox (west,south,east,north)</label>
+          <input type="text" id="fetch-bbox" placeholder="e.g. 9.0,46.0,17.0,49.0" style="width:260px">
+        </div>
+        <div class="form-group">
+          <label>Collection</label>
+          <input type="text" id="fetch-collection" value="sentinel-2-l2a" style="width:180px">
+        </div>
+        <div class="form-group">
+          <label>Start Date</label>
+          <input type="date" id="fetch-start" style="width:150px">
+        </div>
+        <div class="form-group">
+          <label>End Date</label>
+          <input type="date" id="fetch-end" style="width:150px">
+        </div>
+        <button class="btn" onclick="triggerFetch()">Fetch</button>
+      </div>
+      <div id="fetch-result"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">STAC Items</div>
+      <div class="form-row" style="margin-bottom:12px">
+        <div class="form-group" style="flex:1; min-width:180px">
+          <label>Search</label>
+          <div class="search-wrap">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            <input type="text" id="items-search" placeholder="Filter by ID or collection…" oninput="filterItems()">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Collection</label>
+          <select id="items-collection" onchange="loadItems()">
+            <option value="">All collections</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Per page</label>
+          <select id="items-limit" onchange="loadItems()">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="items-table-wrap">
+        <div class="loading"><div class="spinner"></div> Loading items…</div>
+      </div>
+      <div class="pagination" id="items-pagination" style="display:none">
+        <button class="btn secondary small" id="items-prev" onclick="itemsPage(-1)">← Prev</button>
+        <div class="page-info" id="items-page-info"></div>
+        <button class="btn secondary small" id="items-next" onclick="itemsPage(1)">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NETWORK TAB -->
+  <div class="tab-panel" id="panel-network">
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Network Overview</div>
+      <div id="network-overview">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Nodes</div>
+      <div id="nodes-list">
+        <div class="loading"><div class="spinner"></div> Loading nodes…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACCOUNTS TAB -->
+  <div class="tab-panel" id="panel-accounts">
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="card-title">Add User</div>
+        <button class="btn btn-sm" onclick="promptAdminKey()" style="font-size:12px;padding:4px 10px">🔑 Set Admin Key</button>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="new-username" placeholder="username" style="width:180px">
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="new-role" style="width:130px">
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+            <option value="readonly">readonly</option>
+          </select>
+        </div>
+        <button class="btn" onclick="createUser()">Add User</button>
+      </div>
+      <div id="user-form-result"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Users</div>
+      <div id="users-list">
+        <div class="loading"><div class="spinner"></div> Loading users…</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ACTIVITY TAB -->
+  <div class="tab-panel" id="panel-activity">
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Ongoing Jobs</div>
+      <div id="activity-ongoing">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Daily Summary</div>
+      <div id="activity-daily">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Recent Downloads</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <div class="form-group">
+          <label>Period</label>
+          <select id="activity-days" onchange="loadActivity()">
+            <option value="1">Today</option>
+            <option value="7" selected>7 days</option>
+            <option value="30">30 days</option>
+          </select>
+        </div>
+      </div>
+      <div id="activity-downloads" style="max-height:400px;overflow-y:auto">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOGS TAB -->
+  <div class="tab-panel" id="panel-logs">
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Audit Log</div>
+      <div class="form-row" style="margin-bottom:0">
+        <div class="form-group">
+          <label>Entries</label>
+          <select id="log-limit" onchange="loadLogs()">
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <button class="btn secondary" onclick="loadLogs()">Refresh</button>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;cursor:pointer;margin-left:auto">
+          <input type="checkbox" id="log-autorefresh" onchange="toggleLogRefresh()" style="width:auto;border:none;padding:0"> Auto-refresh (10s)
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Stats</div>
+      <div id="stats-wrap">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Recent Activity</div>
+      <div id="logs-list" style="max-height:500px;overflow-y:auto">
+        <div class="loading"><div class="spinner"></div> Loading logs…</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /content -->
+
+<script>
+// ============================================================
+// API Base Path (handles reverse-proxy subpath like /earthgrid/)
+// ============================================================
+const API_BASE = (() => {
+  const path = window.location.pathname;
+  const markers = ['/ui', '/dashboard'];
+  for (const m of markers) {
+    const idx = path.indexOf(m);
+    if (idx >= 0) return path.slice(0, idx);
+  }
+  const lastSlash = path.lastIndexOf('/');
+  return lastSlash > 0 ? path.slice(0, lastSlash) : '';
+})();
+
+// ============================================================
+// State
+// ============================================================
+let currentTab = 'status';
+let nodeInfo = null;
+let allItems = [];
+let _itemsPageIdx = 0;
+let itemsPerPage = 50;
+let logRefreshTimer = null;
+let statusRefreshTimer = null;
+
+// ============================================================
+// Utilities
+// ============================================================
+function fmt_bytes(b) {
+  if (!b) return '0 B';
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (b >= 1024 && i < u.length-1) { b /= 1024; i++; }
+  return b.toFixed(i>0?1:0) + ' ' + u[i];
+}
+
+function fmt_num(n) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString();
+}
+
+function fmt_date(s) {
+  if (!s) return '—';
+  try { return new Date(s).toISOString().slice(0,16).replace('T',' '); } catch { return s; }
+}
+
+function fmt_bbox(b) {
+  if (!b || !Array.isArray(b)) return '—';
+  return b.map(v => v.toFixed(2)).join(', ');
+}
+
+// Admin key stored in sessionStorage (set via UI prompt)
+function getAdminKey() { return sessionStorage.getItem('eg_admin_key') || ''; }
+function setAdminKey(k) { sessionStorage.setItem('eg_admin_key', k); }
+
+function promptAdminKey() {
+  var k = prompt('Enter Admin API Key:', getAdminKey());
+  if (k !== null) { setAdminKey(k); loadAccounts(); }
+}
+
+async function apiFetch(path, opts={}) {
+  const key = getAdminKey();
+  if (key) {
+    opts.headers = opts.headers || {};
+    if (!opts.headers['X-API-Key']) opts.headers['X-API-Key'] = key;
+  }
+  const r = await fetch(API_BASE + path, opts);
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+function setHtml(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
+function showAlert(containerId, msg, type='info') {
+  setHtml(containerId, `<div class="alert ${type}">${msg}</div>`);
+  if (type !== 'error') setTimeout(() => setHtml(containerId, ''), 5000);
+}
+
+// ============================================================
+// Tab navigation
+// ============================================================
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  // Match tab index
+  const tabs = ['status','data','network','accounts','activity','logs'];
+  const idx = tabs.indexOf(tab);
+  document.querySelectorAll('.tab')[idx].classList.add('active');
+  document.getElementById('panel-' + tab).classList.add('active');
+  refreshCurrent();
+}
+
+function refreshCurrent() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  const p = currentTab === 'status' ? loadStatus() :
+            currentTab === 'data' ? loadData() :
+            currentTab === 'network' ? loadNetwork() :
+            currentTab === 'accounts' ? loadAccounts() :
+            currentTab === 'activity' ? loadActivity() :
+            loadLogsTab();
+  (p || Promise.resolve()).finally(() => {
+    btn.classList.remove('spinning');
+    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  });
+}
+
+// ============================================================
+// STATUS TAB
+// ============================================================
+async function loadStatus() {
+  try {
+    const info = await apiFetch('/node-info');
+    nodeInfo = info;
+
+    // Header
+    document.getElementById('header-node-name').textContent = info.node_name || info.name;
+    if (info.beacon) document.getElementById('header-beacon').style.display = '';
+
+    // Stats grid
+    document.getElementById('s-name').textContent = info.node_name || '—';
+    document.getElementById('s-id').textContent = info.node_id || '—';
+    document.getElementById('s-version').textContent = info.version || '—';
+    document.getElementById('s-items').textContent = fmt_num(info.item_count) + ' items';
+    document.getElementById('s-chunks').textContent = fmt_num(info.chunks);
+    document.getElementById('s-chunks-bytes').textContent = fmt_bytes((info.storage_bytes || info.chunks_bytes || 0));
+    document.getElementById('s-area').textContent = info.total_area_km2 ? fmt_num(Math.round(info.total_area_km2)) : '—';
+
+    // Beacon
+    renderBeaconInfo(info);
+
+    // Storage
+    renderStorageInfo(info);
+    renderSystemInfo(info.system);
+
+    // Collections
+    await renderCollections(info.collections);
+
+  } catch(e) {
+    console.error('Status load error:', e);
+    setHtml('beacon-info', `<div class="alert error">Failed to load: ${e.message}</div>`);
+  }
+}
+
+function renderBeaconInfo(info) {
+  let html = '';
+  if (info.beacon) {
+    html = `
+      <div class="status-row" style="margin-bottom:10px">
+        <div class="dot green"></div>
+        <span>This node is a Beacon</span>
+        <span class="tag green" style="margin-left:auto">Beacon</span>
+      </div>`;
+  } else {
+    // Try to infer beacon URL from peers or settings
+    html = `
+      <div class="status-row" style="margin-bottom:10px">
+        <div class="dot ${info.peers > 0 ? 'green' : 'yellow'}"></div>
+        <span>${info.peers > 0 ? 'Connected' : 'No beacon configured'}</span>
+      </div>`;
+  }
+  html += `<div class="kv"><span class="kv-key">Peers</span><span class="kv-val">${fmt_num(info.peers)}</span></div>`;
+  html += `<div class="kv"><span class="kv-key">Redundancy Index</span><span class="kv-val">${info.redundancy_index ?? '—'}×</span></div>`;
+  html += `<div class="kv"><span class="kv-key">OpenEO</span><span class="kv-val">${info.openeo ? '✓ Enabled' : 'Disabled'}</span></div>`;
+  if (info.bandwidth) {
+    const bw = info.bandwidth;
+    html += `<div class="kv"><span class="kv-key">Bandwidth</span><span class="kv-val">${bw.upload_mbps ?? '—'} / ${bw.download_mbps ?? '—'} Mbps</span></div>`;
+  }
+  setHtml('beacon-info', html);
+}
+
+function renderStorageInfo(info) {
+  const used = (info.storage_bytes || info.chunks_bytes || 0) || 0;
+  const limitGb = info.storage_limit_gb || 0;
+  const limitBytes = limitGb * 1024**3;
+  const pct = info.storage_used_pct || (limitBytes > 0 ? (used / limitBytes * 100) : 0);
+  const pctRound = Math.round(pct * 10) / 10;
+  const fillClass = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
+
+  let html = `
+    <div class="kv"><span class="kv-key">Used</span><span class="kv-val">${fmt_bytes(used)}</span></div>
+    <div class="kv"><span class="kv-key">Limit</span><span class="kv-val">${limitGb > 0 ? limitGb + ' GB' : 'Unlimited'}</span></div>`;
+
+  if (limitGb > 0) {
+    html += `
+      <div class="progress-wrap" style="margin-top:12px">
+        <div class="progress-label"><span>${pctRound}% used</span><span>${fmt_bytes(limitBytes - used)} free</span></div>
+        <div class="progress-bar"><div class="progress-fill ${fillClass}" style="width:${Math.min(pctRound,100)}%"></div></div>
+      </div>`;
+  }
+
+  if (info.max_download_volume_gb) {
+    html += `<div class="kv" style="margin-top:8px"><span class="kv-key">Max Download</span><span class="kv-val">${info.max_download_volume_gb} GB</span></div>`;
+  }
+
+  html += `
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <input type="number" id="resize-input" value="${limitGb}" min="1" step="10"
+        style="width:80px;padding:6px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+      <span style="color:var(--muted);font-size:12px">GB</span>
+      <button class="btn secondary small" onclick="resizeStorage()" style="margin-left:4px">Resize</button>
+    </div>
+    <div id="resize-result" style="margin-top:6px"></div>`;
+
+  // Auto-update setting
+  const au = info.auto_update || 'no';
+  const auColor = au === 'yes' ? 'var(--green,#4caf50)' : au === 'ask' ? 'var(--yellow,#ff9800)' : 'var(--muted)';
+  html += `<div class="kv" style="margin-top:12px"><span class="kv-key">Auto-Update</span><span class="kv-val" style="color:${auColor}">${au}</span></div>`;
+
+  setHtml('storage-info', html);
+}
+
+async function resizeStorage() {
+  const gb = parseFloat(document.getElementById('resize-input').value);
+  if (!gb || gb < 1) { showAlert('resize-result', 'Min 1 GB', 'error'); return; }
+  try {
+    const data = await apiFetch('/resize?size_gb=' + gb, {method: 'POST'});
+    showAlert('resize-result', '\u2713 Resized: ' + data.old_gb + ' \u2192 ' + data.new_gb + ' GB', 'success');
+    setTimeout(() => loadStatus(), 1000);
+  } catch(e) {
+    showAlert('resize-result', 'Error: ' + e.message, 'error');
+  }
+}
+
+function renderSystemInfo(sys) {
+  if (!sys) { setHtml('system-info', ''); return; }
+  const cpuPct = sys.cpu_pct || 0;
+  const cpuClass = cpuPct > 90 ? 'danger' : cpuPct > 70 ? 'warn' : '';
+  const memPct = sys.mem_pct || 0;
+  const memClass = memPct > 90 ? 'danger' : memPct > 70 ? 'warn' : '';
+  const upH = sys.uptime_seconds ? Math.floor(sys.uptime_seconds / 3600) : 0;
+  const upD = Math.floor(upH / 24);
+  const upStr = upD > 0 ? upD + 'd ' + (upH % 24) + 'h' : upH + 'h';
+
+  let html = `
+    <div class="kv"><span class="kv-key">CPU</span><span class="kv-val">${cpuPct}% (${sys.cpu_count || '?'} cores)</span></div>
+    <div class="progress-wrap" style="margin:6px 0 10px">
+      <div class="progress-bar"><div class="progress-fill ${cpuClass}" style="width:${Math.min(cpuPct,100)}%"></div></div>
+    </div>
+    <div class="kv"><span class="kv-key">Load</span><span class="kv-val">${(sys.load_avg || []).join(' / ')}</span></div>`;
+  if (sys.mem_total) {
+    html += `
+    <div class="kv" style="margin-top:8px"><span class="kv-key">Memory</span><span class="kv-val">${fmt_bytes(sys.mem_used || 0)} / ${fmt_bytes(sys.mem_total)} (${memPct}%)</span></div>
+    <div class="progress-wrap" style="margin:6px 0 10px">
+      <div class="progress-bar"><div class="progress-fill ${memClass}" style="width:${Math.min(memPct,100)}%"></div></div>
+    </div>`;
+  }
+  html += `<div class="kv"><span class="kv-key">Uptime</span><span class="kv-val">${upStr}</span></div>`;
+  setHtml('system-info', html);
+}
+
+async function renderCollections(collections) {
+  if (!collections || (Array.isArray(collections) && !collections.length) || (!Array.isArray(collections) && !Object.keys(collections).length)) {
+    setHtml('collections-list', '<div class="empty"><div class="empty-icon">📭</div>No collections yet</div>');
+    return;
+  }
+
+  // Normalize: if array of strings, fetch details from STAC API
+  let entries;
+  if (Array.isArray(collections) && typeof collections[0] === 'string') {
+    try {
+      const stac = await apiFetch('/stac/collections');
+      const colMap = {};
+      for (const c of (stac.collections || [])) {
+        colMap[c.id] = { items: c.numberMatched || c.item_count || 0 };
+      }
+      entries = collections.map(name => [name, colMap[name] || {}]);
+    } catch(e) {
+      entries = collections.map(name => [name, {}]);
+    }
+  } else if (Array.isArray(collections)) {
+    entries = collections.map(c => [c.id || c.name || '?', c]);
+  } else {
+    entries = Object.entries(collections);
+  }
+
+  entries.sort((a,b) => (b[1].items||0) - (a[1].items||0));
+
+  let html = '<div class="collection-list">';
+  for (const [name, info] of entries) {
+    html += `<div class="collection-item">
+      <div>
+        <div class="collection-name">${name}</div>
+        ${info.tiles ? `<div style="font-size:11px;color:var(--muted)">${info.tiles} tiles · ${info.area_km2 ? Math.round(info.area_km2).toLocaleString() + ' km\u00b2' : ''}</div>` : ''}
+      </div>
+      <div class="collection-count">${info.items ? fmt_num(info.items) + ' items' : ''}</div>
+    </div>`;
+  }
+  html += '</div>';
+  setHtml('collections-list', html);
+}
+
+// ============================================================
+// DATA TAB
+// ============================================================
+let _allItems = [];
+let _currentPage = 0;
+let _searchTerm = '';
+
+async function loadData() {
+  await Promise.all([loadCollectionFilter(), loadItems()]);
+}
+
+async function loadCollectionFilter() {
+  try {
+    const data = await apiFetch('/stac/collections');
+    const sel = document.getElementById('items-collection');
+    const curVal = sel.value;
+    // Keep first option
+    while (sel.options.length > 1) sel.remove(1);
+    (data.collections || []).forEach(c => {
+      const o = new Option(c.id, c.id);
+      sel.add(o);
+    });
+    sel.value = curVal;
+  } catch(e) { /* ignore */ }
+}
+
+async function loadItems() {
+  const col = document.getElementById('items-collection').value;
+  const limit = parseInt(document.getElementById('items-limit').value) || 50;
+  itemsPerPage = limit;
+  _currentPage = 0;
+
+  setHtml('items-table-wrap', '<div class="loading"><div class="spinner"></div> Loading items…</div>');
+  document.getElementById('items-pagination').style.display = 'none';
+
+  try {
+    let url = col ? `/stac/collections/${encodeURIComponent(col)}/items?limit=${limit}` :
+                    `/stac/search?limit=${limit}`;
+    const data = await apiFetch(url);
+    _allItems = data.features || [];
+    _searchTerm = document.getElementById('items-search').value;
+    renderItems();
+  } catch(e) {
+    setHtml('items-table-wrap', `<div class="alert error">Failed: ${e.message}</div>`);
+  }
+}
+
+function filterItems() {
+  _searchTerm = document.getElementById('items-search').value.toLowerCase();
+  _currentPage = 0;
+  renderItems();
+}
+
+function renderItems() {
+  const filtered = _allItems.filter(item => {
+    if (!_searchTerm) return true;
+    return (item.id||'').toLowerCase().includes(_searchTerm) ||
+           (item.collection||'').toLowerCase().includes(_searchTerm);
+  });
+
+  if (!filtered.length) {
+    setHtml('items-table-wrap', '<div class="empty"><div class="empty-icon">🔍</div>No items found</div>');
+    document.getElementById('items-pagination').style.display = 'none';
+    return;
+  }
+
+  const start = _currentPage * itemsPerPage;
+  const page = filtered.slice(start, start + itemsPerPage);
+  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+
+  let html = '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Collection</th><th>Datetime</th><th>BBox</th><th>Chunks</th></tr></thead><tbody>';
+  for (const item of page) {
+    const dt = item.properties?.datetime || item.properties?.start_datetime;
+    const chunks = item.properties?.['earthgrid:chunks'] || item.properties?.chunk_count || '—';
+    const bbox = item.bbox ? fmt_bbox(item.bbox) : '—';
+    html += `<tr>
+      <td><span class="mono truncate" title="${item.id}">${item.id}</span></td>
+      <td><span class="tag">${item.collection || '—'}</span></td>
+      <td style="color:var(--muted)">${fmt_date(dt)}</td>
+      <td class="mono" style="font-size:11px;color:var(--muted)">${bbox}</td>
+      <td style="text-align:right">${chunks}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  setHtml('items-table-wrap', html);
+
+  // Pagination
+  const pag = document.getElementById('items-pagination');
+  pag.style.display = totalPages > 1 ? 'flex' : 'none';
+  document.getElementById('items-page-info').textContent = `Page ${_currentPage+1} / ${totalPages} · ${filtered.length} items`;
+  document.getElementById('items-prev').disabled = _currentPage === 0;
+  document.getElementById('items-next').disabled = _currentPage >= totalPages - 1;
+}
+
+function itemsPage(dir) {
+  const filtered = _allItems.filter(item => {
+    if (!_searchTerm) return true;
+    return (item.id||'').toLowerCase().includes(_searchTerm) ||
+           (item.collection||'').toLowerCase().includes(_searchTerm);
+  });
+  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+  _currentPage = Math.max(0, Math.min(totalPages - 1, _currentPage + dir));
+  renderItems();
+}
+
+async function triggerFetch() {
+  const bbox = document.getElementById('fetch-bbox').value.trim();
+  const col = document.getElementById('fetch-collection').value.trim();
+  const start = document.getElementById('fetch-start').value;
+  const end = document.getElementById('fetch-end').value;
+
+  if (!bbox && !col) {
+    showAlert('fetch-result', 'Please enter at least a bbox or collection', 'error');
+    return;
+  }
+
+  const params = new URLSearchParams();
+  if (col) params.set('collection', col);
+  if (bbox) params.set('bbox', bbox);
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  params.set('cloud_cover', '30');
+  params.set('limit', '10');
+
+  showAlert('fetch-result', '⏳ Fetching data... this may take a while', 'info');
+
+  try {
+    const data = await apiFetch('/fetch?' + params.toString(), {method: 'POST'});
+    const msg = data.message || data.error || JSON.stringify(data).substring(0, 200);
+    showAlert('fetch-result', '✓ ' + msg, 'success');
+    setTimeout(() => loadItems(), 2000);
+  } catch(e) {
+    showAlert('fetch-result', 'Error: ' + e.message, 'error');
+  }
+}
+
+// ============================================================
+// NETWORK TAB
+// ============================================================
+async function loadNetwork() {
+  setHtml('network-overview', '<div class="loading"><div class="spinner"></div> Loading…</div>');
+  setHtml('nodes-list', '<div class="loading"><div class="spinner"></div> Loading nodes…</div>');
+
+  // Try beacon /nodes first, then fall back to /peers
+  try {
+    let nodes = [];
+    let fromBeacon = false;
+
+    try {
+      const data = await apiFetch('/nodes');
+      nodes = data.nodes || [];
+      fromBeacon = true;
+    } catch {
+      const data = await apiFetch('/peers');
+      nodes = data.peers || [];
+    }
+
+    // Overview
+    const alive = nodes.filter(n => n.alive !== false);
+    const totalItems = nodes.reduce((s, n) => s + (n.item_count || 0), 0);
+    const totalChunks = nodes.reduce((s, n) => s + (n.chunk_count || n.chunks || 0), 0);
+    const totalBytes = nodes.reduce((s, n) => s + (n.chunks_bytes || 0), 0);
+
+    let ovHtml = `<div class="grid grid-4">
+      <div class="stat"><div class="stat-label">Nodes Alive</div><div class="stat-value">${alive.length}</div><div class="stat-sub">of ${nodes.length} known</div></div>
+      <div class="stat"><div class="stat-label">Total Items</div><div class="stat-value">${fmt_num(totalItems)}</div></div>
+      <div class="stat"><div class="stat-label">Total Chunks</div><div class="stat-value">${fmt_num(totalChunks)}</div></div>
+      <div class="stat"><div class="stat-label">Total Storage</div><div class="stat-value" style="font-size:18px">${fmt_bytes(totalBytes)}</div></div>
+    </div>`;
+    if (!fromBeacon) {
+      ovHtml += '<div class="alert info" style="margin-top:12px">Showing federation peers (not a beacon node)</div>';
+    }
+    setHtml('network-overview', ovHtml);
+
+    // Node list
+    if (!nodes.length) {
+      setHtml('nodes-list', '<div class="empty"><div class="empty-icon">🌐</div>No nodes found</div>');
+      return;
+    }
+
+    // Fetch gamification scores and merge
+    let scoreMap = {};
+    try {
+      const gData = await apiFetch('/gamification/leaderboard?type=nodes&limit=100');
+      for (const e of (gData.entries || [])) {
+        scoreMap[e.node_id] = e.score;
+      }
+    } catch {}
+    for (const n of nodes) {
+      if (scoreMap[n.node_id] !== undefined) n.score = scoreMap[n.node_id];
+      else if (scoreMap[n.node_name] !== undefined) n.score = scoreMap[n.node_name];
+    }
+
+    // Highlight current node
+    const localId = nodeInfo?.node_id;
+
+    let html = '<div style="display:flex;flex-direction:column;gap:10px">';
+    for (const n of nodes) {
+      const isMe = localId && n.node_id === localId;
+      const isAlive = n.alive !== false;
+      const collections = (n.collections || []).slice(0, 5);
+      const extraCols = (n.collections || []).length - 5;
+      html += `<div class="node-card" style="${isMe ? 'border-color:var(--accent)' : ''}">
+        <div class="node-card-header">
+          <div>
+            <div class="node-name">${n.node_name || n.url || 'Unknown'} ${isMe ? '<span class="tag" style="font-size:10px">This node</span>' : ''}</div>
+            <div class="node-id">${n.node_id || '—'}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+            ${isAlive ? '<span class="dot green"></span>' : '<span class="dot red"></span>'}
+            <span class="tag ${isAlive ? 'green' : 'red'}">${isAlive ? 'Alive' : 'Offline'}</span>
+          </div>
+        </div>
+        <div class="node-stats">
+          <div class="node-stat">Items: <span>${fmt_num(n.item_count)}</span></div>
+          <div class="node-stat">Chunks: <span>${fmt_num(n.chunk_count || n.chunks)}</span></div>
+          <div class="node-stat">Storage: <span>${fmt_bytes(n.chunks_bytes)}</span></div>
+          ${n.url ? `<div class="node-stat">URL: <span><a href="${n.url}" target="_blank">${n.url}</a></span></div>` : ''}
+        </div>
+        ${collections.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${collections.map(c => `<span class="tag">${c}</span>`).join('')}
+          ${extraCols > 0 ? `<span class="tag">+${extraCols} more</span>` : ''}
+        </div>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+    setHtml('nodes-list', html);
+
+  } catch(e) {
+    setHtml('network-overview', `<div class="alert error">Failed: ${e.message}</div>`);
+    setHtml('nodes-list', '');
+  }
+}
+
+// ============================================================
+// ACCOUNTS TAB
+// ============================================================
+async function loadAccounts() {
+  setHtml('users-list', '<div class="loading"><div class="spinner"></div> Loading users…</div>');
+  try {
+    const data = await apiFetch('/admin/users');
+    const users = data.users || [];
+    if (!users.length) {
+      setHtml('users-list', '<div class="empty"><div class="empty-icon">👤</div>No users yet</div>');
+      return;
+    }
+    let html = '<div class="table-wrap"><table><thead><tr><th>Username</th><th>User ID</th><th>Role</th><th>Status</th><th>Origin</th><th>Created</th><th></th></tr></thead><tbody>';
+    for (const u of users) {
+      const active = u.active !== false;
+      html += `<tr>
+        <td><strong>${u.username}</strong></td>
+        <td><span class="mono" style="font-size:11px;color:var(--muted)">${u.user_id || u.id || '—'}</span></td>
+        <td><span class="tag">${u.role || 'member'}</span></td>
+        <td><span class="tag ${active ? 'green' : 'red'}">${active ? 'Active' : 'Inactive'}</span></td>
+        <td style="color:var(--muted)">${u.node_origin || '—'}</td>
+        <td style="color:var(--muted)">${fmt_date(u.created_at)}</td>
+        <td><button class="btn danger small" onclick="deleteUser('${u.user_id || u.id}', '${u.username}')">Remove</button></td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+    setHtml('users-list', html);
+  } catch(e) {
+    if (e.message.includes('401') || e.message.includes('403')) {
+      setHtml('users-list', '<div class="alert info">Admin access required. Add X-API-Key header or access from localhost.</div>');
+    } else {
+      setHtml('users-list', `<div class="alert error">Failed: ${e.message}</div>`);
+    }
+  }
+}
+
+async function createUser() {
+  const username = document.getElementById('new-username').value.trim();
+  const role = document.getElementById('new-role').value;
+  if (!username) { showAlert('user-form-result', 'Username is required', 'error'); return; }
+  try {
+    const user = await apiFetch('/admin/users', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, role}),
+    });
+    document.getElementById('new-username').value = '';
+    showAlert('user-form-result', `✓ User "${user.username}" created. API key: ${user.api_key || '(see response)'}`, 'success');
+    loadAccounts();
+  } catch(e) {
+    showAlert('user-form-result', `Error: ${e.message}`, 'error');
+  }
+}
+
+async function deleteUser(userId, username) {
+  if (!confirm(`Remove user "${username}"?`)) return;
+  try {
+    await apiFetch(`/admin/users/${encodeURIComponent(userId)}`, {method: 'DELETE'});
+    showAlert('user-form-result', `✓ User "${username}" deactivated`, 'success');
+    loadAccounts();
+  } catch(e) {
+    showAlert('user-form-result', `Error: ${e.message}`, 'error');
+  }
+}
+
+// ============================================================
+// LOGS TAB
+// ============================================================
+async function loadLogsTab() {
+  await Promise.all([loadStats(), loadLogs()]);
+}
+
+async function loadStats() {
+  try {
+    const data = await apiFetch('/stats');
+    let html = '';
+    const flat = {};
+    function flatten(obj, prefix='') {
+      for (const [k,v] of Object.entries(obj)) {
+        if (Array.isArray(v)) flat[prefix ? prefix+'.'+k : k] = v.length + ' entries';
+        else if (typeof v === 'object' && v !== null) flatten(v, prefix ? prefix+'.'+k : k);
+        else flat[prefix ? prefix+'.'+k : k] = v;
+      }
+    }
+    flatten(data);
+    for (const [k,v] of Object.entries(flat).slice(0, 30)) {
+      html += `<div class="kv"><span class="kv-key">${k}</span><span class="kv-val">${typeof v === 'number' ? fmt_num(v) : String(v)}</span></div>`;
+    }
+    setHtml('stats-wrap', html || '<div class="empty">No stats available</div>');
+  } catch(e) {
+    setHtml('stats-wrap', `<div class="alert error">Stats unavailable: ${e.message}</div>`);
+  }
+}
+
+async function loadLogs() {
+  const limit = document.getElementById('log-limit').value;
+  try {
+    const data = await apiFetch(`/audit?limit=${limit}`);
+    const entries = (data.entries || []).reverse();
+    if (!entries.length) {
+      setHtml('logs-list', '<div class="empty"><div class="empty-icon">📋</div>No audit entries</div>');
+      return;
+    }
+    let html = '';
+    for (const e of entries) {
+      html += `<div class="log-entry">
+        <span class="log-ts">${fmt_date(e.ts)}</span>
+        <span class="log-ok-${e.ok}">${e.ok ? '✓' : '✗'}</span>
+        <span style="color:var(--accent)">${e.action || ''}</span>
+        <span style="color:var(--muted)">${e.detail || ''}</span>
+        ${e.ip ? `<span style="color:var(--muted);margin-left:auto">${e.ip}</span>` : ''}
+      </div>`;
+    }
+    setHtml('logs-list', html);
+  } catch(e) {
+    if (e.message.includes('401') || e.message.includes('403')) {
+      setHtml('logs-list', '<div class="alert info">Admin access required for audit log.</div>');
+    } else {
+      setHtml('logs-list', `<div class="alert error">Failed: ${e.message}</div>`);
+    }
+  }
+}
+
+function toggleLogRefresh() {
+  if (document.getElementById('log-autorefresh').checked) {
+    logRefreshTimer = setInterval(loadLogs, 10000);
+  } else {
+    clearInterval(logRefreshTimer);
+    logRefreshTimer = null;
+  }
+}
+
+// ============================================================
+// Init & auto-refresh
+// ============================================================
+async function init() {
+  try {
+    await loadStatus();
+  } catch(e) {
+    document.body.insertAdjacentHTML('afterbegin',
+      '<div style="background:red;color:white;padding:20px;font-family:monospace;white-space:pre-wrap">INIT ERROR: ' + e.message + '\n\nStack: ' + e.stack + '</div>');
+    console.error('Init failed:', e);
+  }
+  document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  // Auto-refresh status every 30s
+  statusRefreshTimer = setInterval(() => {
+    if (currentTab === 'status') loadStatus();
+  }, 30000);
+}
+
+init();
+// ============================================================
+// Scoring Info
+// ============================================================
+function showScoreInfo() {
+  const existing = document.querySelector('.score-modal-bg');
+  if (existing) existing.remove();
+  const div = document.createElement('div');
+  div.className = 'score-modal-bg';
+  div.onclick = function(e) { if (e.target === div) div.remove(); };
+  div.innerHTML = `<div class="score-modal">
+    <span class="close-btn" onclick="this.closest('.score-modal-bg').remove()">&times;</span>
+    <h3>How Scores Are Calculated</h3>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 16px">
+      Scores reflect each node's contribution to the EarthGrid network.
+      They update automatically with every heartbeat.
+    </p>
+    <table>
+      <tr><td>⏱️ Uptime</td><td>10 pts / day online</td></tr>
+      <tr><td>💾 Storage Pledged</td><td>5 pts / GB pledged</td></tr>
+      <tr><td>📦 Data Ingested</td><td>1 pt / item</td></tr>
+      <tr><td>📡 Data Served</td><td>3 pts / GB served to peers</td></tr>
+      <tr><td>🔍 Queries Answered</td><td>1 pt / 100 queries</td></tr>
+      <tr><td>🔥 Streak</td><td>2 pts / consecutive day online</td></tr>
+    </table>
+    <p style="color:var(--muted);font-size:12px;margin:16px 0 0">
+      Nodes participate anonymously by default. Opt in via the CLI
+      (<code>earthgrid gamification opt-in</code>) to link your score
+      to a username and appear on the leaderboard.
+    </p>
+  </div>`;
+  document.body.appendChild(div);
+}
+
+
+// --- Node Rename (inline edit) ---
+function startNodeRename() {
+  const el = document.getElementById('s-name');
+  const current = el.textContent;
+  el.innerHTML = '<input id="rename-input" type="text" value="' + current + '" style="background:#1a1d23;border:1px solid #3b82f6;color:#e2e8f0;border-radius:4px;padding:2px 6px;font-size:16px;width:140px;font-family:inherit" maxlength="64">' +
+    ' <button onclick="submitNodeRename()" style="background:#3b82f6;color:#fff;border:none;border-radius:4px;padding:2px 10px;cursor:pointer;font-size:12px">Save</button>' +
+    ' <button onclick="cancelNodeRename(\''+current.replace(/'/g,"\\'")+'\' )" style="background:#374151;color:#9ca3af;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px">\u2715</button>';
+  const inp = document.getElementById('rename-input');
+  inp.focus();
+  inp.select();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitNodeRename();
+    if (e.key === 'Escape') cancelNodeRename(current);
+  });
+}
+function cancelNodeRename(old) {
+  const el = document.getElementById('s-name');
+  el.textContent = old;
+}
+async function submitNodeRename() {
+  const inp = document.getElementById('rename-input');
+  if (!inp) return;
+  const name = inp.value.trim();
+  if (!name) return;
+  try {
+    const res = await apiFetch('/node-name?name=' + encodeURIComponent(name), {method: 'PATCH'});
+    if (res.status === 'renamed') {
+      document.getElementById('s-name').textContent = res.new;
+      document.getElementById('header-node-name').textContent = res.new;
+    } else {
+      alert('Rename failed');
+      cancelNodeRename(res.old || name);
+    }
+  } catch(e) {
+    alert('Rename error: ' + e.message);
+    loadStatus();
+  }
+}
+
+
+
+// ============================================================
+// ACTIVITY TAB
+// ============================================================
+async function loadActivity() {
+  const days = parseInt(document.getElementById('activity-days').value) || 7;
+  try {
+    const data = await apiFetch('/admin/activity?days=' + days);
+    const entries = data.activity || data.entries || [];
+    
+    // Ongoing: no structured jobs in Rust, show empty
+    setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">😴</div>No active jobs</div>');
+    
+    // Daily summary from entries
+    const byDay = {};
+    for (const e of entries) {
+      const day = (e.ts || '').slice(0, 10);
+      if (!byDay[day]) byDay[day] = { count: 0, ok: 0, fail: 0 };
+      byDay[day].count++;
+      if (e.ok) byDay[day].ok++; else byDay[day].fail++;
+    }
+    const days_sorted = Object.keys(byDay).sort().reverse();
+    if (days_sorted.length) {
+      let dhtml = '<div class="table-wrap"><table><thead><tr><th>Date</th><th>Total</th><th>OK</th><th>Failed</th></tr></thead><tbody>';
+      for (const day of days_sorted) {
+        const d = byDay[day];
+        dhtml += '<tr><td>' + day + '</td><td>' + d.count + '</td><td style="color:var(--green)">' + d.ok + '</td><td style="color:var(--red)">' + d.fail + '</td></tr>';
+      }
+      dhtml += '</tbody></table></div>';
+      setHtml('activity-daily', dhtml);
+    } else {
+      setHtml('activity-daily', '<div class="empty"><div class="empty-icon">📭</div>No activity in period</div>');
+    }
+    
+    // Recent activity from entries (reverse for newest first)
+    const recent = entries.slice().reverse().slice(0, 50);
+    if (recent.length) {
+      let rhtml = '<div class="table-wrap"><table><thead><tr><th>Time</th><th>Status</th><th>Action</th><th>Details</th></tr></thead><tbody>';
+      for (const e of recent) {
+        rhtml += '<tr><td style="white-space:nowrap">' + fmt_date(e.ts) + '</td><td>' + (e.ok ? '<span class="tag green">OK</span>' : '<span class="tag red">Fail</span>') + '</td><td style="color:var(--accent)">' + (e.action||'') + '</td><td style="color:var(--muted)">' + (e.detail||'') + '</td></tr>';
+      }
+      rhtml += '</tbody></table></div>';
+      setHtml('activity-downloads', rhtml);
+    } else {
+      setHtml('activity-downloads', '<div class="empty"><div class="empty-icon">📭</div>No recent activity</div>');
+    }
+  } catch(e) {
+    setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">⚠️</div>' + e.message + '</div>');
+  }
+}
+
+function renderOngoingJobs(data) {
+  const fetches = data.ongoing_fetches || [];
+  const openeo = data.openeo_jobs || [];
+  if (!fetches.length && !openeo.length) {
+    setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">😴</div>No active jobs</div>');
+    return;
+  }
+  let html = '';
+  for (const j of fetches) {
+    const statusColor = j.status === 'running' ? 'var(--yellow)' : j.status === 'done' ? 'var(--green)' : 'var(--red)';
+    html += `<div class="kv">
+      <span class="kv-key">📥 Fetch <code>${j.job_id}</code></span>
+      <span class="kv-val" style="color:${statusColor}">${j.status}${j.ingested ? ' · ' + j.ingested + ' ingested' : ''}${j.errors ? ' · ' + j.errors + ' errors' : ''}</span>
+    </div>`;
+  }
+  for (const j of openeo) {
+    const statusColor = j.status === 'finished' ? 'var(--green)' : j.status === 'running' ? 'var(--yellow)' : 'var(--muted)';
+    html += `<div class="kv">
+      <span class="kv-key">🧮 OpenEO <code>${j.job_id}</code></span>
+      <span class="kv-val" style="color:${statusColor}">${j.status}${j.progress ? ' · ' + j.progress + '%' : ''}${j.title ? ' · ' + j.title : ''}</span>
+    </div>`;
+  }
+  setHtml('activity-ongoing', html);
+}
+
+function renderDailySummary(daily) {
+  if (!daily.length) {
+    setHtml('activity-daily', '<div class="empty"><div class="empty-icon">📭</div>No activity in period</div>');
+    return;
+  }
+  // Group by day
+  const byDay = {};
+  for (const d of daily) {
+    if (!byDay[d.day]) byDay[d.day] = { source: {count:0, bytes:0}, user: {count:0, bytes:0} };
+    byDay[d.day][d.origin] = { count: d.count, bytes: d.bytes };
+  }
+  let html = '<div class="table-wrap"><table><thead><tr><th>Date</th><th>Source DL</th><th>User DL</th><th>Total</th></tr></thead><tbody>';
+  for (const [day, info] of Object.entries(byDay)) {
+    const total = (info.source.bytes || 0) + (info.user.bytes || 0);
+    html += `<tr>
+      <td>${day}</td>
+      <td>${info.source.count} (${fmt_bytes(info.source.bytes || 0)})</td>
+      <td>${info.user.count} (${fmt_bytes(info.user.bytes || 0)})</td>
+      <td style="font-weight:600">${fmt_bytes(total)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  setHtml('activity-daily', html);
+}
+
+function renderRecentDownloads(downloads) {
+  if (!downloads.length) {
+    setHtml('activity-downloads', '<div class="empty"><div class="empty-icon">📭</div>No downloads in period</div>');
+    return;
+  }
+  let html = '<div class="table-wrap"><table><thead><tr><th>Time</th><th>Type</th><th>Collection</th><th>Item</th><th>Size</th></tr></thead><tbody>';
+  for (const d of downloads) {
+    const t = new Date(d.timestamp * 1000);
+    const timeStr = t.toLocaleDateString() + ' ' + t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    const origin = d.origin === 'source' ? '📥 Source' : '👤 User';
+    const itemShort = d.item_id ? (d.item_id.length > 30 ? d.item_id.slice(0,27) + '…' : d.item_id) : '—';
+    html += `<tr>
+      <td style="white-space:nowrap">${timeStr}</td>
+      <td>${origin}${d.provider ? ' (' + d.provider + ')' : ''}</td>
+      <td>${d.collection || '—'}</td>
+      <td title="${d.item_id || ''}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${itemShort}</td>
+      <td style="text-align:right">${fmt_bytes(d.bytes || 0)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  setHtml('activity-downloads', html);
+}
+
+// --- Copy to clipboard for <code> elements ---
+function copyText(text, feedbackEl) {
+  navigator.clipboard.writeText(text).then(() => {
+    if (feedbackEl) {
+      const orig = feedbackEl.style.cssText;
+      feedbackEl.style.color = 'var(--green)';
+      feedbackEl.title = 'Copied!';
+      setTimeout(() => { feedbackEl.style.cssText = orig; feedbackEl.title = ''; }, 1200);
+    }
+  }).catch(() => {});
+}
+document.addEventListener('click', function(e) {
+  const code = e.target.closest('code');
+  if (code) {
+    copyText(code.textContent.replace(/📋$/, '').trim(), code);
+    return;
+  }
+  // Node IDs (monospace, .node-id class)
+  const nodeId = e.target.closest('.node-id');
+  if (nodeId) {
+    copyText(nodeId.textContent.trim(), nodeId);
+    return;
+  }
+  // Stat sub (node id on status page)
+  if (e.target.id === 's-id') {
+    copyText(e.target.textContent.trim(), e.target);
+  }
+});
+</script>
+</body>
+</html>
