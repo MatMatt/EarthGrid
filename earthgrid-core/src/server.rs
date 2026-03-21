@@ -62,6 +62,8 @@ pub struct AppState {
     pub data_dir: PathBuf,
     /// Counter for active fetch/ingest requests (replication yields when > 0).
     pub active_requests: Arc<AtomicUsize>,
+    /// Whether this node runs as beacon (shows grid-wide landing page).
+    pub is_beacon: bool,
 }
 
 
@@ -177,9 +179,9 @@ async fn stac_landing(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
-    // If Accept header prefers HTML, serve the info page
+    // Only beacon nodes serve the HTML info page; regular nodes always return STAC JSON
     let accept = headers.get("accept").and_then(|v| v.to_str().ok()).unwrap_or("");
-    if accept.contains("text/html") && !accept.starts_with("application/json") {
+    if state.is_beacon && accept.contains("text/html") && !accept.starts_with("application/json") {
         return landing_html(State(state)).await.into_response();
     }
     stac_landing_json(State(state)).await.into_response()
@@ -2706,6 +2708,9 @@ pub async fn serve(
         storage_limit_gb,
         data_dir: data_dir.clone(),
         active_requests: Arc::new(AtomicUsize::new(0)),
+        is_beacon: env::var("EARTHGRID_BEACON")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false),
     };
 
     // Conditionally build beacon router (EARTHGRID_BEACON=true)
