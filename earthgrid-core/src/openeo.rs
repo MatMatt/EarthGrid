@@ -283,6 +283,7 @@ pub struct RasterMeta {
 pub fn canonical_format(fmt: &str) -> &str {
     match fmt.to_ascii_lowercase().as_str() {
         "gtiff" | "geotiff" | "tiff" | "tif" => "GTiff",
+        "netcdf" | "nc" => "netCDF",
         "geojson" | "json" => "GeoJSON",
         "geoparquet" | "parquet" => "GeoParquet",
         _ => "GTiff",
@@ -297,6 +298,10 @@ pub fn wrap_output(pixels: &[u8], meta: &RasterMeta, format: &str) -> Result<(Ve
         "GTiff" => {
             let bytes = wrap_geotiff(pixels, meta)?;
             Ok((bytes, "image/tiff"))
+        }
+        "netCDF" => {
+            let bytes = wrap_netcdf(pixels, meta)?;
+            Ok((bytes, "application/x-netcdf"))
         }
         "GeoJSON" => Err(
             "GeoJSON output is not yet implemented. \
@@ -355,6 +360,55 @@ pub fn wrap_geotiff(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String>
     let bytes = gdal::vsi::get_vsi_mem_file_bytes_owned(&vsi_path)
         .map_err(|e| format!("GDAL vsimem read: {e}"))?;
     let _ = gdal::vsi::unlink_mem_file(&vsi_path);
+    Ok(bytes)
+}
+
+/// Package raw f32 pixel bytes into a netCDF-4 file via a temp file
+/// (GDAL's netCDF driver does not support `/vsimem`).
+pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> {
+    let pixel_count = meta.width * meta.height;
+    let expected = pixel_count * 4;
+    if pixels.len() < expected {
+        return Err(format!(
+            "wrap_netcdf: buffer too small ({} bytes, need {} for {}x{} f32)",
+            pixels.len(), expected, meta.width, meta.height
+        ));
+    }
+    let floats: Vec<f32> = pixels[..expected]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+
+    let tmp_path = std::env::temp_dir().join(format!("earthgrid_wrap_{}.nc", uuid::Uuid::new_v4()));
+    let tmp_str = tmp_path.to_string_lossy().to_string();
+
+    let driver = DriverManager::get_driver_by_name("netCDF")
+        .map_err(|e| format!("GDAL netCDF driver: {e}"))?;
+    let w = meta.width;
+    let h = meta.height;
+    let mut ds = driver
+        .create_with_band_type_with_options::<f32, _>(
+            &tmp_str, w, h, 1,
+            &RasterCreationOptions::from_iter(["FORMAT=NC4", "COMPRESS=DEFLATE"]),
+        )
+        .map_err(|e| format!("GDAL netCDF create: {e}"))?;
+
+    ds.set_geo_transform(&meta.transform)
+        .map_err(|e| format!("GDAL set geotransform: {e}"))?;
+    if let Ok(srs) = SpatialRef::from_definition(&meta.crs) {
+        let _ = ds.set_spatial_ref(&srs);
+    }
+
+    let mut band = ds.rasterband(1).map_err(|e| format!("GDAL rasterband: {e}"))?;
+    let mut buf = Buffer::new((w, h), floats);
+    band.write((0, 0), (w, h), &mut buf)
+        .map_err(|e| format!("GDAL write: {e}"))?;
+    drop(band);
+    drop(ds);
+
+    let bytes = std::fs::read(&tmp_path)
+        .map_err(|e| format!("read netCDF tmp: {e}"))?;
+    let _ = std::fs::remove_file(&tmp_path);
     Ok(bytes)
 }
 

@@ -2443,12 +2443,20 @@ async fn openeo_file_formats() -> impl IntoResponse {
         "gis_data_types": ["vector"],
         "parameters": {}
     });
+    let netcdf = serde_json::json!({
+        "title": "netCDF",
+        "gis_data_types": ["raster"],
+        "parameters": {}
+    });
 
     (StatusCode::OK, Json(serde_json::json!({
         "input": {
             "GTiff": geotiff,
             "GeoTIFF": geotiff,
             "geotiff": geotiff,
+            "netCDF": netcdf,
+            "NetCDF": netcdf,
+            "nc": netcdf,
             "GeoJSON": geojson,
             "geojson": geojson,
             "GeoParquet": geoparquet,
@@ -2458,6 +2466,9 @@ async fn openeo_file_formats() -> impl IntoResponse {
             "GTiff": geotiff,
             "GeoTIFF": geotiff,
             "geotiff": geotiff,
+            "netCDF": netcdf,
+            "NetCDF": netcdf,
+            "nc": netcdf,
             "GeoJSON": geojson,
             "geojson": geojson,
             "GeoParquet": geoparquet,
