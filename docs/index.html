@@ -1229,7 +1229,7 @@ async function load() {
   // Fallback to stats.json if no live data
   if (!apiOk) {
     try {
-      const statsUrl = api ? api + '/stats.json?t=' + Date.now() : 'stats.json?t=' + Date.now();
+      const statsUrl = 'stats.json?t=' + Date.now();
       const r = await fetch(statsUrl);
       if (!r.ok) throw new Error('stats.json not found');
       d = await r.json();
