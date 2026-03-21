@@ -420,11 +420,21 @@ async fn ingest_item_band(
     let (temp_path, bytes) = download_to_temp(client, url, temp_dir, &filename).await?;
 
     // Ingest into chunk store
-    let stac_item = {
+    let mut stac_item = {
         let mut store_lock = store.lock().await;
         ingest::ingest_file(&temp_path, collection, ingest::DEFAULT_CHUNK_SIZE, &mut store_lock)
             .map_err(|e| format!("Ingest failed for {} {}: {}", item.id, band, e))?
     };
+
+    // Override with STAC metadata: proper bbox, id, and datetime
+    stac_item.bbox = item.bbox;
+    stac_item.id = format!("{}_{}", item.id, band);
+    if let Some(props) = stac_item.properties.as_object_mut() {
+        props.insert("datetime".to_string(), serde_json::json!(item.datetime));
+        props.insert("earthgrid:cloud_cover".to_string(), serde_json::json!(item.cloud_cover));
+        props.insert("earthgrid:stac_id".to_string(), serde_json::json!(item.id));
+        props.insert("earthgrid:band".to_string(), serde_json::json!(band));
+    }
 
     // Add to catalog
     {

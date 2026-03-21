@@ -454,8 +454,13 @@ fn main() -> anyhow::Result<()> {
                 } else { false };
 
                 if was_running {
-                    // Auto-restart: find own binary and spawn as daemon
-                    let exe = std::env::current_exe().unwrap_or_else(|_| "earthgrid".into());
+                    // Auto-restart: find binary in ~/.cargo/bin or PATH
+                    let exe = dirs::home_dir()
+                        .map(|h| h.join(".cargo/bin/earthgrid"))
+                        .filter(|p| p.exists())
+                        .unwrap_or_else(|| std::path::PathBuf::from("earthgrid"));
+                    // Small delay to let cargo finish replacing the binary
+                    std::thread::sleep(std::time::Duration::from_millis(500));
                     let child = process::Command::new(&exe)
                         .arg("serve")
                         .stdin(process::Stdio::null())
