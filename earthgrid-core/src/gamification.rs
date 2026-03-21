@@ -392,6 +392,17 @@ impl GamificationEngine {
             .unwrap_or(0) > 0;
 
         if !exists {
+            // Dedup: remove old entries with same display_alias but different node_id
+            if !node_name.is_empty() {
+                let removed = conn.execute(
+                    "DELETE FROM node_scores WHERE display_alias = ?1 AND node_id != ?2",
+                    params![node_name, node_id],
+                ).unwrap_or(0);
+                if removed > 0 {
+                    eprintln!("Gamification: deduped {} old entry/entries for {}", removed, node_name);
+                }
+            }
+
             conn.execute(
                 "INSERT INTO node_scores
                  (node_id, opted_in, anonymous, display_alias, first_seen, last_seen,
