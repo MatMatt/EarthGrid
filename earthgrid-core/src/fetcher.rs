@@ -25,18 +25,18 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 4;
 
 fn band_key_to_name(key: &str) -> Option<&'static str> {
     match key {
-        "B01" | "coastal" => Some("coastal"),
-        "B02" | "blue" => Some("blue"),
-        "B03" | "green" => Some("green"),
-        "B04" | "red" => Some("red"),
-        "B05" | "rededge1" => Some("rededge1"),
-        "B06" | "rededge2" => Some("rededge2"),
-        "B07" | "rededge3" => Some("rededge3"),
-        "B08" | "nir" => Some("nir"),
-        "B8A" | "nir08" => Some("nir08"),
-        "B11" | "swir16" => Some("swir16"),
-        "B12" | "swir22" => Some("swir22"),
-        "SCL" | "scl" => Some("scl"),
+        "B01" | "coastal" => Some("B01"),
+        "B02" | "blue" => Some("B02"),
+        "B03" | "green" => Some("B03"),
+        "B04" | "red" => Some("B04"),
+        "B05" | "rededge1" => Some("B05"),
+        "B06" | "rededge2" => Some("B06"),
+        "B07" | "rededge3" => Some("B07"),
+        "B08" | "nir" => Some("B08"),
+        "B8A" | "nir08" => Some("B8A"),
+        "B11" | "swir16" => Some("B11"),
+        "B12" | "swir22" => Some("B12"),
+        "SCL" | "scl" => Some("SCL"),
         _ => None,
     }
 }

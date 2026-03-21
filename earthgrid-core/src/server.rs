@@ -2661,6 +2661,7 @@ pub async fn serve(
     let state_node_id = state.node_id.clone();
     let state_node_name = state.node_name.clone();
     let state_version = state.version.clone();
+    let repl_peers = state.peers.clone();
     let mut app = router(state);
 
     // Mount beacon routes if enabled
@@ -2735,6 +2736,40 @@ pub async fn serve(
             }
         }
     });
+
+    // Auto-replication: sync from peers every 5 minutes
+    {
+        let repl_store = state_clone_store.clone();
+        let repl_catalog = state_clone_catalog.clone();
+
+        tokio::spawn(async move {
+            // Initial delay: wait 30s for peers to be discovered
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+            loop {
+                let urls: Vec<String> = {
+                    let reg = repl_peers.lock().await;
+                    reg.urls()
+                };
+
+                if !urls.is_empty() {
+                    let replicator = Replicator::new(repl_store.clone(), repl_catalog.clone());
+                    for url in &urls {
+                        let result = replicator.sync_from_peer(url, &[], 0, false).await;
+                        if result.chunks_downloaded > 0 || !result.errors.is_empty() {
+                            eprintln!(
+                                "🔄 Auto-replicate from {}: {} items, {} chunks ({} bytes), {} errors",
+                                url, result.items_processed, result.chunks_downloaded,
+                                result.bytes_downloaded, result.errors.len()
+                            );
+                        }
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            }
+        });
+    }
 
     // Self-heartbeat: beacon nodes register themselves, non-beacon nodes register with remote beacon
     {
