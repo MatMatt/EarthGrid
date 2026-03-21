@@ -13,7 +13,7 @@ jobs:
   test-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install GDAL
         run: |
           sudo apt-get update
@@ -35,7 +35,7 @@ jobs:
   test-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install GDAL
         run: brew install gdal pkg-config llvm netcdf
       - uses: dtolnay/rust-toolchain@stable
@@ -61,7 +61,7 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: conda-incubator/setup-miniconda@v3
         with:
           channels: conda-forge
