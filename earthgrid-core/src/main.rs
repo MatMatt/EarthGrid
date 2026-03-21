@@ -28,6 +28,16 @@ fn config_file() -> PathBuf {
 }
 
 fn default_data_dir() -> PathBuf {
+    // Check config.json for store_path → derive data_dir from parent
+    if let Ok(contents) = fs::read_to_string(config_file()) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&contents) {
+            if let Some(sp) = val["store_path"].as_str() {
+                if let Some(parent) = std::path::Path::new(sp).parent() {
+                    return parent.to_path_buf();
+                }
+            }
+        }
+    }
     earthgrid_home().join("data")
 }
 
