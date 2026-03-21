@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 
 use crate::catalog::{Catalog, DatetimeFilter, StacItem};
 use crate::chunk_store::ChunkStore;
+use crate::processing;
 use crate::server::AppState;
 
 // ---------------------------------------------------------------------------
@@ -67,6 +68,9 @@ pub struct OperationInfo {
     pub operation: Option<String>,
     pub red: String,
     pub nir: String,
+    pub green: String,
+    pub blue: String,
+    pub scl: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,9 +143,16 @@ pub fn extract_operation(graph: &ProcessGraph) -> OperationInfo {
         operation: None,
         red: "B04".to_string(),
         nir: "B08".to_string(),
+        green: "B03".to_string(),
+        blue: "B02".to_string(),
+        scl: "SCL".to_string(),
     };
 
-    for (_key, node) in &graph.process_graph {
+    // HashMap iteration order is non-deterministic; sort for reproducible operation selection.
+    let mut keys: Vec<&String> = graph.process_graph.keys().collect();
+    keys.sort();
+    for key in keys {
+        let node = &graph.process_graph[key];
         match node.process_id.as_str() {
             "ndvi" => {
                 info.operation = Some("ndvi".to_string());
@@ -152,12 +163,42 @@ pub fn extract_operation(graph: &ProcessGraph) -> OperationInfo {
                     info.nir = nir.to_string();
                 }
             }
+            "ndwi" => {
+                info.operation = Some("ndwi".to_string());
+                if let Some(green) = node.arguments.get("green").and_then(|v| v.as_str()) {
+                    info.green = green.to_string();
+                }
+                if let Some(nir) = node.arguments.get("nir").and_then(|v| v.as_str()) {
+                    info.nir = nir.to_string();
+                }
+            }
+            "evi" => {
+                info.operation = Some("evi".to_string());
+                if let Some(blue) = node.arguments.get("blue").and_then(|v| v.as_str()) {
+                    info.blue = blue.to_string();
+                }
+                if let Some(red) = node.arguments.get("red").and_then(|v| v.as_str()) {
+                    info.red = red.to_string();
+                }
+                if let Some(nir) = node.arguments.get("nir").and_then(|v| v.as_str()) {
+                    info.nir = nir.to_string();
+                }
+            }
+            "cloud_mask" => {
+                info.operation = Some("cloud_mask".to_string());
+                if let Some(scl) = node.arguments.get("scl").and_then(|v| v.as_str()) {
+                    info.scl = scl.to_string();
+                }
+            }
             "reduce_dimension" => {
-                // Check if reducer contains ndvi
                 if let Some(reducer) = node.arguments.get("reducer") {
                     let s = reducer.to_string();
                     if s.contains("ndvi") {
                         info.operation = Some("ndvi".to_string());
+                    } else if s.contains("ndwi") {
+                        info.operation = Some("ndwi".to_string());
+                    } else if s.contains("evi") {
+                        info.operation = Some("evi".to_string());
                     }
                 }
             }
@@ -166,6 +207,65 @@ pub fn extract_operation(graph: &ProcessGraph) -> OperationInfo {
     }
 
     info
+}
+
+/// Heuristic for spectral band dtype. Prefer float32 when length is divisible by 4.
+fn detect_spectral_dtype(data: &[u8]) -> &'static str {
+    if data.len() % 4 == 0 {
+        "float32"
+    } else if data.len() % 2 == 0 {
+        "uint16"
+    } else {
+        // Invalid packing for both u16/f32; keep float32 as a conservative fallback.
+        "float32"
+    }
+}
+
+fn ensure_same_raster_len(op: &str, a: &[u8], b: &[u8]) -> Result<(), String> {
+    if a.len() != b.len() {
+        Err(format!(
+            "{}: band raster size mismatch ({} vs {} bytes); check chunk alignment / same scene",
+            op,
+            a.len(),
+            b.len()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_three_raster_len(op: &str, a: &[u8], b: &[u8], c: &[u8]) -> Result<(), String> {
+    if a.len() != b.len() || b.len() != c.len() {
+        Err(format!(
+            "{}: band raster size mismatch ({} / {} / {} bytes)",
+            op,
+            a.len(),
+            b.len(),
+            c.len()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_spectral_dtype;
+
+    #[test]
+    fn detect_dtype_prefers_float32_when_ambiguous() {
+        assert_eq!(detect_spectral_dtype(&vec![0u8; 8]), "float32");
+    }
+
+    #[test]
+    fn detect_dtype_uses_uint16_for_non_float_even_lengths() {
+        assert_eq!(detect_spectral_dtype(&vec![0u8; 6]), "uint16");
+    }
+
+    #[test]
+    fn detect_dtype_handles_invalid_odd_lengths() {
+        assert_eq!(detect_spectral_dtype(&vec![0u8; 7]), "float32");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -213,47 +313,6 @@ fn extract_date_from_item(item: &StacItem) -> String {
         }
     }
     "unknown".to_string()
-}
-
-// ---------------------------------------------------------------------------
-// NDVI computation on raw chunk data
-// ---------------------------------------------------------------------------
-
-fn compute_ndvi(red_data: &[u8], nir_data: &[u8]) -> Vec<u8> {
-    // Treat input as raw f32 arrays or u16 arrays (common for S2)
-    // Try as u16 first (Sentinel-2 L2A typical: uint16 reflectance * 10000)
-    let len = red_data.len().min(nir_data.len());
-
-    if len % 2 == 0 {
-        // Assume uint16 input
-        let pixel_count = len / 2;
-        let mut result = Vec::with_capacity(pixel_count * 4); // f32 output
-
-        for i in 0..pixel_count {
-            let r = u16::from_le_bytes([red_data[i * 2], red_data[i * 2 + 1]]) as f32;
-            let n = u16::from_le_bytes([nir_data[i * 2], nir_data[i * 2 + 1]]) as f32;
-            let ndvi = if (n + r).abs() < 1e-6 { 0.0f32 } else { (n - r) / (n + r) };
-            result.extend_from_slice(&ndvi.to_le_bytes());
-        }
-        result
-    } else {
-        // Fallback: treat as f32
-        let pixel_count = len / 4;
-        let mut result = Vec::with_capacity(pixel_count * 4);
-        for i in 0..pixel_count {
-            let r = f32::from_le_bytes([
-                red_data[i * 4], red_data[i * 4 + 1],
-                red_data[i * 4 + 2], red_data[i * 4 + 3],
-            ]);
-            let n = f32::from_le_bytes([
-                nir_data[i * 4], nir_data[i * 4 + 1],
-                nir_data[i * 4 + 2], nir_data[i * 4 + 3],
-            ]);
-            let ndvi = if (n + r).abs() < 1e-6 { 0.0f32 } else { (n - r) / (n + r) };
-            result.extend_from_slice(&ndvi.to_le_bytes());
-        }
-        result
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,9 +368,11 @@ pub async fn execute_sync(
         ));
     }
 
-    // Determine which bands are needed
     let needed_bands: Vec<String> = match op.operation.as_deref() {
         Some("ndvi") => vec![op.red.clone(), op.nir.clone()],
+        Some("ndwi") => vec![op.green.clone(), op.nir.clone()],
+        Some("evi") => vec![op.blue.clone(), op.red.clone(), op.nir.clone()],
+        Some("cloud_mask") => vec![op.scl.clone()],
         _ => req.bands.clone().unwrap_or_default(),
     };
 
@@ -379,48 +440,58 @@ pub async fn execute_sync(
         }
     }
 
+    let avail: Vec<&String> = band_items.keys().collect();
+
+    let load_band = |band: &str, store_locked: &mut ChunkStore| -> Result<Vec<u8>, String> {
+        let items = band_items.get(band).ok_or_else(|| {
+            format!("Band '{}' not found. Needed: {:?}. Available: {:?}. Items checked: {}.",
+                band, needed_bands, avail, items.len())
+        })?;
+        let item = items.first().ok_or_else(|| format!("No items for band '{}'", band))?;
+        let mut data = Vec::new();
+        for hash in &item.chunk_hashes {
+            if let Ok(Some(chunk)) = store_locked.get(hash) {
+                data.extend_from_slice(&chunk);
+            }
+        }
+        if data.is_empty() {
+            return Err(format!("Could not load chunk data for band '{}'", band));
+        }
+        Ok(data)
+    };
+
     match op.operation.as_deref() {
         Some("ndvi") => {
-            // Need red (B04) and NIR (B08) bands
-            let avail: Vec<&String> = band_items.keys().collect();
-            let red_items = band_items.get(&op.red).ok_or_else(|| {
-                format!("Failed to find matching data. Needed bands: {:?}. Available in catalog: {:?}. Items checked: {}.",
-                    needed_bands, avail, items.len())
-            })?;
-            let nir_items = band_items.get(&op.nir).ok_or_else(|| {
-                format!("Failed to find matching data. Needed bands: {:?}. Available in catalog: {:?}. Items checked: {}.",
-                    needed_bands, avail, items.len())
-            })?;
-
-            // Use first matching date
-            let red_item = red_items.first().unwrap();
-            let nir_item = nir_items.first().unwrap();
-
-            // Collect chunk data
             let mut store = store.lock().await;
-            let mut red_data = Vec::new();
-            for hash in &red_item.chunk_hashes {
-                if let Ok(Some(data)) = store.get(hash) {
-                    red_data.extend_from_slice(&data);
-                }
-            }
-
-            let mut nir_data = Vec::new();
-            for hash in &nir_item.chunk_hashes {
-                if let Ok(Some(data)) = store.get(hash) {
-                    nir_data.extend_from_slice(&data);
-                }
-            }
-            drop(store);
-
-            if red_data.is_empty() || nir_data.is_empty() {
-                return Err("Could not load chunk data for NDVI computation".to_string());
-            }
-
-            Ok(compute_ndvi(&red_data, &nir_data))
+            let red_data = load_band(&op.red, &mut store)?;
+            let nir_data = load_band(&op.nir, &mut store)?;
+            ensure_same_raster_len("NDVI", &red_data, &nir_data)?;
+            let dtype = detect_spectral_dtype(&red_data);
+            Ok(processing::compute_ndvi(&red_data, &nir_data, dtype))
+        }
+        Some("ndwi") => {
+            let mut store = store.lock().await;
+            let green_data = load_band(&op.green, &mut store)?;
+            let nir_data = load_band(&op.nir, &mut store)?;
+            ensure_same_raster_len("NDWI", &green_data, &nir_data)?;
+            let dtype = detect_spectral_dtype(&green_data);
+            Ok(processing::compute_ndwi(&green_data, &nir_data, dtype))
+        }
+        Some("evi") => {
+            let mut store = store.lock().await;
+            let blue_data = load_band(&op.blue, &mut store)?;
+            let red_data = load_band(&op.red, &mut store)?;
+            let nir_data = load_band(&op.nir, &mut store)?;
+            ensure_three_raster_len("EVI", &blue_data, &red_data, &nir_data)?;
+            let dtype = detect_spectral_dtype(&red_data);
+            Ok(processing::compute_evi(&blue_data, &red_data, &nir_data, dtype))
+        }
+        Some("cloud_mask") => {
+            let mut store = store.lock().await;
+            let scl_data = load_band(&op.scl, &mut store)?;
+            Ok(processing::cloud_mask(&scl_data))
         }
         _ => {
-            // Default: return raw data from first item
             let first = &items[0];
             let mut store = store.lock().await;
             let mut data = Vec::new();
@@ -476,6 +547,39 @@ fn process_catalogue() -> serde_json::Value {
                     {"name": "red", "description": "Red band name.", "schema": {"type": "string"}, "default": "B04"}
                 ],
                 "returns": {"description": "NDVI data cube.", "schema": {"type": "object"}}
+            },
+            {
+                "id": "ndwi",
+                "summary": "Compute NDWI.",
+                "description": "Normalized Difference Water Index: (Green - NIR) / (Green + NIR)",
+                "parameters": [
+                    {"name": "data", "description": "Input data cube.", "schema": {"type": "object"}},
+                    {"name": "green", "description": "Green band name.", "schema": {"type": "string"}, "default": "B03"},
+                    {"name": "nir", "description": "NIR band name.", "schema": {"type": "string"}, "default": "B08"}
+                ],
+                "returns": {"description": "NDWI data cube.", "schema": {"type": "object"}}
+            },
+            {
+                "id": "evi",
+                "summary": "Compute EVI.",
+                "description": "Enhanced Vegetation Index: 2.5 * (NIR - Red) / (NIR + 6*Red - 7.5*Blue + 1)",
+                "parameters": [
+                    {"name": "data", "description": "Input data cube.", "schema": {"type": "object"}},
+                    {"name": "blue", "description": "Blue band name.", "schema": {"type": "string"}, "default": "B02"},
+                    {"name": "red", "description": "Red band name.", "schema": {"type": "string"}, "default": "B04"},
+                    {"name": "nir", "description": "NIR band name.", "schema": {"type": "string"}, "default": "B08"}
+                ],
+                "returns": {"description": "EVI data cube.", "schema": {"type": "object"}}
+            },
+            {
+                "id": "cloud_mask",
+                "summary": "Compute cloud mask from SCL.",
+                "description": "Binary cloud mask from Scene Classification Layer. Cloud pixels (SCL 8/9/10) → 0, clear → 1.",
+                "parameters": [
+                    {"name": "data", "description": "Input data cube.", "schema": {"type": "object"}},
+                    {"name": "scl", "description": "SCL band name.", "schema": {"type": "string"}, "default": "SCL"}
+                ],
+                "returns": {"description": "Cloud mask data cube.", "schema": {"type": "object"}}
             },
             {
                 "id": "reduce_dimension",

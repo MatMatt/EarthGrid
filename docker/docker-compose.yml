@@ -30,7 +30,6 @@ services:
       - EARTHGRID_BEACON_DB=/data/beacon.db
       # Uncomment to also run as beacon:
       - EARTHGRID_ALSO_BEACON=true
-      - EARTHGRID_RUST_CORE_URL=http://127.0.0.1:8401
       - EARTHGRID_PUBLIC_URL=https://mattiuzzi.zapto.org/earthgrid
     env_file:
       - .env

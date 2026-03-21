@@ -227,7 +227,9 @@ async fn list_collections(State(state): State<AppState>) -> impl IntoResponse {
 async fn get_collection(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     match catalog.get_collection(&id) {
-        Ok(Some(col)) => (StatusCode::OK, Json(serde_json::to_value(col).unwrap())).into_response(),
+        Ok(Some(col)) => serde_json::to_value(col)
+            .map(|v| (StatusCode::OK, Json(v)).into_response())
+            .unwrap_or_else(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response()),
         Ok(None) => err(StatusCode::NOT_FOUND, "Collection not found").into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
@@ -290,7 +292,9 @@ async fn get_collection_item(
 ) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     match catalog.get_collection_item(&collection_id, &item_id) {
-        Ok(Some(item)) => (StatusCode::OK, Json(serde_json::to_value(item).unwrap())).into_response(),
+        Ok(Some(item)) => serde_json::to_value(item)
+            .map(|v| (StatusCode::OK, Json(v)).into_response())
+            .unwrap_or_else(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response()),
         Ok(None) => err(StatusCode::NOT_FOUND, "Item not found").into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }

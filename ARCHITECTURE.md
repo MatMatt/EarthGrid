@@ -189,57 +189,41 @@ Priority-based bandwidth allocation, inspired by Unix `nice`.
 - SHA-256 verification on every chunk transfer
 - Corrupt chunks automatically re-fetched from peers or source
 
-## Current State (v0.2.0)
+## Current State (v0.3.0)
+
+Single Rust binary. Python prototype has been fully replaced.
 
 **Implemented:**
 - Content-addressed chunk storage (SHA-256, two-level dirs)
 - STAC catalog with spatial/temporal search
-- Basic peer federation (register, sync)
+- Axum HTTP server with full REST API
+- openEO v1.2 Gateway (process graph parsing + execution)
+- Spectral indices: NDVI, NDWI, EVI, cloud mask
+- Source User management (encrypted credential pool, round-robin)
+- Auto-ingest pipeline (download → chunk → propagate)
+- Statistics engine (access tracking, bandwidth, downloads)
+- Bandwidth control with Unix-style nice levels
+- Smart replication (access-driven promote/demote)
+- Peer federation (register, sync, gossip, federated search)
 - Beacon mode for node discovery
+- libp2p networking (Kademlia DHT, mDNS, relay, NAT traversal)
 - Two-tier API key authentication
-- Rust core library (21/21 tests passing)
+- Gamification (leaderboards, achievements, challenges)
+- CLI (clap-based: ingest, serve, start/stop, fetch, setup)
+- Docker image (single binary, Ubuntu + GDAL)
+- GDAL bindings for GeoTIFF/COG ingest and SAR warping
 
 **Planned:**
-- [ ] openEO Gateway (process graph parsing + execution)
-- [ ] Source User management (encrypted credential pool)
-- [ ] Auto-ingest pipeline (download → chunk → propagate)
-- [ ] Statistics engine (access tracking, replication decisions)
-- [ ] Bandwidth nice levels
-- [ ] Replication factor management (auto-promote/demote)
-- [ ] Rust HTTP server (replacing Python prototype)
+- [ ] Mutual TLS for inter-node authentication
+- [ ] Replication factor auto-tuning based on network-wide stats
+- [ ] Sentinel-3 support (requires swath-to-grid preprocessing)
 
 ## Tech Stack
 
-- **Current:** Python (FastAPI), Rust (core library)
-- **Storage:** Content-addressed filesystem (SHA-256)
-- **Metadata:** STAC catalog (JSON)
-- **Target:** Full Rust implementation
+- **Language:** Rust (edition 2021)
+- **HTTP:** Axum 0.8, Tokio
+- **P2P:** libp2p 0.54
+- **Storage:** Content-addressed filesystem (SHA-256), SQLite (rusqlite)
+- **Geospatial:** GDAL 0.19
 - **Container:** Docker
 - **License:** EUPL-1.2
-
-## Migration: Python → Rust
-
-**Decision (2026-03-18):** Rust replaces Python completely. Single binary, no Python runtime.
-
-### Roadmap
-
-**Phase 1 — Current:** Python is the running node. Rust core exists as parallel implementation with matching APIs.
-
-**Phase 2 — Feature parity:** Build out remaining Rust functionality:
-- [ ] openEO Gateway (process graph parsing + execution)
-- [ ] Source User management (encrypted credentials)
-- [ ] Auto-ingest pipeline
-- [ ] CLI (clap-based, replacing Python Click)
-- [ ] Docker image (single static binary, alpine-based)
-- [ ] GDAL bindings (via gdal-rs crate)
-
-**Phase 3 — Switch:** Deploy Rust binary alongside Python on Nucleus, compare, then decommission Python.
-
-**Phase 4 — Cleanup:** Remove `earthgrid/` Python directory. Single codebase in `earthgrid-core/`.
-
-### Why
-
-- One static binary, zero dependencies for users
-- Better performance (chunks, networking, concurrency)
-- Simpler deployment (no venv, no pip, no Python version issues)
-- Infrastructure software should be self-contained
