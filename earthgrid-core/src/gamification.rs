@@ -418,6 +418,17 @@ impl GamificationEngine {
                 ],
             )?;
         } else {
+            // Dedup: also clean old entries with same name but different ID
+            if !node_name.is_empty() {
+                let removed = conn.execute(
+                    "DELETE FROM node_scores WHERE display_alias = ?1 AND node_id != ?2",
+                    params![node_name, node_id],
+                ).unwrap_or(0);
+                if removed > 0 {
+                    eprintln!("Gamification: deduped {} old entry/entries for {}", removed, node_name);
+                }
+            }
+
             let mut parts = vec!["last_seen=?1".to_string()];
             let mut idx = 2usize;
             let mut bind_vals: Vec<String> = vec![now.to_string()];
