@@ -414,7 +414,10 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
 
 #[cfg(test)]
 mod tests {
-    use super::detect_spectral_dtype;
+    use super::*;
+    use std::collections::HashMap;
+
+    // --- detect_spectral_dtype ---
 
     #[test]
     fn detect_dtype_prefers_float32_when_ambiguous() {
@@ -429,6 +432,328 @@ mod tests {
     #[test]
     fn detect_dtype_handles_invalid_odd_lengths() {
         assert_eq!(detect_spectral_dtype(&vec![0u8; 7]), "float32");
+    }
+
+    // --- canonical_format ---
+
+    #[test]
+    fn canonical_format_gtiff_aliases() {
+        assert_eq!(canonical_format("GTiff"), "GTiff");
+        assert_eq!(canonical_format("geotiff"), "GTiff");
+        assert_eq!(canonical_format("GeoTIFF"), "GTiff");
+        assert_eq!(canonical_format("tiff"), "GTiff");
+        assert_eq!(canonical_format("tif"), "GTiff");
+        assert_eq!(canonical_format("TIFF"), "GTiff");
+    }
+
+    #[test]
+    fn canonical_format_netcdf_aliases() {
+        assert_eq!(canonical_format("netCDF"), "netCDF");
+        assert_eq!(canonical_format("NetCDF"), "netCDF");
+        assert_eq!(canonical_format("NETCDF"), "netCDF");
+        assert_eq!(canonical_format("nc"), "netCDF");
+        assert_eq!(canonical_format("NC"), "netCDF");
+    }
+
+    #[test]
+    fn canonical_format_vector_aliases() {
+        assert_eq!(canonical_format("GeoJSON"), "GeoJSON");
+        assert_eq!(canonical_format("geojson"), "GeoJSON");
+        assert_eq!(canonical_format("json"), "GeoJSON");
+        assert_eq!(canonical_format("GeoParquet"), "GeoParquet");
+        assert_eq!(canonical_format("geoparquet"), "GeoParquet");
+        assert_eq!(canonical_format("parquet"), "GeoParquet");
+    }
+
+    #[test]
+    fn canonical_format_unknown_defaults_to_gtiff() {
+        assert_eq!(canonical_format("png"), "GTiff");
+        assert_eq!(canonical_format(""), "GTiff");
+    }
+
+    // --- resolve_band_alias ---
+
+    #[test]
+    fn band_alias_code_to_common() {
+        assert_eq!(resolve_band_alias("B04"), "red");
+        assert_eq!(resolve_band_alias("B08"), "nir");
+        assert_eq!(resolve_band_alias("B03"), "green");
+        assert_eq!(resolve_band_alias("B02"), "blue");
+        assert_eq!(resolve_band_alias("B8A"), "nir08");
+        assert_eq!(resolve_band_alias("SCL"), "scl");
+    }
+
+    #[test]
+    fn band_alias_common_to_code() {
+        assert_eq!(resolve_band_alias("red"), "B04");
+        assert_eq!(resolve_band_alias("nir"), "B08");
+        assert_eq!(resolve_band_alias("green"), "B03");
+        assert_eq!(resolve_band_alias("blue"), "B02");
+        assert_eq!(resolve_band_alias("scl"), "SCL");
+    }
+
+    #[test]
+    fn band_alias_unknown_passes_through() {
+        assert_eq!(resolve_band_alias("VV"), "VV");
+        assert_eq!(resolve_band_alias("custom"), "custom");
+    }
+
+    // --- extract_output_format ---
+
+    #[test]
+    fn extract_format_from_save_result() {
+        let mut nodes = HashMap::new();
+        nodes.insert("load1".to_string(), ProcessNode {
+            process_id: "load_collection".to_string(),
+            arguments: serde_json::json!({"id": "sentinel-2-l2a"}),
+            result: Some(false),
+        });
+        nodes.insert("save1".to_string(), ProcessNode {
+            process_id: "save_result".to_string(),
+            arguments: serde_json::json!({"format": "netCDF"}),
+            result: Some(true),
+        });
+        let graph = ProcessGraph { process_graph: nodes };
+        assert_eq!(extract_output_format(&graph), Some("netCDF".to_string()));
+    }
+
+    #[test]
+    fn extract_format_missing_returns_none() {
+        let mut nodes = HashMap::new();
+        nodes.insert("load1".to_string(), ProcessNode {
+            process_id: "load_collection".to_string(),
+            arguments: serde_json::json!({"id": "s2"}),
+            result: Some(true),
+        });
+        let graph = ProcessGraph { process_graph: nodes };
+        assert_eq!(extract_output_format(&graph), None);
+    }
+
+    // --- extract_operation ---
+
+    #[test]
+    fn extract_ndvi_operation() {
+        let mut nodes = HashMap::new();
+        nodes.insert("ndvi1".to_string(), ProcessNode {
+            process_id: "ndvi".to_string(),
+            arguments: serde_json::json!({"red": "B04", "nir": "B08"}),
+            result: Some(true),
+        });
+        let graph = ProcessGraph { process_graph: nodes };
+        let op = extract_operation(&graph);
+        assert_eq!(op.operation, Some("ndvi".to_string()));
+        assert_eq!(op.red, "B04");
+        assert_eq!(op.nir, "B08");
+    }
+
+    #[test]
+    fn extract_ndwi_operation() {
+        let mut nodes = HashMap::new();
+        nodes.insert("ndwi1".to_string(), ProcessNode {
+            process_id: "ndwi".to_string(),
+            arguments: serde_json::json!({"green": "B03", "nir": "B08"}),
+            result: Some(true),
+        });
+        let graph = ProcessGraph { process_graph: nodes };
+        let op = extract_operation(&graph);
+        assert_eq!(op.operation, Some("ndwi".to_string()));
+        assert_eq!(op.green, "B03");
+    }
+
+    #[test]
+    fn extract_evi_operation() {
+        let mut nodes = HashMap::new();
+        nodes.insert("evi1".to_string(), ProcessNode {
+            process_id: "evi".to_string(),
+            arguments: serde_json::json!({"blue": "B02", "red": "B04", "nir": "B08"}),
+            result: Some(true),
+        });
+        let graph = ProcessGraph { process_graph: nodes };
+        let op = extract_operation(&graph);
+        assert_eq!(op.operation, Some("evi".to_string()));
+        assert_eq!(op.blue, "B02");
+    }
+
+    #[test]
+    fn extract_defaults_when_no_operation() {
+        let mut nodes = HashMap::new();
+        nodes.insert("load1".to_string(), ProcessNode {
+            process_id: "load_collection".to_string(),
+            arguments: serde_json::json!({"id": "s2"}),
+            result: Some(true),
+        });
+        let graph = ProcessGraph { process_graph: nodes };
+        let op = extract_operation(&graph);
+        assert_eq!(op.operation, None);
+        assert_eq!(op.red, "B04");
+        assert_eq!(op.nir, "B08");
+    }
+
+    // --- wrap_geotiff ---
+
+    #[test]
+    fn wrap_geotiff_produces_valid_tiff() {
+        let meta = RasterMeta {
+            width: 4, height: 4, crs: "EPSG:4326".to_string(),
+            transform: [0.0, 1.0, 0.0, 4.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+        };
+        let pixels: Vec<u8> = (0..16).map(|i| i as f32)
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let tiff = wrap_geotiff(&pixels, &meta).expect("wrap_geotiff failed");
+        assert!(tiff.len() > 100, "TIFF too small: {} bytes", tiff.len());
+        // TIFF magic: II* (little-endian)
+        assert_eq!(&tiff[..2], b"II", "not a TIFF header");
+        assert_eq!(tiff[2], 42, "not a TIFF magic number");
+    }
+
+    #[test]
+    fn wrap_geotiff_rejects_short_buffer() {
+        let meta = RasterMeta {
+            width: 4, height: 4, crs: "EPSG:4326".to_string(),
+            transform: [0.0, 1.0, 0.0, 4.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+        };
+        let short = vec![0u8; 10];
+        assert!(wrap_geotiff(&short, &meta).is_err());
+    }
+
+    // --- wrap_netcdf ---
+
+    #[test]
+    fn wrap_netcdf_produces_valid_nc4() {
+        let meta = RasterMeta {
+            width: 4, height: 4, crs: "EPSG:4326".to_string(),
+            transform: [0.0, 1.0, 0.0, 4.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+        };
+        let pixels: Vec<u8> = (0..16).map(|i| i as f32)
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let nc = wrap_netcdf(&pixels, &meta).expect("wrap_netcdf failed");
+        assert!(nc.len() > 100, "netCDF too small: {} bytes", nc.len());
+        // netCDF-4 is HDF5: magic \x89HDF
+        assert_eq!(&nc[..4], b"\x89HDF", "not an HDF5/netCDF-4 header");
+    }
+
+    #[test]
+    fn wrap_netcdf_rejects_short_buffer() {
+        let meta = RasterMeta {
+            width: 4, height: 4, crs: "EPSG:4326".to_string(),
+            transform: [0.0, 1.0, 0.0, 4.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+        };
+        let short = vec![0u8; 10];
+        assert!(wrap_netcdf(&short, &meta).is_err());
+    }
+
+    // --- wrap_output dispatch ---
+
+    #[test]
+    fn wrap_output_dispatches_gtiff() {
+        let meta = RasterMeta {
+            width: 2, height: 2, crs: "EPSG:4326".to_string(),
+            transform: [0.0, 1.0, 0.0, 2.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+        };
+        let pixels: Vec<u8> = [0.1f32, 0.2, 0.3, 0.4]
+            .iter().flat_map(|v| v.to_le_bytes()).collect();
+        let (bytes, ct) = wrap_output(&pixels, &meta, "GTiff").unwrap();
+        assert_eq!(ct, "image/tiff");
+        assert_eq!(&bytes[..2], b"II");
+    }
+
+    #[test]
+    fn wrap_output_dispatches_netcdf() {
+        let meta = RasterMeta {
+            width: 2, height: 2, crs: "EPSG:4326".to_string(),
+            transform: [0.0, 1.0, 0.0, 2.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+        };
+        let pixels: Vec<u8> = [0.1f32, 0.2, 0.3, 0.4]
+            .iter().flat_map(|v| v.to_le_bytes()).collect();
+        let (bytes, ct) = wrap_output(&pixels, &meta, "netCDF").unwrap();
+        assert_eq!(ct, "application/x-netcdf");
+        assert_eq!(&bytes[..4], b"\x89HDF");
+    }
+
+    #[test]
+    fn wrap_output_rejects_geojson() {
+        let meta = RasterMeta {
+            width: 2, height: 2, crs: "EPSG:4326".to_string(),
+            transform: [0.0, 1.0, 0.0, 2.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+        };
+        let pixels = vec![0u8; 16];
+        let err = wrap_output(&pixels, &meta, "GeoJSON").unwrap_err();
+        assert!(err.contains("not yet implemented"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn wrap_output_rejects_geoparquet() {
+        let meta = RasterMeta {
+            width: 2, height: 2, crs: "EPSG:4326".to_string(),
+            transform: [0.0, 1.0, 0.0, 2.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+        };
+        let pixels = vec![0u8; 16];
+        let err = wrap_output(&pixels, &meta, "GeoParquet").unwrap_err();
+        assert!(err.contains("not yet implemented"), "unexpected error: {err}");
+    }
+
+    // --- extract_band_from_item_id ---
+
+    #[test]
+    fn extract_band_from_sentinel2_ids() {
+        assert_eq!(extract_band_from_item_id("S2A_32UMC_20250702_0_L2A_B04"), Some("B04".to_string()));
+        assert_eq!(extract_band_from_item_id("S2A_32UMC_20250702_0_L2A_B08"), Some("B08".to_string()));
+        assert_eq!(extract_band_from_item_id("S2A_32UMC_20250702_0_L2A_SCL"), Some("SCL".to_string()));
+        assert_eq!(extract_band_from_item_id("S2A_32UMC_20250702_0_L2A_B8A"), Some("B8A".to_string()));
+    }
+
+    #[test]
+    fn extract_band_from_common_name_suffix() {
+        let result = extract_band_from_item_id("S2A_32UMC_20250702_0_L2A_red");
+        assert!(result.is_some());
+    }
+
+    // --- truncate_pair / truncate_three ---
+
+    #[test]
+    fn truncate_pair_equal_lengths() {
+        let a = vec![1u8, 2, 3, 4];
+        let b = vec![5u8, 6, 7, 8];
+        let (ra, rb) = truncate_pair("test", &a, &b).unwrap();
+        assert_eq!(ra.len(), 4);
+        assert_eq!(rb.len(), 4);
+    }
+
+    #[test]
+    fn truncate_pair_different_lengths() {
+        let a = vec![1u8, 2, 3, 4, 5, 6];
+        let b = vec![7u8, 8, 9, 10];
+        let (ra, rb) = truncate_pair("test", &a, &b).unwrap();
+        assert_eq!(ra.len(), 4);
+        assert_eq!(rb.len(), 4);
+    }
+
+    #[test]
+    fn truncate_pair_rejects_empty() {
+        let a = vec![];
+        let b = vec![1u8];
+        assert!(truncate_pair("test", &a, &b).is_err());
+    }
+
+    #[test]
+    fn truncate_three_aligns_to_shortest() {
+        let a = vec![1u8; 10];
+        let b = vec![2u8; 6];
+        let c = vec![3u8; 8];
+        let (ra, rb, rc) = truncate_three("test", &a, &b, &c).unwrap();
+        assert_eq!(ra.len(), 6);
+        assert_eq!(rb.len(), 6);
+        assert_eq!(rc.len(), 6);
     }
 }
 
