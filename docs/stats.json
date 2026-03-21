@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-21T18:40:01Z",
+  "updated": "2026-03-21T18:50:01Z",
   "version": "0.5.0",
   "network": {
     "nodes_alive": 2,
@@ -1616,27 +1616,8 @@
   ],
   "gamification": {
     "leaderboard_nodes": {
-      "count": 3,
+      "count": 2,
       "leaderboard": [
-        {
-          "anonymous": true,
-          "gb_pledged": 5000.0,
-          "gb_served": 0.0,
-          "gb_stored": 733.05,
-          "group": "",
-          "items": 3899,
-          "node_id": "718ca4a0-e614-45ac-929c-8017da9dd97a",
-          "node_name": "node-alpha",
-          "node_url": "",
-          "owner": "",
-          "peers": 0,
-          "rank": 1,
-          "score": 28901,
-          "sponsor_name": "",
-          "sponsor_url": "",
-          "streak": 1,
-          "uptime_days": 0.0
-        },
         {
           "anonymous": true,
           "gb_pledged": 5000.0,
@@ -1649,7 +1630,7 @@
           "node_url": "",
           "owner": "",
           "peers": 0,
-          "rank": 2,
+          "rank": 1,
           "score": 28901,
           "sponsor_name": "",
           "sponsor_url": "",
@@ -1668,7 +1649,7 @@
           "node_url": "",
           "owner": "",
           "peers": 0,
-          "rank": 3,
+          "rank": 2,
           "score": 5000,
           "sponsor_name": "",
           "sponsor_url": "",
@@ -1716,12 +1697,12 @@
       },
       "label": "Growing",
       "nodes_alive": 1,
-      "nodes_total": 3,
+      "nodes_total": 2,
       "score": 40,
       "status": "yellow",
-      "storage_pledged_gb": 10070.0,
-      "storage_used_gb": 1528.5,
-      "storage_utilization_pct": 15.0
+      "storage_pledged_gb": 5070.0,
+      "storage_used_gb": 795.4,
+      "storage_utilization_pct": 16.0
     },
     "challenges": {
       "challenges": [
@@ -1733,7 +1714,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 5h",
-          "remaining_seconds": 105598.55640268326,
+          "remaining_seconds": 104998.83335804939,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -1746,7 +1727,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 5h",
-          "remaining_seconds": 105598.55640268326,
+          "remaining_seconds": 104998.83335804939,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -1759,7 +1740,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 5h",
-          "remaining_seconds": 105598.55640268326,
+          "remaining_seconds": 104998.83335804939,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -1772,7 +1753,7 @@
           "participants": 0,
           "period": "monthly",
           "remaining_human": "10d 5h",
-          "remaining_seconds": 883198.5564026833,
+          "remaining_seconds": 882598.8333580494,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []
