@@ -444,14 +444,31 @@ fn main() -> anyhow::Result<()> {
                     .status()?;
                 println!("✅ Restarted via systemd");
             } else {
-                // Stop old daemon if running
-                if let Some(pid) = read_pid() {
+                // Stop old daemon if running, then auto-restart
+                let was_running = if let Some(pid) = read_pid() {
                     if is_process_alive(pid) {
                         let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
                         std::thread::sleep(std::time::Duration::from_secs(2));
+                        true
+                    } else { false }
+                } else { false };
+
+                if was_running {
+                    // Auto-restart: find own binary and spawn as daemon
+                    let exe = std::env::current_exe().unwrap_or_else(|_| "earthgrid".into());
+                    let child = process::Command::new(&exe)
+                        .arg("serve")
+                        .stdin(process::Stdio::null())
+                        .stdout(process::Stdio::null())
+                        .stderr(process::Stdio::null())
+                        .spawn();
+                    match child {
+                        Ok(c) => println!("✅ Update complete. Restarted (PID {})", c.id()),
+                        Err(e) => println!("✅ Update complete. Auto-restart failed: {}. Run `earthgrid start`.", e),
                     }
+                } else {
+                    println!("✅ Update complete. Run `earthgrid start` to begin.");
                 }
-                println!("✅ Update complete. Run `earthgrid start` to restart.");
             }
         }
 
