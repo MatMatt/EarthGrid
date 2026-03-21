@@ -193,31 +193,31 @@ Open `http://localhost:8400/ui` in your browser to see the WebUI.
 
 The entire codebase is written in Rust for performance and reliability:
 
-| Module | LOC | Description |
-|---|---|---|
-| `main.rs` | 1,783 | CLI (clap v4) — all subcommands |
-| `gamification.rs` | 1,637 | Achievements, leaderboards, challenges |
-| `server.rs` | 1,280 | HTTP API (Actix-web) |
-| `openeo.rs` | 937 | openEO v1.2.0 gateway |
-| `fetcher.rs` | 629 | CDSE + Element84 data fetching |
-| `catalog.rs` | 543 | STAC catalog (SQLite) |
-| `beacon.rs` | 532 | Peer discovery + coordination |
-| `stats.rs` | 521 | Download statistics |
-| `smart_replication.rs` | 443 | Beacon-coordinated replication |
-| `ingest.rs` | 406 | GDAL spatial tiling + COG ingest |
-| `config.rs` | 388 | TOML config management |
-| `bandwidth.rs` | 356 | Token bucket rate control |
-| `chunk_store.rs` | 356 | Content-addressed storage (SHA-256) |
-| `client.rs` | 352 | M2M client for node access |
-| `reconstruct.rs` | 359 | COG reconstruction from chunks |
-| `processing.rs` | 330 | NDVI, NDWI, EVI, cloud mask |
-| `node_identity.rs` | 370 | Ed25519 keypair (libp2p) |
-| `source_users.rs` | 290 | CDSE credential management |
-| `ratelimit.rs` | 252 | Sliding window rate limiter |
-| `user_auth.rs` | 244 | API key management |
-| `federation.rs` | 225 | Federated search across peers |
-| + more | — | network, transport, peers, auth, audit |
-| **Total** | **14,141** | **81 tests passing** |
+| Module | Description |
+|---|---|
+| `main.rs` | CLI (clap v4) — all subcommands |
+| `gamification.rs` | Achievements, leaderboards, challenges |
+| `server.rs` | HTTP API (Actix-web) |
+| `openeo.rs` | openEO v1.2.0 gateway |
+| `fetcher.rs` | CDSE + Element84 data fetching |
+| `catalog.rs` | STAC catalog (SQLite) |
+| `beacon.rs` | Peer discovery + coordination |
+| `stats.rs` | Download statistics |
+| `smart_replication.rs` | Beacon-coordinated replication |
+| `ingest.rs` | GDAL spatial tiling + COG ingest |
+| `config.rs` | TOML config management |
+| `bandwidth.rs` | Token bucket rate control |
+| `chunk_store.rs` | Content-addressed storage (SHA-256) |
+| `client.rs` | M2M client for node access |
+| `reconstruct.rs` | COG reconstruction from chunks |
+| `processing.rs` | NDVI, NDWI, EVI, cloud mask |
+| `node_identity.rs` | Ed25519 keypair (libp2p) |
+| `source_users.rs` | CDSE credential management |
+| `ratelimit.rs` | Sliding window rate limiter |
+| `user_auth.rs` | API key management |
+| `federation.rs` | Federated search across peers |
+| + more | network, transport, peers, auth, audit |
+| **Total** | **14k LOC, 81 tests passing** |
 
 ### Network Roles
 
