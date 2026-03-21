@@ -369,7 +369,6 @@ fn dtype_size(dtype: &str) -> usize {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use std::io::Write;
 
     fn setup() -> (ChunkStore, TempDir) {
         let dir = TempDir::new().unwrap();

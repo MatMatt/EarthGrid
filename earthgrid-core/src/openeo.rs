@@ -387,12 +387,16 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
         .map_err(|e| format!("GDAL netCDF driver: {e}"))?;
     let w = meta.width;
     let h = meta.height;
+    let opts_nc4 =
+        RasterCreationOptions::from_iter(["FORMAT=NC4", "COMPRESS=DEFLATE"]);
     let mut ds = driver
-        .create_with_band_type_with_options::<f32, _>(
-            &tmp_str, w, h, 1,
-            &RasterCreationOptions::from_iter(["FORMAT=NC4", "COMPRESS=DEFLATE"]),
-        )
-        .map_err(|e| format!("GDAL netCDF create: {e}"))?;
+        .create_with_band_type_with_options::<f32, _>(&tmp_str, w, h, 1, &opts_nc4)
+        .or_else(|e| {
+            // Windows conda / some builds reject NC4+DEFLATE; classic netCDF still works.
+            driver
+                .create_with_band_type::<f32, _>(&tmp_str, w, h, 1)
+                .map_err(|e2| format!("GDAL netCDF create: {e}; fallback: {e2}"))
+        })?;
 
     ds.set_geo_transform(&meta.transform)
         .map_err(|e| format!("GDAL set geotransform: {e}"))?;
@@ -417,8 +421,9 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
 mod tests {
     use super::*;
     use gdal::Dataset;
+    use gdal::Metadata;
     use std::collections::HashMap;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     // --- detect_spectral_dtype ---
 
@@ -624,14 +629,53 @@ mod tests {
 
     // --- wrap_netcdf ---
 
-    /// Do not rely on on-disk magic bytes: Windows/Linux GDAL may emit netCDF-3, NC4/HDF5,
-    /// or CDF-5. If GDAL can open the file and dimensions match, the writer succeeded.
+    /// Open a netCDF written by GDAL: root may be a container with zero raster size; the
+    /// actual 2D grid is often in `SUBDATASET_*_NAME` (typical on Windows netCDF driver).
+    fn open_netcdf_raster_dataset(path: &Path) -> Dataset {
+        let posix = path.to_string_lossy().replace('\\', "/");
+        let mut attempts: Vec<PathBuf> = Vec::new();
+        if cfg!(windows) {
+            attempts.push(PathBuf::from(&posix));
+        }
+        attempts.push(path.to_path_buf());
+
+        for p in attempts {
+            let Ok(ds) = Dataset::open(&p) else {
+                continue;
+            };
+            let (w, h) = ds.raster_size();
+            if w > 0 && h > 0 {
+                return ds;
+            }
+            if let Some(items) = ds.metadata_domain("SUBDATASETS") {
+                for item in items {
+                    let Some((key, val)) = item.split_once('=') else {
+                        continue;
+                    };
+                    if !key.ends_with("_NAME") {
+                        continue;
+                    }
+                    let val = val.trim();
+                    if let Ok(sub) = Dataset::open(Path::new(val)) {
+                        let (sw, sh) = sub.raster_size();
+                        if sw > 0 && sh > 0 {
+                            return sub;
+                        }
+                    }
+                }
+            }
+        }
+        panic!(
+            "GDAL could not open netCDF as raster (tried path and SUBDATASETS): {}",
+            path.display()
+        );
+    }
+
     fn assert_netcdf_bytes_readable_by_gdal(nc: &[u8], width: usize, height: usize) {
         assert!(nc.len() > 20, "netCDF output too small: {} bytes", nc.len());
         let tmp_path = std::env::temp_dir().join(format!("earthgrid_verify_nc_{}.nc", uuid::Uuid::new_v4()));
         std::fs::write(&tmp_path, nc).expect("write verify netCDF");
-        let ds = Dataset::open(Path::new(&tmp_path))
-            .unwrap_or_else(|e| panic!("GDAL must open netCDF we produced: {e}"));
+        let ds = open_netcdf_raster_dataset(&tmp_path);
         let (w, h) = ds.raster_size();
         assert_eq!(w as usize, width, "raster width");
         assert_eq!(h as usize, height, "raster height");

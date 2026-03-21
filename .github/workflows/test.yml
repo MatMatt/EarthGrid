@@ -68,7 +68,7 @@ jobs:
           activate-environment: test
           environment-file: ""
       - name: Install GDAL
-        run: conda install -y gdal pkg-config clang libclang
+        run: conda install -y gdal libnetcdf pkg-config clang libclang
       - name: Set GDAL env
         run: |
           CONDA_PREFIX=$(conda info --base)/envs/test
