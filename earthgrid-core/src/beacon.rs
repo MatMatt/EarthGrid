@@ -221,6 +221,10 @@ impl BeaconRegistry {
 
     /// Update heartbeat fields for an existing node.
     pub fn heartbeat(&self, req: &HeartbeatRequest) -> Result<Option<BeaconNode>> {
+        // Opportunistic cleanup: prune stale nodes (>1h) and dedup on each heartbeat
+        let _ = self.prune_stale(3600.0);
+        let _ = self.dedup_by_name();
+
         let now = now_ts();
 
         // Build dynamic UPDATE statement only for provided fields
@@ -331,6 +335,33 @@ impl BeaconRegistry {
             .conn
             .execute("DELETE FROM beacon_nodes WHERE node_id = ?1", params![node_id])?;
         Ok(affected > 0)
+    }
+
+    /// Prune stale nodes that haven't sent a heartbeat in `max_age_secs`.
+    pub fn prune_stale(&self, max_age_secs: f64) -> Result<usize> {
+        let threshold = now_ts() - max_age_secs;
+        let affected = self.conn.execute(
+            "DELETE FROM beacon_nodes WHERE last_seen < ?1",
+            params![threshold],
+        )?;
+        if affected > 0 {
+            println!("Pruned {} stale beacon node(s)", affected);
+        }
+        Ok(affected)
+    }
+
+    /// Deduplicate: if a node_name is registered with multiple IDs, keep only the most recent.
+    pub fn dedup_by_name(&self) -> Result<usize> {
+        let affected = self.conn.execute(
+            "DELETE FROM beacon_nodes WHERE rowid NOT IN (
+                SELECT MAX(rowid) FROM beacon_nodes GROUP BY node_name
+            ) AND node_name != ''",
+            [],
+        )?;
+        if affected > 0 {
+            println!("Deduped {} beacon node(s) with duplicate names", affected);
+        }
+        Ok(affected)
     }
 }
 
