@@ -350,6 +350,7 @@ pub async fn execute_sync(
             &fetch_bands,
             10,
             &req.collection_id,
+            None,  // no tile filter
         ).await;
 
         tracing::info!("Auto-fetch done: {} downloaded, {} skipped, {} errors",

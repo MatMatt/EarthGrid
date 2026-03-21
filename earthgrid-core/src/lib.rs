@@ -13,6 +13,7 @@ pub mod federation;
 pub mod fetcher;
 pub mod gamification;
 pub mod ingest;
+pub mod mgrs;
 pub mod reconstruct;
 pub mod network;
 pub mod node_identity;

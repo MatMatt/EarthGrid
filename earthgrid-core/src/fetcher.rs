@@ -456,8 +456,20 @@ pub async fn fetch_and_ingest(
     bands: &[String],
     limit: usize,
     collection: &str,
+    tile_filter: Option<&str>,
 ) -> FetchResult {
-    let (items, search_errors) = search_element84(bbox, start_date, end_date, cloud_cover, limit, collection).await;
+    let (mut items, search_errors) = search_element84(bbox, start_date, end_date, cloud_cover, limit, collection).await;
+
+    // Filter by tile name if provided (match "_TILE_" pattern in STAC item ID)
+    if let Some(tile) = tile_filter {
+        let pattern = format!("_{}_", tile.to_uppercase());
+        let before = items.len();
+        items.retain(|item| item.id.to_uppercase().contains(&pattern));
+        if items.len() < before {
+            info!("Tile filter '{}': kept {}/{} items", tile, items.len(), before);
+        }
+    }
+
     let items_searched = items.len();
 
     let mut result = FetchResult {

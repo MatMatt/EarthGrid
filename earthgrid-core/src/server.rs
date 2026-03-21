@@ -936,6 +936,8 @@ async fn ingest_file_endpoint(
 pub struct FetchQuery {
     /// Bounding box as "west,south,east,north"
     pub bbox: Option<String>,
+    /// Sentinel-2 MGRS tile name (e.g. "32TPS"). Alternative to bbox.
+    pub tile: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub cloud_cover: Option<f64>,
@@ -957,18 +959,23 @@ async fn fetch_handler(
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
-    // Parse bbox
-    let bbox = match q.bbox.as_deref() {
-        Some(s) => {
-            let parts: Vec<f64> = s.split(',')
-                .filter_map(|v| v.trim().parse().ok())
-                .collect();
-            if parts.len() < 4 {
-                return err(StatusCode::BAD_REQUEST, "bbox must be 'west,south,east,north'").into_response();
-            }
-            [parts[0], parts[1], parts[2], parts[3]]
+    // Resolve bbox: explicit bbox, or from tile name, or error
+    let tile_filter = q.tile.as_ref().map(|t| t.trim().to_uppercase());
+    let bbox = if let Some(s) = q.bbox.as_deref() {
+        let parts: Vec<f64> = s.split(',')
+            .filter_map(|v| v.trim().parse().ok())
+            .collect();
+        if parts.len() < 4 {
+            return err(StatusCode::BAD_REQUEST, "bbox must be 'west,south,east,north'").into_response();
         }
-        None => return err(StatusCode::BAD_REQUEST, "Missing bbox parameter").into_response(),
+        [parts[0], parts[1], parts[2], parts[3]]
+    } else if let Some(ref tile) = tile_filter {
+        match crate::mgrs::tile_to_bbox(tile) {
+            Ok(b) => b,
+            Err(e) => return err(StatusCode::BAD_REQUEST, &format!("Invalid tile '{}': {}", tile, e)).into_response(),
+        }
+    } else {
+        return err(StatusCode::BAD_REQUEST, "Missing bbox or tile parameter").into_response();
     };
 
     let start_date = q.start_date.as_deref().unwrap_or("2020-01-01");
@@ -992,6 +999,7 @@ async fn fetch_handler(
         &bands,
         limit,
         collection,
+        tile_filter.as_deref(),
     )
     .await;
 

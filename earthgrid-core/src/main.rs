@@ -10,6 +10,7 @@ use earthgrid_core::chunk_store::ChunkStore;
 use earthgrid_core::catalog::Catalog;
 use earthgrid_core::auth::AuthConfig;
 use earthgrid_core::ingest;
+use earthgrid_core::mgrs;
 
 /// Default earthgrid home directory
 fn earthgrid_home() -> PathBuf {
@@ -145,6 +146,10 @@ enum Commands {
         /// Bounding box: minLon,minLat,maxLon,maxLat
         #[arg(long)]
         bbox: Option<String>,
+
+        /// Sentinel-2 MGRS tile name (e.g. 32TPS). Alternative to --bbox.
+        #[arg(long)]
+        tile: Option<String>,
 
         /// Start date (ISO 8601)
         #[arg(long)]
@@ -450,10 +455,35 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Fetch { bbox, start, end, collection, bands, limit, cloud_cover } => {
+        Commands::Fetch { bbox, tile, start, end, collection, bands, limit, cloud_cover } => {
+            if bbox.is_some() && tile.is_some() {
+                eprintln!("❌ Cannot use both --bbox and --tile. Pick one.");
+                process::exit(1);
+            }
+
+            // Resolve tile name to bbox if provided
+            let resolved_bbox = match (&bbox, &tile) {
+                (Some(b), _) => Some(b.clone()),
+                (_, Some(t)) => {
+                    match mgrs::tile_to_bbox(t) {
+                        Ok(b) => {
+                            let bbox_str = format!("{:.4},{:.4},{:.4},{:.4}", b[0], b[1], b[2], b[3]);
+                            println!("📍 Tile {} → bbox {}", t.to_uppercase(), bbox_str);
+                            Some(bbox_str)
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Invalid tile name '{}': {}", t, e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                _ => None,
+            };
+
             let port = config_port();
             let mut params = vec![format!("limit={}", limit)];
-            if let Some(b) = bbox { params.push(format!("bbox={}", b)); }
+            if let Some(b) = resolved_bbox { params.push(format!("bbox={}", b)); }
+            if let Some(t) = &tile { params.push(format!("tile={}", t.to_uppercase())); }
             if let Some(s) = start { params.push(format!("start_date={}", s)); }
             if let Some(e) = end { params.push(format!("end_date={}", e)); }
             if let Some(c) = collection { params.push(format!("collection={}", c)); }
