@@ -2854,6 +2854,7 @@ pub async fn serve(
         let hb_catalog = state_clone_catalog.clone();
         let hb_node_id = state_node_id.clone();
         let hb_node_name = state_node_name.clone();
+        let hb_storage_limit_gb = storage_limit_gb;
         let hb_gamification = state_clone_gamification.clone();
         let hb_port = port;
         let beacon_url_env = std::env::var("EARTHGRID_BEACON_URL").ok();
@@ -2894,6 +2895,7 @@ pub async fn serve(
                         "chunk_count": chunk_count,
                         "chunks_bytes": chunks_bytes,
                         "collections": collections,
+                        "storage_limit_gb": hb_storage_limit_gb,
                     });
 
                     // First attempt: heartbeat (fast path for already-registered nodes)
@@ -2911,6 +2913,7 @@ pub async fn serve(
                                 "chunk_count": chunk_count,
                                 "chunks_bytes": chunks_bytes,
                                 "collections": collections,
+                                "storage_limit_gb": hb_storage_limit_gb,
                             });
                             let _ = client.post(&register_url).json(&register_body).send().await;
                         }
