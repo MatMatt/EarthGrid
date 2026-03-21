@@ -96,7 +96,7 @@ a:hover { text-decoration:underline; }
 <div class="stats">
   <div class="stat loading" id="sNodes"><div class="value" id="vNodes">—</div><div class="label">Active Network Nodes</div></div>
   <div class="stat loading" id="sAvailStorage"><div class="value" id="vAvailStorage">—</div><div class="label">Available Storage</div></div>
-  <div class="stat loading" id="sRequested"><div class="value" id="vRequested">—</div><div class="label">GB Requested</div></div>
+  <div class="stat loading" id="sItems"><div class="value" id="vItems">—</div><div class="label">Total Items</div></div>
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Total Data</div></div>
   <div class="stat loading" id="sUptakeReq"><div class="value" id="vUptakeReq">—</div><div class="label">Requests (30d)</div></div>
   <div class="stat loading" id="sUptakeGB"><div class="value" id="vUptakeGB">—</div><div class="label">GB Delivered (30d)</div></div>
@@ -1305,8 +1305,10 @@ async function load() {
     document.getElementById('vStorage').textContent = fmtBytes(net.total_bytes || 0);
     document.getElementById('sStorage').classList.remove('loading');
 
-    document.getElementById('vRequested').textContent = fmtKm2(d.km2_requested || 0);
-    document.getElementById('sRequested').classList.remove('loading');
+    // Total items across all nodes
+    const totalItems = (d.nodes || []).reduce((s, n) => s + (n.item_count || 0), 0);
+    document.getElementById('vItems').textContent = totalItems.toLocaleString();
+    document.getElementById('sItems').classList.remove('loading');
 
     if (d.version) document.getElementById('ver').textContent = d.version;
 
