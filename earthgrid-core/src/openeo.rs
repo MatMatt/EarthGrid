@@ -423,10 +423,17 @@ mod tests {
     use super::*;
     use gdal::Dataset;
     use gdal::DatasetOptions;
+    use gdal::DriverManager;
     use gdal::GdalOpenFlags;
     use gdal::Metadata;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
+
+    /// conda-forge GDAL on Windows (and other minimal builds) often omits the netCDF driver.
+    /// Match georust/gdal: only assert netCDF behaviour when the driver exists.
+    fn gdal_netcdf_driver_available() -> bool {
+        DriverManager::get_driver_by_name("netCDF").is_ok()
+    }
 
     // --- detect_spectral_dtype ---
 
@@ -703,6 +710,12 @@ mod tests {
 
     #[test]
     fn wrap_netcdf_produces_valid_file() {
+        if !gdal_netcdf_driver_available() {
+            eprintln!(
+                "SKIP wrap_netcdf_produces_valid_file: GDAL built without netCDF driver"
+            );
+            return;
+        }
         let meta = RasterMeta {
             width: 4, height: 4, crs: "EPSG:4326".to_string(),
             transform: [0.0, 1.0, 0.0, 4.0, 0.0, -1.0],
@@ -744,6 +757,12 @@ mod tests {
 
     #[test]
     fn wrap_output_dispatches_netcdf() {
+        if !gdal_netcdf_driver_available() {
+            eprintln!(
+                "SKIP wrap_output_dispatches_netcdf: GDAL built without netCDF driver"
+            );
+            return;
+        }
         let meta = RasterMeta {
             width: 2, height: 2, crs: "EPSG:4326".to_string(),
             transform: [0.0, 1.0, 0.0, 2.0, 0.0, -1.0],
