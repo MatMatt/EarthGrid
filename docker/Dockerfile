@@ -10,11 +10,11 @@ COPY earthgrid-core/ ./earthgrid-core/
 WORKDIR /build/earthgrid-core
 RUN cargo build --release
 
-FROM ubuntu:24.04
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libgdal34 \
+    libgdal32 \
     && rm -rf /var/lib/apt/lists/*
 
 # Cargo binary name is "earthgrid"; install as earthgrid-core for compatibility.

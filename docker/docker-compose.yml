@@ -15,7 +15,7 @@ services:
     ports:
       - "127.0.0.1:8400:8400"
     volumes:
-      - /mnt/sda/earthgrid:/data
+      - ./data:/data
       - ../docs:/app/docs
     environment:
       - EARTHGRID_NODE_NAME=node-alpha
