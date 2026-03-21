@@ -285,10 +285,11 @@ code:hover::after { opacity: 0.8; }
             <div class="form-group" style="flex:1"><label>Cloud Cover %</label><input type="number" id="fetch-cloud" value="30" min="0" max="100"></div>
             <div class="form-group" style="flex:1"><label>Limit</label><input type="number" id="fetch-limit" value="10" min="1" max="500"></div>
           </div>
-          <button class="btn" onclick="triggerFetch()" style="width:100%">🛰 Start Fetch</button>
+          <button class="btn" onclick="previewFetch()" style="width:100%">🔍 Search</button>
         </div>
       </div>
       <div id="fetch-result" style="margin-top:8px"></div>
+      <div id="fetch-preview" style="display:none;margin-top:12px"></div>
       <div id="fetch-log" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:12px;color:var(--muted)"></div>
     </div>
 
@@ -929,7 +930,7 @@ function fetchLog(msg, type) {
   log.scrollTop = log.scrollHeight;
 }
 
-async function triggerFetch() {
+function getFetchParams() {
   const w = document.getElementById('fetch-west').value.trim();
   const s = document.getElementById('fetch-south').value.trim();
   const e = document.getElementById('fetch-east').value.trim();
@@ -939,51 +940,114 @@ async function triggerFetch() {
   const end   = document.getElementById('fetch-end').value;
   const cloud = document.getElementById('fetch-cloud').value || '30';
   const limit = document.getElementById('fetch-limit').value || '10';
-
   const bbox = (w && s && e && n) ? [w,s,e,n].join(',') : '';
-  if (!bbox) { showAlert('fetch-result','Draw a rectangle or enter BBox coordinates','error'); return; }
+  return { w, s, e, n, bbox, col, start, end, cloud, limit };
+}
 
-  // Clear old log
-  const log = document.getElementById('fetch-log');
-  log.innerHTML = '';
+async function previewFetch() {
+  const p = getFetchParams();
+  if (!p.bbox) { showAlert('fetch-result','Draw a rectangle or enter BBox coordinates','error'); return; }
+
+  document.getElementById('fetch-log').innerHTML = '';
+  document.getElementById('fetch-preview').style.display = 'none';
 
   const params = new URLSearchParams();
-  params.set('collection', col);
-  params.set('bbox', bbox);
-  if (start) params.set('start_date', start);
-  if (end) params.set('end_date', end);
-  params.set('cloud_cover', cloud);
-  params.set('limit', limit);
+  params.set('collection', p.col);
+  params.set('bbox', p.bbox);
+  if (p.start) params.set('start_date', p.start);
+  if (p.end) params.set('end_date', p.end);
+  params.set('cloud_cover', p.cloud);
+  params.set('limit', p.limit);
 
-  const areaKm2 = Math.abs((e-w) * (n-s) * 111 * 111 * Math.cos((+s + +n)/2 * Math.PI/180));
-  fetchLog('\u2139 Collection: <b>' + col + '</b>');
-  fetchLog('\u2139 BBox: ' + [w,s,e,n].join(', ') + ' (~' + Math.round(areaKm2).toLocaleString() + ' km\u00b2)');
-  if (start || end) fetchLog('\u2139 Date range: ' + (start||'*') + ' to ' + (end||'*'));
-  fetchLog('\u2139 Cloud cover \u2264 ' + cloud + '%, limit ' + limit + ' scenes');
-  fetchLog('\u23f3 Querying STAC catalog...', 'warn');
-  showAlert('fetch-result', '\u23f3 Fetching...', 'info');
+  const areaKm2 = Math.abs((p.e-p.w) * (p.n-p.s) * 111 * 111 * Math.cos((+p.s + +p.n)/2 * Math.PI/180));
+  fetchLog('\u2139 Searching <b>' + p.col + '</b> on Element84 STAC...');
+  fetchLog('\u2139 BBox: ' + p.bbox + ' (~' + Math.round(areaKm2).toLocaleString() + ' km\u00b2)');
+  if (p.start || p.end) fetchLog('\u2139 Date range: ' + (p.start||'*') + ' to ' + (p.end||'*'));
+  fetchLog('\u2139 Cloud cover \u2264 ' + p.cloud + '%, limit ' + p.limit + ' scenes');
+  showAlert('fetch-result', '\ud83d\udd0d Searching...', 'info');
+
+  try {
+    const data = await apiFetch('/fetch/preview?' + params.toString());
+    fetchLog('\ud83d\udce1 Found <b>' + data.total_found + '</b> scenes on Element84', 'success');
+    fetchLog('\ud83d\uddfa Tiles: ' + (data.tiles||[]).join(', '));
+    fetchLog('\ud83d\udcc5 ' + data.unique_dates + ' unique dates' + (data.date_range ? ' (' + data.date_range.filter(Boolean).join(' \u2192 ') + ')' : ''));
+    fetchLog('\u2705 Already stored: <b>' + data.already_stored + '</b> | New: <b>' + data.new_items + '</b>');
+    if (data.new_items > 0) {
+      fetchLog('\ud83d\udce6 Est. download: ~' + data.est_download_mb + ' MB');
+    }
+    if (data.errors && data.errors.length) {
+      data.errors.forEach(e => fetchLog('\u26a0 ' + e, 'warn'));
+    }
+
+    // Show preview panel with item list and confirm button
+    let html = '<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+    html += '<div style="font-size:13px"><b>' + data.total_found + '</b> scenes found &mdash; <span style="color:var(--green)">' + data.new_items + ' new</span>';
+    if (data.already_stored > 0) html += ', <span style="color:var(--muted)">' + data.already_stored + ' already stored</span>';
+    html += '</div>';
+    if (data.new_items > 0) {
+      html += '<button class="btn" onclick="confirmFetch()" style="white-space:nowrap">\ud83d\udce5 Fetch ' + data.new_items + ' new items</button>';
+    }
+    html += '</div>';
+
+    // Items table
+    if (data.items && data.items.length) {
+      html += '<div style="max-height:250px;overflow-y:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+      html += '<tr style="color:var(--muted);border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px">ID</th><th>Tile</th><th>Date</th><th>Cloud%</th><th>Bands</th><th>Status</th></tr>';
+      data.items.forEach(item => {
+        const statusColor = item.stored ? 'var(--green)' : 'var(--accent)';
+        const statusText = item.stored ? '\u2713 stored' : '\u2b07 new';
+        html += '<tr style="border-bottom:1px solid var(--border)">';
+        html += '<td style="padding:3px 4px;font-family:monospace;font-size:11px;color:var(--muted)">' + item.id + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center">' + item.tile + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center;font-size:11px">' + (item.datetime||'').split('T')[0] + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center">' + item.cloud_cover + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center">' + item.bands + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center;color:' + statusColor + '">' + statusText + '</td>';
+        html += '</tr>';
+      });
+      if (data.total_found > 50) html += '<tr><td colspan="6" style="padding:4px;color:var(--muted);text-align:center">... and ' + (data.total_found - 50) + ' more</td></tr>';
+      html += '</table></div>';
+    }
+    html += '</div>';
+    document.getElementById('fetch-preview').innerHTML = html;
+    document.getElementById('fetch-preview').style.display = 'block';
+    showAlert('fetch-result', '\ud83d\udd0d Preview ready \u2014 ' + data.new_items + ' new items to fetch', data.new_items > 0 ? 'success' : 'info');
+  } catch(err) {
+    fetchLog('\u274c ' + err.message, 'error');
+    showAlert('fetch-result', 'Error: ' + err.message, 'error');
+  }
+}
+
+async function confirmFetch() {
+  const p = getFetchParams();
+  const params = new URLSearchParams();
+  params.set('collection', p.col);
+  params.set('bbox', p.bbox);
+  if (p.start) params.set('start_date', p.start);
+  if (p.end) params.set('end_date', p.end);
+  params.set('cloud_cover', p.cloud);
+  params.set('limit', p.limit);
+
+  fetchLog('\ud83d\ude80 Starting download & ingest...', 'warn');
+  showAlert('fetch-result', '\u23f3 Downloading...', 'info');
 
   try {
     const data = await apiFetch('/fetch?' + params.toString(), {method:'POST'});
-    if (data.items_found !== undefined) {
-      fetchLog('\ud83d\udce1 Found ' + data.items_found + ' matching scenes', 'success');
-    }
-    if (data.items_ingested !== undefined) {
-      fetchLog('\u2705 Ingested ' + data.items_ingested + ' items (' + (data.chunks_stored||'?') + ' chunks)', 'success');
-    }
+    if (data.items_searched !== undefined) fetchLog('\ud83d\udce1 Searched: ' + data.items_searched + ' scenes');
+    if (data.items_downloaded !== undefined) fetchLog('\u2705 Downloaded: ' + data.items_downloaded + ' items', 'success');
+    if (data.items_skipped !== undefined && data.items_skipped > 0) fetchLog('\u23ed Skipped: ' + data.items_skipped + ' (already stored)', 'warn');
     if (data.bytes_downloaded !== undefined) {
       const mb = (data.bytes_downloaded / 1048576).toFixed(1);
-      fetchLog('\ud83d\udce6 Downloaded ' + mb + ' MB');
+      fetchLog('\ud83d\udce6 Total: ' + mb + ' MB downloaded');
     }
-    if (data.tiles) {
-      fetchLog('\ud83d\uddfa Tiles: ' + (Array.isArray(data.tiles) ? data.tiles.join(', ') : data.tiles));
+    if (data.errors && data.errors.length) {
+      data.errors.forEach(e => fetchLog('\u274c ' + e, 'error'));
     }
-    if (data.skipped) {
-      fetchLog('\u23ed Skipped ' + data.skipped + ' (already stored)', 'warn');
-    }
-    const msg = data.message || data.error || JSON.stringify(data).substring(0,300);
-    fetchLog(msg, data.error ? 'error' : 'success');
+    const msg = data.message || JSON.stringify(data).substring(0,300);
+    fetchLog(msg, data.errors && data.errors.length ? 'warn' : 'success');
     showAlert('fetch-result', '\u2713 Fetch complete', 'success');
+    document.getElementById('fetch-preview').style.display = 'none';
     setTimeout(() => loadItems(), 2000);
   } catch(err) {
     fetchLog('\u274c ' + err.message, 'error');
