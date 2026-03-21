@@ -473,12 +473,15 @@ const EARTHGRID_API = (() => {
     const meta = document.querySelector('meta[name="earthgrid-api"]');
     if (meta && meta.content) return meta.content.replace(/\/$/, '');
   } catch(e) {}
-  // On GitHub Pages: use the beacon API (CORS enabled)
+  // On GitHub Pages: use the beacon API
   if (location.hostname.includes('github.io')) {
     return 'https://mattiuzzi.zapto.org/earthgrid';
   }
-  // Same origin (served by node or proxied)
-  return '';
+  // Same origin: detect path prefix (e.g. /earthgrid/)
+  // The page is served at the root of the EarthGrid server,
+  // but may be behind a reverse proxy with a prefix like /earthgrid/
+  const path = location.pathname.replace(/\/[^/]*$/, '');  // strip filename
+  return path === '/' ? '' : path.replace(/\/$/, '');
 })();
 
 let currentBoard = 'nodes';
