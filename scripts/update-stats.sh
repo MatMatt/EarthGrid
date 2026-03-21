@@ -54,6 +54,13 @@ nodes_total = len(NODES)
 # Version from primary
 version = node_infos[0].get('version', '')
 
+# Get spatial data for accurate tile/date counts
+_spatial = fetch(PRIMARY, '/coverage/spatial')
+_tile_stats = {}
+for _col, _cdata in (_spatial.get('collections', {}) if _spatial else {}).items():
+    _cells = _cdata.get('cells', [])
+    _tile_stats[_col] = {'tiles': len(_cells), 'dates': sum(c.get('date_count', 0) for c in _cells)}
+
 stats = {
     'updated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     'version': version,
@@ -80,11 +87,12 @@ stats = {
     'coverage': {
         c['collection']: {
             'items': c.get('item_count', 0),
-            'tiles': c.get('item_count', 0),
+            'tiles': _tile_stats.get(c['collection'], {}).get('tiles', 0),
+            'dates': _tile_stats.get(c['collection'], {}).get('dates', 0),
         }
         for c in coverage.get('collections', [])
     },
-    'spatial_coverage': fetch(PRIMARY, '/coverage/spatial'),
+    'spatial_coverage': _spatial,
     'uptake': uptake,
     'ingest': ingest,
     'items': total_items,

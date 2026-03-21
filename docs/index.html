@@ -1278,7 +1278,7 @@ async function load() {
       for (const [col, s] of Object.entries(sensors).sort((a,b) => (b[1].items||0) - (a[1].items||0))) {
         html += '<tr><td class="sensor">' + sensorLabel(col) + '</td>';
         html += '<td class="num">' + (s.tiles||0) + '</td>';
-        html += '<td class="num">' + (s.items||0) + '</td></tr>';
+        html += '<td class="num">' + (s.dates||s.items||0) + '</td></tr>';
       }
       html += '</tbody></table>';
       document.getElementById('coverageTable').innerHTML = html;
