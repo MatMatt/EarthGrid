@@ -180,6 +180,11 @@ code:hover { background: rgba(88,166,255,0.15); }
 code::after { content: '📋'; font-size: 10px; margin-left: 4px; opacity: 0.4; }
 code:hover::after { opacity: 0.8; }
 </style>
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 </head>
 <body>
 
@@ -251,27 +256,39 @@ code:hover::after { opacity: 0.8; }
   <!-- DATA TAB -->
   <div class="tab-panel" id="panel-data">
     <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Fetch New Data</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>BBox (west,south,east,north)</label>
-          <input type="text" id="fetch-bbox" placeholder="e.g. 9.0,46.0,17.0,49.0" style="width:260px">
+      <div class="card-title">🛰 Fetch Satellite Data</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:320px">
+          <div id="fetch-map" style="height:340px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:8px"></div>
+          <div style="font-size:11px;color:var(--muted)">Draw a rectangle on the map or enter coordinates manually</div>
         </div>
-        <div class="form-group">
-          <label>Collection</label>
-          <input type="text" id="fetch-collection" value="sentinel-2-l2a" style="width:180px">
+        <div style="min-width:260px;max-width:300px">
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Collection</label>
+            <select id="fetch-collection" style="width:100%"><option value="sentinel-2-l2a">sentinel-2-l2a</option></select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
+            <div class="form-group"><label>West</label><input type="number" id="fetch-west" step="0.01" placeholder="9.0"></div>
+            <div class="form-group"><label>East</label><input type="number" id="fetch-east" step="0.01" placeholder="17.0"></div>
+            <div class="form-group"><label>South</label><input type="number" id="fetch-south" step="0.01" placeholder="46.0"></div>
+            <div class="form-group"><label>North</label><input type="number" id="fetch-north" step="0.01" placeholder="49.0"></div>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Date Range</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="date" id="fetch-start" style="flex:1">
+              <span style="color:var(--muted)">to</span>
+              <input type="date" id="fetch-end" style="flex:1">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:14px">
+            <div class="form-group" style="flex:1"><label>Cloud Cover %</label><input type="number" id="fetch-cloud" value="30" min="0" max="100"></div>
+            <div class="form-group" style="flex:1"><label>Limit</label><input type="number" id="fetch-limit" value="10" min="1" max="500"></div>
+          </div>
+          <button class="btn" onclick="triggerFetch()" style="width:100%">🛰 Start Fetch</button>
         </div>
-        <div class="form-group">
-          <label>Start Date</label>
-          <input type="date" id="fetch-start" style="width:150px">
-        </div>
-        <div class="form-group">
-          <label>End Date</label>
-          <input type="date" id="fetch-end" style="width:150px">
-        </div>
-        <button class="btn" onclick="triggerFetch()">Fetch</button>
       </div>
-      <div id="fetch-result"></div>
+      <div id="fetch-result" style="margin-top:8px"></div>
     </div>
 
     <div class="card">
@@ -529,6 +546,7 @@ function switchTab(tab) {
   const idx = tabs.indexOf(tab);
   document.querySelectorAll('.tab')[idx].classList.add('active');
   document.getElementById('panel-' + tab).classList.add('active');
+  if (tab === 'data') setTimeout(initFetchMap, 100);
   refreshCurrent();
 }
 
@@ -837,34 +855,97 @@ function itemsPage(dir) {
   renderItems();
 }
 
-async function triggerFetch() {
-  const bbox = document.getElementById('fetch-bbox').value.trim();
-  const col = document.getElementById('fetch-collection').value.trim();
-  const start = document.getElementById('fetch-start').value;
-  const end = document.getElementById('fetch-end').value;
+// ---- Leaflet BBox Picker ----
+let _fetchMap = null, _fetchRect = null;
 
-  if (!bbox && !col) {
-    showAlert('fetch-result', 'Please enter at least a bbox or collection', 'error');
-    return;
+function initFetchMap() {
+  if (_fetchMap) { _fetchMap.invalidateSize(); return; }
+  const el = document.getElementById('fetch-map');
+  if (!el) return;
+  _fetchMap = L.map(el).setView([47.5, 13.0], 6);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '\u00a9 OSM \u00a9 CARTO', maxZoom: 19
+  }).addTo(_fetchMap);
+
+  const drawnItems = new L.FeatureGroup();
+  _fetchMap.addLayer(drawnItems);
+  const drawCtrl = new L.Control.Draw({
+    draw: { polygon:false, circle:false, circlemarker:false, marker:false, polyline:false,
+      rectangle: { shapeOptions: { color:'#58a6ff', weight:2, fillOpacity:0.15 } }
+    },
+    edit: { featureGroup: drawnItems }
+  });
+  _fetchMap.addControl(drawCtrl);
+
+  _fetchMap.on(L.Draw.Event.CREATED, function(ev) {
+    drawnItems.clearLayers();
+    _fetchRect = ev.layer;
+    drawnItems.addLayer(_fetchRect);
+    const b = _fetchRect.getBounds();
+    document.getElementById('fetch-west').value  = b.getWest().toFixed(4);
+    document.getElementById('fetch-south').value = b.getSouth().toFixed(4);
+    document.getElementById('fetch-east').value  = b.getEast().toFixed(4);
+    document.getElementById('fetch-north').value = b.getNorth().toFixed(4);
+  });
+  _fetchMap.on(L.Draw.Event.EDITED, function(ev) {
+    ev.layers.eachLayer(function(layer) {
+      const b = layer.getBounds();
+      document.getElementById('fetch-west').value  = b.getWest().toFixed(4);
+      document.getElementById('fetch-south').value = b.getSouth().toFixed(4);
+      document.getElementById('fetch-east').value  = b.getEast().toFixed(4);
+      document.getElementById('fetch-north').value = b.getNorth().toFixed(4);
+    });
+  });
+
+  ['fetch-west','fetch-south','fetch-east','fetch-north'].forEach(id => {
+    document.getElementById(id).addEventListener('change', syncMapRect);
+  });
+}
+
+function syncMapRect() {
+  const w=parseFloat(document.getElementById('fetch-west').value),
+        s=parseFloat(document.getElementById('fetch-south').value),
+        e=parseFloat(document.getElementById('fetch-east').value),
+        n=parseFloat(document.getElementById('fetch-north').value);
+  if(isNaN(w)||isNaN(s)||isNaN(e)||isNaN(n)||!_fetchMap) return;
+  const bounds = L.latLngBounds([[s,w],[n,e]]);
+  if(_fetchRect) { _fetchRect.setBounds(bounds); }
+  else {
+    _fetchRect = L.rectangle(bounds,{color:'#58a6ff',weight:2,fillOpacity:0.15}).addTo(_fetchMap);
   }
+  _fetchMap.fitBounds(bounds.pad(0.3));
+}
+
+async function triggerFetch() {
+  const w = document.getElementById('fetch-west').value.trim();
+  const s = document.getElementById('fetch-south').value.trim();
+  const e = document.getElementById('fetch-east').value.trim();
+  const n = document.getElementById('fetch-north').value.trim();
+  const col   = document.getElementById('fetch-collection').value;
+  const start = document.getElementById('fetch-start').value;
+  const end   = document.getElementById('fetch-end').value;
+  const cloud = document.getElementById('fetch-cloud').value || '30';
+  const limit = document.getElementById('fetch-limit').value || '10';
+
+  const bbox = (w && s && e && n) ? [w,s,e,n].join(',') : '';
+  if (!bbox) { showAlert('fetch-result','Draw a rectangle or enter BBox coordinates','error'); return; }
 
   const params = new URLSearchParams();
-  if (col) params.set('collection', col);
-  if (bbox) params.set('bbox', bbox);
+  params.set('collection', col);
+  params.set('bbox', bbox);
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
-  params.set('cloud_cover', '30');
-  params.set('limit', '10');
+  params.set('cloud_cover', cloud);
+  params.set('limit', limit);
 
-  showAlert('fetch-result', '⏳ Fetching data... this may take a while', 'info');
-
+  showAlert('fetch-result', '\u23f3 Fetching data... this may take a while', 'info');
   try {
-    const data = await apiFetch('/fetch?' + params.toString(), {method: 'POST'});
-    const msg = data.message || data.error || JSON.stringify(data).substring(0, 200);
-    showAlert('fetch-result', '✓ ' + msg, 'success');
+    const data = await apiFetch('/fetch?' + params.toString(), {method:'POST'});
+    const msg = data.message || data.error || JSON.stringify(data).substring(0,200);
+    showAlert('fetch-result', '\u2713 ' + msg, 'success');
     setTimeout(() => loadItems(), 2000);
-  } catch(e) {
-    showAlert('fetch-result', 'Error: ' + e.message, 'error');
+  } catch(err) {
+    showAlert('fetch-result', 'Error: ' + err.message, 'error');
   }
 }
 
