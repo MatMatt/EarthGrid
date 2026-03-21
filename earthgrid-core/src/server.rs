@@ -2573,15 +2573,33 @@ pub async fn serve(
     // Seed challenges on startup (no-op if already seeded)
     let _ = gamification_engine.seed_challenges();
 
-    // Node identity from env
+    // Node identity from env, file, config.json, or generate+persist
+    let earthgrid_home = dirs::home_dir().unwrap_or_default().join(".earthgrid");
+    let id_path = earthgrid_home.join(".node_id");
     let node_id = env::var("EARTHGRID_NODE_ID")
         .ok()
         .or_else(|| {
             // Read persistent node_id from ~/.earthgrid/.node_id
-            let id_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/.node_id");
             std::fs::read_to_string(&id_path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
         })
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .or_else(|| {
+            // Fallback: read node_id from config.json
+            let cfg = earthgrid_home.join("config.json");
+            if let Ok(c) = std::fs::read_to_string(&cfg) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&c) {
+                    return v["node_id"].as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());
+                }
+            }
+            None
+        })
+        .unwrap_or_else(|| {
+            // Generate new ID and persist it
+            let new_id = uuid::Uuid::new_v4().to_string();
+            let _ = std::fs::create_dir_all(&earthgrid_home);
+            let _ = std::fs::write(&id_path, &new_id);
+            println!("📝 Generated new node ID: {} (saved to {})", new_id, id_path.display());
+            new_id
+        });
     let node_name = env::var("EARTHGRID_NODE_NAME")
         .ok()
         .or_else(|| {
