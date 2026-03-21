@@ -1,20 +1,20 @@
 {
-  "updated": "2026-03-21T16:31:00Z",
+  "updated": "2026-03-21T16:40:01Z",
   "version": "0.1.0",
   "network": {
     "nodes_alive": 2,
     "nodes_total": 2,
     "total_bytes": 854074292300,
-    "available_storage_gb": 0,
+    "available_storage_gb": 5000.0,
     "redundancy": 1.0
   },
   "nodes": [
     {
-      "node_id": "718ca4a0-e614-45ac-929c-8017da9dd97a",
+      "node_id": "3b24c9f0af89",
       "node_name": "node-alpha",
       "items": 3899,
       "storage_gb": 733.1,
-      "storage_limit_gb": 0,
+      "storage_limit_gb": 5000.0,
       "chunks": 1440435,
       "version": "0.1.0",
       "public_url": "https://mattiuzzi.zapto.org/earthgrid"
@@ -1676,10 +1676,10 @@
     },
     "economy": {
       "data_served_gb": 0.0,
-      "estimated_replication_factor": 1.1,
+      "estimated_replication_factor": 1.0,
       "factors": {
         "data_redundancy": {
-          "score": 40.0,
+          "score": 15.0,
           "weight": 0.25
         },
         "data_reuse": {
@@ -1687,7 +1687,7 @@
           "weight": 0.2
         },
         "node_diversity": {
-          "score": 50.0,
+          "score": 20.0,
           "weight": 0.25
         },
         "storage_headroom": {
@@ -1696,9 +1696,9 @@
         }
       },
       "label": "Growing",
-      "nodes_alive": 2,
+      "nodes_alive": 1,
       "nodes_total": 2,
-      "score": 54,
+      "score": 40,
       "status": "yellow",
       "storage_pledged_gb": 5070.0,
       "storage_used_gb": 795.4,
@@ -1714,7 +1714,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 7h",
-          "remaining_seconds": 113339.15868592262,
+          "remaining_seconds": 112798.53055858612,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -1727,7 +1727,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 7h",
-          "remaining_seconds": 113339.15868592262,
+          "remaining_seconds": 112798.53055858612,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -1740,7 +1740,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 7h",
-          "remaining_seconds": 113339.15868592262,
+          "remaining_seconds": 112798.53055858612,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -1753,7 +1753,7 @@
           "participants": 0,
           "period": "monthly",
           "remaining_human": "10d 7h",
-          "remaining_seconds": 890939.1586859226,
+          "remaining_seconds": 890398.5305585861,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []
