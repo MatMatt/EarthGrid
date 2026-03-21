@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-21T16:28:51Z",
+  "updated": "2026-03-21T16:28:57Z",
   "version": "0.1.0",
   "network": {
     "nodes_alive": 2,
@@ -1714,7 +1714,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 7h",
-          "remaining_seconds": 113468.37253427505,
+          "remaining_seconds": 113462.90542888641,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -1727,7 +1727,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 7h",
-          "remaining_seconds": 113468.37253427505,
+          "remaining_seconds": 113462.90542888641,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -1740,7 +1740,7 @@
           "participants": 0,
           "period": "weekly",
           "remaining_human": "1d 7h",
-          "remaining_seconds": 113468.37253427505,
+          "remaining_seconds": 113462.90542888641,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -1753,7 +1753,7 @@
           "participants": 0,
           "period": "monthly",
           "remaining_human": "10d 7h",
-          "remaining_seconds": 891068.372534275,
+          "remaining_seconds": 891062.9054288864,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []
