@@ -106,6 +106,13 @@ a:hover { text-decoration:underline; }
 
 
 <div class="section">
+<h2>🖥️ Network Nodes</h2>
+<div id="nodesGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem">
+  <em style="color:var(--dim)">Loading nodes...</em>
+</div>
+</div>
+
+<div class="section">
 <h2>🌐 Network Economy</h2>
 <div class="economy" id="economyWidget">
   <div class="economy-header">
@@ -1128,6 +1135,34 @@ function fmtBytes(b) { return b >= 1e12 ? (b/1e12).toFixed(1)+' TB' : (b/1e9).to
 function fmtGB(gb) { return gb >= 1000 ? (gb/1000).toFixed(1)+' TB' : gb.toFixed(0)+' GB'; }
 function fmtKm2(k) { return k >= 1e6 ? (k/1e6).toFixed(1)+'M' : k >= 1000 ? (k/1000).toFixed(0)+'k' : k.toFixed(0); }
 
+function renderNodes(nodes) {
+  if (!nodes || nodes.length === 0) {
+    document.getElementById('nodesGrid').innerHTML = '<em style="color:var(--dim)">No nodes registered</em>';
+    return;
+  }
+  // Sort: alive first, then by stored bytes desc
+  nodes.sort((a, b) => (b.alive ? 1 : 0) - (a.alive ? 1 : 0) || (b.chunks_bytes||0) - (a.chunks_bytes||0));
+  let html = '';
+  for (const n of nodes) {
+    const status = n.alive ? '<span style="color:var(--green)">● online</span>' : '<span style="color:#f85149">● offline</span>';
+    const stored = fmtBytes(n.chunks_bytes || 0);
+    const items = (n.item_count || 0).toLocaleString();
+    const cols = (n.collections || []).join(', ') || '—';
+    const seen = n.last_seen ? fmtTime(n.last_seen) : '—';
+    html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">';
+    html += '<strong style="font-size:1.1rem">' + (n.node_name || n.node_id || 'Unknown') + '</strong>';
+    html += status + '</div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;font-size:0.85rem">';
+    html += '<div><span style="color:var(--dim)">Stored:</span> ' + stored + '</div>';
+    html += '<div><span style="color:var(--dim)">Items:</span> ' + items + '</div>';
+    html += '<div style="grid-column:1/-1"><span style="color:var(--dim)">Collections:</span> ' + cols + '</div>';
+    html += '<div style="grid-column:1/-1"><span style="color:var(--dim)">Last seen:</span> ' + seen + '</div>';
+    html += '</div></div>';
+  }
+  document.getElementById('nodesGrid').innerHTML = html;
+}
+
 async function load() {
   const api = EARTHGRID_API || '';
 
@@ -1192,6 +1227,7 @@ async function load() {
         available_storage_gb: availStorageGB,
       };
       d.nodes = nodes;
+      renderNodes(nodes);
 
       // Version from /node-info
       if (nodeInfoData && nodeInfoData.version) d.version = nodeInfoData.version;
