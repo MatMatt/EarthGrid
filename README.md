@@ -297,6 +297,28 @@ docker pull ghcr.io/matmatt/earthgrid-core:latest
 docker run -d -p 8400:8400 -v earthgrid-data:/data ghcr.io/matmatt/earthgrid-core:latest serve
 ```
 
+### Docker Compose (dev + prod volume path)
+
+The compose file supports both local development and production storage paths:
+
+```bash
+# Dev (default, in docker/.env): EARTHGRID_HOST_DATA_DIR=./data
+cd docker
+docker compose up -d --build
+```
+
+```bash
+# Prod host path (example)
+cd docker
+EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid docker compose up -d --build
+```
+
+Or set it once in `docker/.env`:
+
+```bash
+EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid
+```
+
 ---
 
 ## Security Model

@@ -15,7 +15,9 @@ services:
     ports:
       - "127.0.0.1:8400:8400"
     volumes:
-      - ./data:/data
+      # Host data directory. Defaults to ./data for local dev.
+      # Set EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid in production.
+      - ${EARTHGRID_HOST_DATA_DIR:-./data}:/data
       - ../docs:/app/docs
     environment:
       - EARTHGRID_NODE_NAME=node-alpha
