@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-21T16:50:01Z",
+  "updated": "2026-03-21T17:00:02Z",
   "version": "0.5.0",
   "network": {
     "nodes_alive": 2,
@@ -20,9 +20,9 @@
       "public_url": "https://mattiuzzi.zapto.org/earthgrid"
     },
     {
-      "node_id": "30e15633-cd93-4497-a3f6-d6fbfd46cc81",
+      "node_id": "ab9509f5-e217-4250-89ff-8d9f19117b69",
       "node_name": "node-beta",
-      "items": 387,
+      "items": 440,
       "storage_gb": 62.4,
       "storage_limit_gb": 70.0,
       "chunks": 111725,
@@ -1593,7 +1593,7 @@
     "total_items": 3,
     "total_items_fetched": 3
   },
-  "items": 4286,
+  "items": 4339,
   "chunks": 1552160,
   "km2_requested": 0,
   "operations": [
@@ -1732,8 +1732,8 @@
           "metric": "items_ingested",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "1d 7h",
-          "remaining_seconds": 112198.81697273254,
+          "remaining_human": "1d 6h",
+          "remaining_seconds": 111597.98788928986,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -1745,8 +1745,8 @@
           "metric": "gb_stored",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "1d 7h",
-          "remaining_seconds": 112198.81697273254,
+          "remaining_human": "1d 6h",
+          "remaining_seconds": 111597.98788928986,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -1758,8 +1758,8 @@
           "metric": "gb_served",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "1d 7h",
-          "remaining_seconds": 112198.81697273254,
+          "remaining_human": "1d 6h",
+          "remaining_seconds": 111597.98788928986,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -1771,8 +1771,8 @@
           "metric": "score",
           "participants": 0,
           "period": "monthly",
-          "remaining_human": "10d 7h",
-          "remaining_seconds": 889798.8169727325,
+          "remaining_human": "10d 6h",
+          "remaining_seconds": 889197.9878892899,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []
