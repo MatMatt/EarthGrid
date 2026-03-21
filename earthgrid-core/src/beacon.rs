@@ -67,6 +67,17 @@ pub struct RegisterRequest {
     pub group: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GridMetricPoint {
+    pub ts: f64,
+    pub nodes_total: i64,
+    pub nodes_alive: i64,
+    pub total_items: i64,
+    pub total_chunks: i64,
+    pub total_bytes: i64,
+    pub total_storage_limit_gb: f64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct HeartbeatRequest {
     pub node_id: String,
@@ -147,7 +158,18 @@ impl BeaconRegistry {
                 group_id TEXT,
                 uptime_seconds INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_beacon_last_seen ON beacon_nodes(last_seen);",
+            CREATE INDEX IF NOT EXISTS idx_beacon_last_seen ON beacon_nodes(last_seen);
+
+            CREATE TABLE IF NOT EXISTS grid_metrics (
+                ts REAL NOT NULL,
+                nodes_total INTEGER NOT NULL DEFAULT 0,
+                nodes_alive INTEGER NOT NULL DEFAULT 0,
+                total_items INTEGER NOT NULL DEFAULT 0,
+                total_chunks INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER NOT NULL DEFAULT 0,
+                total_storage_limit_gb REAL NOT NULL DEFAULT 0.0
+            );
+            CREATE INDEX IF NOT EXISTS idx_grid_metrics_ts ON grid_metrics(ts);",
         )?;
         Ok(())
     }
@@ -225,6 +247,8 @@ impl BeaconRegistry {
         // Opportunistic cleanup: prune stale nodes (>1h) and dedup on each heartbeat
         let _ = self.prune_stale(3600.0);
         let _ = self.dedup_by_name();
+        // Record grid-wide metrics snapshot (max every 10 min)
+        let _ = self.record_grid_snapshot();
 
         let now = now_ts();
 
@@ -367,7 +391,58 @@ impl BeaconRegistry {
         if affected > 0 {
             println!("Deduped {} beacon node(s) with duplicate names", affected);
         }
-        Ok(affected)
+Ok(affected)
+    }
+
+    /// Record a point-in-time snapshot of grid-wide metrics.
+    /// Called periodically (e.g. every heartbeat or every N minutes).
+    pub fn record_grid_snapshot(&self) -> Result<()> {
+        let now = now_ts();
+        // Only record if last snapshot is > 10 min old
+        let last: f64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(ts), 0.0) FROM grid_metrics", [], |r| r.get(0)
+        ).unwrap_or(0.0);
+        if now - last < 600.0 { return Ok(()); }
+
+        self.conn.execute(
+            "INSERT INTO grid_metrics (ts, nodes_total, nodes_alive, total_items, total_chunks, total_bytes, total_storage_limit_gb)
+             SELECT ?1,
+                    COUNT(*),
+                    SUM(CASE WHEN (?1 - last_seen) < 3600 THEN 1 ELSE 0 END),
+                    SUM(item_count),
+                    SUM(chunk_count),
+                    SUM(chunks_bytes),
+                    SUM(storage_limit_gb)
+             FROM beacon_nodes",
+            rusqlite::params![now],
+        )?;
+        // Keep max 1 year of data (~52k rows at 10-min intervals)
+        let cutoff = now - 365.0 * 86400.0;
+        self.conn.execute("DELETE FROM grid_metrics WHERE ts < ?1", rusqlite::params![cutoff])?;
+        Ok(())
+    }
+
+    /// Get grid metrics time series for the given number of days.
+    pub fn get_grid_metrics(&self, days: f64) -> Result<Vec<GridMetricPoint>> {
+        let cutoff = now_ts() - days * 86400.0;
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, nodes_total, nodes_alive, total_items, total_chunks, total_bytes, total_storage_limit_gb
+             FROM grid_metrics WHERE ts >= ?1 ORDER BY ts ASC"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![cutoff], |row| {
+            Ok(GridMetricPoint {
+                ts: row.get(0)?,
+                nodes_total: row.get(1)?,
+                nodes_alive: row.get(2)?,
+                total_items: row.get(3)?,
+                total_chunks: row.get(4)?,
+                total_bytes: row.get(5)?,
+                total_storage_limit_gb: row.get(6)?,
+            })
+        })?;
+        let mut result = Vec::new();
+        for r in rows { result.push(r?); }
+        Ok(result)
     }
 }
 
@@ -460,6 +535,30 @@ async fn remove_node(
 // ---------------------------------------------------------------------------
 
 /// Build the beacon router. Mount at "/" or nest under a prefix.
+#[derive(Debug, Deserialize)]
+pub struct MetricsQuery {
+    pub days: Option<f64>,
+}
+
+async fn grid_metrics(
+    State(state): State<BeaconState>,
+    axum::extract::Query(q): axum::extract::Query<MetricsQuery>,
+) -> Json<serde_json::Value> {
+    let days = q.days.unwrap_or(30.0);
+    let reg = state.registry.lock().await;
+    match reg.get_grid_metrics(days) {
+        Ok(points) => Json(serde_json::json!({
+            "days": days,
+            "count": points.len(),
+            "metrics": points,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "error": format!("{}", e),
+            "metrics": [],
+        })),
+    }
+}
+
 pub fn beacon_router(state: BeaconState) -> Router {
     Router::new()
         .route("/beacon/register", post(register_node))
@@ -467,12 +566,14 @@ pub fn beacon_router(state: BeaconState) -> Router {
         .route("/beacon/nodes", get(list_nodes))
         .route("/beacon/nodes/{node_id}", get(get_node))
         .route("/beacon/nodes/{node_id}", delete(remove_node))
+        .route("/beacon/metrics", get(grid_metrics))
         .with_state(state)
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
 
 #[cfg(test)]
 mod tests {
