@@ -380,7 +380,8 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
         .collect();
 
     let tmp_path = std::env::temp_dir().join(format!("earthgrid_wrap_{}.nc", uuid::Uuid::new_v4()));
-    let tmp_str = tmp_path.to_string_lossy().to_string();
+    // GDAL's C API is happier with POSIX-style paths on Windows (conda builds).
+    let tmp_str = tmp_path.to_string_lossy().replace('\\', "/");
 
     let driver = DriverManager::get_driver_by_name("netCDF")
         .map_err(|e| format!("GDAL netCDF driver: {e}"))?;
@@ -415,7 +416,9 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gdal::Dataset;
     use std::collections::HashMap;
+    use std::path::Path;
 
     // --- detect_spectral_dtype ---
 
@@ -621,19 +624,19 @@ mod tests {
 
     // --- wrap_netcdf ---
 
-    /// netCDF-4 uses an HDF5 superblock (`\x89HDF`); many GDAL builds (e.g. Windows conda)
-    /// still emit classic netCDF-3 (`CDF` + version byte 1 or 2). Both are valid products.
-    fn assert_valid_netcdf_file(nc: &[u8]) {
-        assert!(nc.len() > 50, "netCDF too small: {} bytes", nc.len());
-        let hdf5_nc4 = nc.len() >= 4 && &nc[..4] == b"\x89HDF";
-        let classic = nc.len() >= 4
-            && &nc[..3] == b"CDF"
-            && (nc[3] == 1 || nc[3] == 2);
-        assert!(
-            hdf5_nc4 || classic,
-            "expected netCDF-4 (HDF5) or classic netCDF magic, got first bytes: {:?}",
-            &nc[..nc.len().min(8)]
-        );
+    /// Do not rely on on-disk magic bytes: Windows/Linux GDAL may emit netCDF-3, NC4/HDF5,
+    /// or CDF-5. If GDAL can open the file and dimensions match, the writer succeeded.
+    fn assert_netcdf_bytes_readable_by_gdal(nc: &[u8], width: usize, height: usize) {
+        assert!(nc.len() > 20, "netCDF output too small: {} bytes", nc.len());
+        let tmp_path = std::env::temp_dir().join(format!("earthgrid_verify_nc_{}.nc", uuid::Uuid::new_v4()));
+        std::fs::write(&tmp_path, nc).expect("write verify netCDF");
+        let ds = Dataset::open(Path::new(&tmp_path))
+            .unwrap_or_else(|e| panic!("GDAL must open netCDF we produced: {e}"));
+        let (w, h) = ds.raster_size();
+        assert_eq!(w as usize, width, "raster width");
+        assert_eq!(h as usize, height, "raster height");
+        drop(ds);
+        let _ = std::fs::remove_file(&tmp_path);
     }
 
     #[test]
@@ -647,7 +650,7 @@ mod tests {
             .flat_map(|v| v.to_le_bytes())
             .collect();
         let nc = wrap_netcdf(&pixels, &meta).expect("wrap_netcdf failed");
-        assert_valid_netcdf_file(&nc);
+        assert_netcdf_bytes_readable_by_gdal(&nc, 4, 4);
     }
 
     #[test]
@@ -688,7 +691,7 @@ mod tests {
             .iter().flat_map(|v| v.to_le_bytes()).collect();
         let (bytes, ct) = wrap_output(&pixels, &meta, "netCDF").unwrap();
         assert_eq!(ct, "application/x-netcdf");
-        assert_valid_netcdf_file(&bytes);
+        assert_netcdf_bytes_readable_by_gdal(&bytes, 2, 2);
     }
 
     #[test]
