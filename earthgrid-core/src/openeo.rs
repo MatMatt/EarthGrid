@@ -398,8 +398,9 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
                 .map_err(|e2| format!("GDAL netCDF create: {e}; fallback: {e2}"))
         })?;
 
-    ds.set_geo_transform(&meta.transform)
-        .map_err(|e| format!("GDAL set geotransform: {e}"))?;
+    // netCDF driver on some platforms (notably Windows conda) rejects georeferencing;
+    // pixels still write correctly — do not fail the whole export.
+    let _ = ds.set_geo_transform(&meta.transform);
     if let Ok(srs) = SpatialRef::from_definition(&meta.crs) {
         let _ = ds.set_spatial_ref(&srs);
     }
@@ -421,6 +422,8 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
 mod tests {
     use super::*;
     use gdal::Dataset;
+    use gdal::DatasetOptions;
+    use gdal::GdalOpenFlags;
     use gdal::Metadata;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
@@ -629,6 +632,20 @@ mod tests {
 
     // --- wrap_netcdf ---
 
+    fn netcdf_open_options() -> DatasetOptions<'static> {
+        DatasetOptions {
+            open_flags: GdalOpenFlags::GDAL_OF_READONLY | GdalOpenFlags::GDAL_OF_RASTER,
+            allowed_drivers: Some(&["netCDF"]),
+            ..Default::default()
+        }
+    }
+
+    fn try_open_netcdf_path(p: &Path) -> Option<Dataset> {
+        Dataset::open_ex(p, netcdf_open_options())
+            .ok()
+            .or_else(|| Dataset::open(p).ok())
+    }
+
     /// Open a netCDF written by GDAL: root may be a container with zero raster size; the
     /// actual 2D grid is often in `SUBDATASET_*_NAME` (typical on Windows netCDF driver).
     fn open_netcdf_raster_dataset(path: &Path) -> Dataset {
@@ -640,7 +657,7 @@ mod tests {
         attempts.push(path.to_path_buf());
 
         for p in attempts {
-            let Ok(ds) = Dataset::open(&p) else {
+            let Some(ds) = try_open_netcdf_path(&p) else {
                 continue;
             };
             let (w, h) = ds.raster_size();
@@ -652,11 +669,12 @@ mod tests {
                     let Some((key, val)) = item.split_once('=') else {
                         continue;
                     };
-                    if !key.ends_with("_NAME") {
+                    if !key.ends_with("_NAME") && !key.ends_with("_name") {
                         continue;
                     }
-                    let val = val.trim();
-                    if let Ok(sub) = Dataset::open(Path::new(val)) {
+                    // GDAL subdataset strings embed paths; normalize slashes for Windows.
+                    let val = val.trim().replace('\\', "/");
+                    if let Some(sub) = try_open_netcdf_path(Path::new(&val)) {
                         let (sw, sh) = sub.raster_size();
                         if sw > 0 && sh > 0 {
                             return sub;
