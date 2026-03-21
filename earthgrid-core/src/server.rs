@@ -172,8 +172,21 @@ async fn stats(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-/// GET / — STAC Landing Page (OGC compliant)
-async fn stac_landing(State(state): State<AppState>) -> Json<serde_json::Value> {
+/// GET / — Content-negotiated landing: HTML for browsers, JSON for API clients
+async fn stac_landing(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    // If Accept header prefers HTML, serve the info page
+    let accept = headers.get("accept").and_then(|v| v.to_str().ok()).unwrap_or("");
+    if accept.contains("text/html") && !accept.starts_with("application/json") {
+        return landing_html(State(state)).await.into_response();
+    }
+    stac_landing_json(State(state)).await.into_response()
+}
+
+/// JSON STAC Landing
+async fn stac_landing_json(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "type": "Catalog",
         "id": state.node_id,
@@ -2220,6 +2233,14 @@ async fn federation_import_users(
 // ---------------------------------------------------------------------------
 // HTML: Dashboard + UI
 // ---------------------------------------------------------------------------
+
+/// GET / (HTML) — Info page about the grid (like GH Pages but with live API)
+async fn landing_html(State(_state): State<AppState>) -> impl IntoResponse {
+    // Serve the same page as GH Pages docs/index.html
+    // but it will use same-origin API (EARTHGRID_API = '')
+    let html = include_str!("../../docs/index.html");
+    axum::response::Html(html)
+}
 
 async fn dashboard(State(state): State<AppState>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
