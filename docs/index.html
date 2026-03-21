@@ -1137,8 +1137,19 @@ async function load() {
   let d = {};
   let apiOk = false;
 
-  // Fetch all live endpoints in parallel
-  try {
+  // On GitHub Pages: always use stats.json (live API blocked by PNA/CORS)
+  // On same-origin (served by node): use live API
+  const isGitHubPages = location.hostname.includes('github.io');
+
+  if (isGitHubPages) {
+    try {
+      const r = await fetch('stats.json?t=' + Date.now());
+      if (r.ok) { d = await r.json(); apiOk = true; console.log('Loaded stats.json'); }
+    } catch(e) { console.error('stats.json load error:', e); }
+  }
+
+  // Live API only on same-origin or if stats.json failed
+  if (!apiOk) try {
     const [nodesData, nodeInfoData, statsData, coverageData, spatialData,
            uptakeData, ingestData, opsData,
            lbNodes, lbUsers, lbGroups, achData, feedData, economyData, challengesData] =
@@ -1227,11 +1238,10 @@ async function load() {
     console.warn('Live API error:', apiErr);
   }
 
-  // Fallback to stats.json if no live data
+  // Fallback to stats.json if live API also failed
   if (!apiOk) {
     try {
-      const statsUrl = 'stats.json?t=' + Date.now();
-      const r = await fetch(statsUrl);
+      const r = await fetch('stats.json?t=' + Date.now());
       if (!r.ok) throw new Error('stats.json not found');
       d = await r.json();
       console.log('Using stats.json fallback');
