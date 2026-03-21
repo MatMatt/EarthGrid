@@ -76,6 +76,7 @@ pub struct HeartbeatRequest {
     pub uptime_seconds: Option<i64>,
     pub collections: Option<Vec<String>>,
     pub can_source: Option<bool>,
+    pub storage_limit_gb: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,6 +256,10 @@ impl BeaconRegistry {
             sets.push(format!("can_source = ?{}", pos));
             pos += 1;
         }
+        if req.storage_limit_gb.is_some() {
+            sets.push(format!("storage_limit_gb = ?{}", pos));
+            pos += 1;
+        }
 
         // node_id placeholder
         let node_id_pos = pos;
@@ -277,6 +282,7 @@ impl BeaconRegistry {
             param_values.push(Box::new(serde_json::to_string(v).unwrap_or_default()));
         }
         if let Some(v) = req.can_source { param_values.push(Box::new(v as i64)); }
+        if let Some(v) = req.storage_limit_gb { param_values.push(Box::new(v)); }
         param_values.push(Box::new(req.node_id.clone()));
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
