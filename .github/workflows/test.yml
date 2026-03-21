@@ -54,3 +54,47 @@ jobs:
         env:
           GDAL_HOME: /opt/homebrew/opt/gdal
           PKG_CONFIG_PATH: /opt/homebrew/opt/gdal/lib/pkgconfig
+
+  test-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          channels: conda-forge
+          activate-environment: test
+          environment-file: ""
+      - name: Install GDAL
+        run: conda install -y gdal pkg-config clang libclang
+      - name: Set GDAL env
+        run: |
+          CONDA_PREFIX=$(conda info --base)/envs/test
+          echo "GDAL_HOME=$CONDA_PREFIX/Library" >> $GITHUB_ENV
+          echo "GDAL_LIB_DIR=$CONDA_PREFIX/Library/lib" >> $GITHUB_ENV
+          echo "GDAL_INCLUDE_DIR=$CONDA_PREFIX/Library/include" >> $GITHUB_ENV
+          echo "$CONDA_PREFIX/Library/bin" >> $GITHUB_PATH
+      - name: Create gdal.dll.lib alias
+        shell: pwsh
+        run: |
+          $lib = "C:\Miniconda\envs\test\Library\lib"
+          $bin = "C:\Miniconda\envs\test\Library\bin"
+          $src = Get-ChildItem "$lib" -Filter "gdal*.lib" | Select-Object -First 1
+          if ($src) {
+            Copy-Item $src.FullName "$lib\gdal.dll.lib" -Force
+            Copy-Item $src.FullName "$bin\gdal.dll.lib" -Force
+          } else {
+            Write-Error "No gdal*.lib found in $lib"
+          }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: earthgrid-core
+      - name: Build
+        working-directory: earthgrid-core
+        run: cargo build --all-targets
+      - name: Test
+        working-directory: earthgrid-core
+        run: cargo test -- --nocapture
