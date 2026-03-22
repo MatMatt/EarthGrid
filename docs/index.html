@@ -486,8 +486,10 @@ const EARTHGRID_API = (() => {
   // Same origin: detect path prefix (e.g. /earthgrid/)
   // The page is served at the root of the EarthGrid server,
   // but may be behind a reverse proxy with a prefix like /earthgrid/
+  // If served under /earthgrid/ui/, the API is at /earthgrid/
   const path = location.pathname.replace(/\/[^/]*$/, '');  // strip filename
-  return path === '/' ? '' : path.replace(/\/$/, '');
+  const apiPath = path.replace(/\/ui\/?$/, '');
+  return apiPath === '/' ? '' : apiPath.replace(/\/$/, '');
 })();
 
 let currentBoard = 'nodes';
