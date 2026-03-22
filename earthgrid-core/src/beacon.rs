@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::error::Result;
+use crate::beacon_federation::FederationState;
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -440,6 +441,51 @@ impl BeaconRegistry {
 Ok(affected)
     }
 
+    /// Federated upsert: insert or update a node from a remote beacon.
+    /// Bypasses URL-conflict checks (the remote beacon is authoritative).
+    pub fn federated_upsert(&self, node: &BeaconNode) -> Result<()> {
+        let collections_json = serde_json::to_string(&node.collections)?;
+        self.conn.execute(
+            "INSERT INTO beacon_nodes
+                (node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
+                 can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT(node_id) DO UPDATE SET
+                node_name = excluded.node_name,
+                url = excluded.url,
+                collections_json = excluded.collections_json,
+                item_count = excluded.item_count,
+                chunk_count = excluded.chunk_count,
+                chunks_bytes = excluded.chunks_bytes,
+                can_source = excluded.can_source,
+                storage_limit_gb = excluded.storage_limit_gb,
+                last_seen = excluded.last_seen,
+                sponsor_name = excluded.sponsor_name,
+                sponsor_url = excluded.sponsor_url,
+                node_url = excluded.node_url,
+                group_id = excluded.group_id,
+                uptime_seconds = excluded.uptime_seconds",
+            rusqlite::params![
+                node.node_id,
+                node.node_name,
+                node.url,
+                collections_json,
+                node.item_count,
+                node.chunk_count,
+                node.chunks_bytes,
+                node.can_source as i64,
+                node.storage_limit_gb,
+                node.last_seen,
+                node.sponsor_name,
+                node.sponsor_url,
+                node.node_url,
+                node.group_id,
+                node.uptime_seconds,
+            ],
+        )?;
+        Ok(())
+    }
+
     /// Record a point-in-time snapshot of grid-wide metrics.
     /// Called periodically (e.g. every heartbeat or every N minutes).
     pub fn record_grid_snapshot(&self) -> Result<()> {
@@ -499,6 +545,7 @@ Ok(affected)
 #[derive(Clone)]
 pub struct BeaconState {
     pub registry: Arc<Mutex<BeaconRegistry>>,
+    pub federation: Option<FederationState>,
 }
 
 async fn register_node(
@@ -613,6 +660,7 @@ pub fn beacon_router(state: BeaconState) -> Router {
         .route("/beacon/nodes/{node_id}", get(get_node))
         .route("/beacon/nodes/{node_id}", delete(remove_node))
         .route("/beacon/metrics", get(grid_metrics))
+        .route("/beacon/ws", axum::routing::any(crate::beacon_federation::ws_handler))
         .with_state(state)
 }
 
@@ -674,6 +722,8 @@ mod tests {
 
         let hb = HeartbeatRequest {
             node_id: "node-2".to_string(),
+            url: None,
+            node_name: None,
             item_count: Some(42),
             chunk_count: Some(200),
             chunks_bytes: Some(512_000),

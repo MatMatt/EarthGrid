@@ -20,6 +20,7 @@ use crate::{
     audit::AuditLog,
     auth::AuthConfig,
     beacon::{BeaconRegistry, BeaconState, beacon_router},
+    beacon_federation::{FederationState, spawn_peer_connections},
     catalog::Catalog,
     chunk_store::ChunkStore,
     gamification::GamificationEngine,
@@ -371,11 +372,26 @@ pub async fn serve(
         let beacon_db_path = data_dir.join("beacon.db");
         match BeaconRegistry::new(&beacon_db_path) {
             Ok(registry) => {
+                let beacon_id = uuid::Uuid::new_v4().to_string();
+                let federation = FederationState::new(beacon_id.clone());
                 let beacon_state = BeaconState {
                     registry: Arc::new(Mutex::new(registry)),
+                    federation: Some(federation),
                 };
-                app = app.merge(beacon_router(beacon_state));
-                println!("🔦 Beacon registry enabled ({})", beacon_db_path.display());
+                app = app.merge(beacon_router(beacon_state.clone()));
+                println!("🔦 Beacon registry enabled ({}) [beacon_id={}]", beacon_db_path.display(), &beacon_id[..8]);
+
+                // Federation: connect to peer beacons if configured
+                let peer_urls: Vec<String> = std::env::var("EARTHGRID_BEACON_PEERS")
+                    .unwrap_or_default()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !peer_urls.is_empty() {
+                    println!("🔗 Beacon federation: connecting to {} peer(s)", peer_urls.len());
+                    spawn_peer_connections(beacon_state.clone(), peer_urls);
+                }
             }
             Err(e) => {
                 eprintln!("⚠️  Failed to initialize beacon registry: {}", e);

@@ -228,7 +228,7 @@ pub(crate) async fn stats_json_alias(State(state): State<AppState>) -> impl Into
     }
     // Fallback: build combined stats with ingest + uptake
     let store = state.store.lock().await;
-    let s = store.stats().clone();
+    let _s = store.stats().clone();
     let total_chunks = store.chunk_count();
     let total_bytes = store.total_bytes();
     drop(store);

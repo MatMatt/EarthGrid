@@ -4,6 +4,7 @@ pub mod audit;
 pub mod auth;
 pub mod bandwidth;
 pub mod beacon;
+pub mod beacon_federation;
 pub mod catalog;
 pub mod chunk_store;
 pub mod client;
