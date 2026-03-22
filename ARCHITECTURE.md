@@ -189,32 +189,39 @@ Priority-based bandwidth allocation, inspired by Unix `nice`.
 - SHA-256 verification on every chunk transfer
 - Corrupt chunks automatically re-fetched from peers or source
 
-## Current State (v0.2.0)
+## Current State (v0.5.0)
 
 **Implemented:**
 - Content-addressed chunk storage (SHA-256, two-level dirs)
-- STAC catalog with spatial/temporal search
-- Basic peer federation (register, sync)
+- STAC catalog with spatial/temporal search (OGC API Features compliant)
+- Peer federation (register, sync, key exchange, item sync)
 - Beacon mode for node discovery
-- Two-tier API key authentication
-- Rust core library (21/21 tests passing)
+- Two-tier API key authentication + user auth
+- Full Rust implementation (single binary, axum HTTP server)
+- openEO Gateway (process graph parsing + execution)
+- Auto-ingest pipeline (fetch from CDSE/Element84 → chunk → propagate)
+- Statistics engine (access tracking, ingest history, uptake, coverage)
+- Bandwidth control and rate limiting
+- Smart replication (hot/cold data management)
+- Gamification system (leaderboard, achievements, challenges, economy)
+- Processing operations (NDVI, NDWI, NDSI, EVI, cloud mask, band math, true color)
+- Point extraction and chunk-map endpoints
+- Admin API (user management, collection management, node management)
+- GitHub Pages dashboard with auto-updated stats
 
 **Planned:**
-- [ ] openEO Gateway (process graph parsing + execution)
-- [ ] Source User management (encrypted credential pool)
-- [ ] Auto-ingest pipeline (download → chunk → propagate)
-- [ ] Statistics engine (access tracking, replication decisions)
-- [ ] Bandwidth nice levels
-- [ ] Replication factor management (auto-promote/demote)
-- [ ] Rust HTTP server (replacing Python prototype)
+- [ ] Replication factor auto-promote/demote based on access patterns
+- [ ] Mutual TLS for inter-node communication
+- [ ] Sentinel-1 GRD support (auto-warp during ingest)
+- [ ] Additional data sources (CMEMS, C3S/CDS)
 
 ## Tech Stack
 
-- **Current:** Python (FastAPI), Rust (core library)
+- **Runtime:** Rust (single binary, ~21 MB)
+- **HTTP:** axum (async, tokio-based)
 - **Storage:** Content-addressed filesystem (SHA-256)
-- **Metadata:** STAC catalog (JSON)
-- **Target:** Full Rust implementation
-- **Container:** Docker
+- **Metadata:** STAC catalog (SQLite-backed)
+- **Container:** Docker (alpine-based)
 - **License:** EUPL-1.2
 
 ## Migration: Python → Rust

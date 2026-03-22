@@ -2,6 +2,7 @@
 # Snapshot EarthGrid stats to docs/stats.json for GitHub Pages dashboard.
 # Aggregates data from ALL known nodes.
 # Run via cron: */10 * * * * /home/matteo/EarthGrid/scripts/update-stats.sh
+# Git commit only on the hour (minute 0) to reduce history pollution
 
 set -euo pipefail
 
@@ -137,10 +138,10 @@ with open('$HISTORY_FILE', 'a') as f:
 "
 
 # --- Auto-commit stats.json to GitHub Pages ---
+# Only commit on the hour (minute 0) to avoid polluting git history
 cd "$REPO"
-if git diff --quiet docs/stats.json 2>/dev/null; then
-  : # no changes
-else
+MINUTE=$(date +%M)
+if [ "$MINUTE" -lt 10 ] && ! git diff --quiet docs/stats.json 2>/dev/null; then
   git add docs/stats.json
   git commit -q -m "chore: auto-update stats.json [skip ci]"
   git push -q origin master 2>/dev/null || true

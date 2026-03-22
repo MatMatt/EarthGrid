@@ -1352,9 +1352,13 @@ async fn process_operations() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "operations": [
             {"name": "ndvi", "description": "Compute NDVI from red/NIR bands"},
-            {"name": "rgb", "description": "Render RGB composite"},
+            {"name": "ndwi", "description": "Compute NDWI from green/NIR bands"},
+            {"name": "ndsi", "description": "Compute NDSI from green/SWIR bands"},
+            {"name": "evi", "description": "Compute EVI from blue/red/NIR bands"},
+            {"name": "true_color", "description": "Render true-color RGB composite"},
             {"name": "cloud_mask", "description": "Apply cloud masking"},
             {"name": "rechunk", "description": "Re-tile and rechunk item"},
+            {"name": "band_math", "description": "Custom band math expression"},
         ]
     }))
 }
