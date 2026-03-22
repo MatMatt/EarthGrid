@@ -2,11 +2,14 @@
 //!
 //! Every chunk is identified by its SHA-256 hash. Two-level directory structure
 //! for efficient filesystem access: `ab/cd/abcd1234...`
+//!
+//! Uses SQLite for chunk indexing — instant startup instead of filesystem walk.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
@@ -44,18 +47,21 @@ impl Default for StoreStats {
 /// Content-addressed chunk store with SHA-256 hashing.
 ///
 /// Stores raw byte chunks on disk, addressed by their SHA-256 hash.
+/// Uses SQLite for fast indexing (chunk count, total bytes, listing).
 /// Provides integrity verification, storage limits, and usage stats.
 pub struct ChunkStore {
     store_path: PathBuf,
     limit_bytes: u64,
     stats: StoreStats,
     stats_path: PathBuf,
-    cached_chunk_count: usize,
-    cached_total_bytes: u64,
+    db: Connection,
 }
 
 impl ChunkStore {
     /// Create a new ChunkStore at the given path.
+    ///
+    /// On first run, migrates existing chunks from filesystem into SQLite index.
+    /// Subsequent starts are instant (no filesystem walk needed).
     ///
     /// # Arguments
     /// * `store_path` - Directory for chunk storage
@@ -73,38 +79,112 @@ impl ChunkStore {
             0
         };
 
-        // Scan store once at startup to populate caches
-        let mut cached_chunk_count = 0usize;
-        let mut cached_total_bytes = 0u64;
-        for entry in WalkDir::new(store_path)
+        // Open SQLite DB next to the store directory
+        let db_path = store_path
+            .parent()
+            .unwrap_or(store_path)
+            .join("chunks.db");
+        let db = Connection::open(&db_path)
+            ?;
+
+        // WAL mode for better concurrent read performance
+        db.execute_batch("PRAGMA journal_mode=WAL;")
+            ?;
+
+        // Create table if not exists
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS chunks (
+                hash TEXT PRIMARY KEY,
+                size_bytes INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            );",
+        )
+        ?;
+
+        let mut store = Self {
+            store_path: store_path.to_path_buf(),
+            limit_bytes,
+            stats,
+            stats_path,
+            db,
+        };
+
+        // Migrate from filesystem if DB is empty but store has files
+        store.migrate_from_filesystem()?;
+
+        let count = store.chunk_count();
+        let bytes = store.total_bytes();
+        println!(
+            "📦 ChunkStore: {} chunks, {:.1} GB (SQLite index)",
+            count,
+            bytes as f64 / 1_073_741_824.0
+        );
+
+        Ok(store)
+    }
+
+    /// One-time migration: scan filesystem and populate SQLite index.
+    ///
+    /// Only runs if the DB is empty and the store directory contains chunks.
+    fn migrate_from_filesystem(&mut self) -> Result<()> {
+        let count: i64 = self.db.query_row(
+            "SELECT count(*) FROM chunks",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        if count > 0 {
+            return Ok(()); // DB already populated
+        }
+
+        // Check if there are any chunk files
+        let has_files = WalkDir::new(&self.store_path)
+            .max_depth(3)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_type().is_file() && e.file_name().to_string_lossy().len() == 64);
+
+        if !has_files {
+            return Ok(()); // Fresh store, nothing to migrate
+        }
+
+        println!("🔄 Migrating chunk index to SQLite (one-time operation)...");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        let tx = self.db.transaction()
+            ?;
+
+        let mut migrated = 0usize;
+        for entry in WalkDir::new(&self.store_path)
             .into_iter()
             .filter_map(|e| e.ok())
         {
             if entry.file_type().is_file() {
                 let name = entry.file_name().to_string_lossy();
                 if name.len() == 64 {
-                    cached_chunk_count += 1;
-                    if let Ok(meta) = entry.metadata() {
-                        cached_total_bytes += meta.len();
+                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0) as i64;
+                    tx.execute(
+                        "INSERT OR IGNORE INTO chunks (hash, size_bytes, created_at) VALUES (?1, ?2, ?3)",
+                        params![name.as_ref(), size, now],
+                    )?;
+
+                    migrated += 1;
+                    if migrated % 100_000 == 0 {
+                        println!("  ... migrated {} chunks", migrated);
                     }
                 }
             }
         }
 
-        println!(
-            "📦 ChunkStore: {} chunks, {:.1} GB",
-            cached_chunk_count,
-            cached_total_bytes as f64 / 1_073_741_824.0
-        );
+        tx.commit()
+            ?;
 
-        Ok(Self {
-            store_path: store_path.to_path_buf(),
-            limit_bytes,
-            stats,
-            stats_path,
-            cached_chunk_count,
-            cached_total_bytes,
-        })
+        println!("✅ Migration complete: {} chunks indexed", migrated);
+        Ok(())
     }
 
     /// Compute SHA-256 hash of raw bytes.
@@ -137,15 +217,22 @@ impl ChunkStore {
             }
         }
 
-        // Write chunk
+        // Write chunk to disk
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(&path, data)?;
 
-        // Update caches
-        self.cached_chunk_count += 1;
-        self.cached_total_bytes += data.len() as u64;
+        // Insert into SQLite index
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        self.db.execute(
+            "INSERT OR IGNORE INTO chunks (hash, size_bytes, created_at) VALUES (?1, ?2, ?3)",
+            params![hash, data.len() as i64, now],
+        )?;
 
         // Update stats
         self.stats.chunks_stored += 1;
@@ -202,43 +289,54 @@ impl ChunkStore {
     pub fn delete(&mut self, hash: &str) -> Result<bool> {
         let path = self.chunk_path(hash);
         if path.exists() {
-            // Get file size before deleting for cache update
-            let file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             fs::remove_file(&path)?;
-            // Update caches
-            self.cached_chunk_count = self.cached_chunk_count.saturating_sub(1);
-            self.cached_total_bytes = self.cached_total_bytes.saturating_sub(file_size);
+            // Remove from SQLite index
+            self.db.execute(
+                "DELETE FROM chunks WHERE hash = ?1",
+                params![hash],
+            )?;
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
-    /// List all chunk hashes in the store.
-    pub fn list_chunks(&self) -> Vec<String> {
-        let mut chunks = Vec::new();
-        for entry in WalkDir::new(&self.store_path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if entry.file_type().is_file() {
-                let name = entry.file_name().to_string_lossy();
-                if name.len() == 64 {
-                    chunks.push(name.to_string());
-                }
-            }
+    /// List chunk hashes in the store.
+    ///
+    /// # Arguments
+    /// * `limit` - Optional limit on number of results
+    pub fn list_chunks(&self, limit: Option<usize>) -> Vec<String> {
+        let query = match limit {
+            Some(n) => format!("SELECT hash FROM chunks LIMIT {}", n),
+            None => "SELECT hash FROM chunks".to_string(),
+        };
+        let mut stmt = match self.db.prepare(&query) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0));
+        match rows {
+            Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
         }
-        chunks
     }
 
-    /// Number of chunks in the store (cached).
+    /// Number of chunks in the store (from SQLite).
     pub fn chunk_count(&self) -> usize {
-        self.cached_chunk_count
+        self.db.query_row(
+            "SELECT count(*) FROM chunks",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) as usize
     }
 
-    /// Total bytes used by all chunks (cached).
+    /// Total bytes used by all chunks (from SQLite).
     pub fn total_bytes(&self) -> u64 {
-        self.cached_total_bytes
+        self.db.query_row(
+            "SELECT COALESCE(sum(size_bytes), 0) FROM chunks",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) as u64
     }
 
     /// Get current store statistics.
@@ -338,6 +436,7 @@ mod tests {
         assert!(store.has(&hash));
         assert!(store.delete(&hash).unwrap());
         assert!(!store.has(&hash));
+        assert_eq!(store.chunk_count(), 0);
     }
 
     #[test]
@@ -346,7 +445,16 @@ mod tests {
         store.put(b"chunk1").unwrap();
         store.put(b"chunk2").unwrap();
         store.put(b"chunk3").unwrap();
-        assert_eq!(store.list_chunks().len(), 3);
+        assert_eq!(store.list_chunks(None).len(), 3);
+    }
+
+    #[test]
+    fn test_list_chunks_with_limit() {
+        let (mut store, _dir) = test_store();
+        store.put(b"chunk1").unwrap();
+        store.put(b"chunk2").unwrap();
+        store.put(b"chunk3").unwrap();
+        assert_eq!(store.list_chunks(Some(2)).len(), 2);
     }
 
     #[test]
@@ -378,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cached_counts() {
+    fn test_chunk_count_and_bytes() {
         let (mut store, _dir) = test_store();
         assert_eq!(store.chunk_count(), 0);
         assert_eq!(store.total_bytes(), 0);
@@ -393,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_updates_cache() {
+    fn test_delete_updates_counts() {
         let (mut store, _dir) = test_store();
         let data = b"to be deleted";
         let hash = store.put(data).unwrap();
@@ -402,5 +510,30 @@ mod tests {
         store.delete(&hash).unwrap();
         assert_eq!(store.chunk_count(), 0);
         assert_eq!(store.total_bytes(), 0);
+    }
+
+    #[test]
+    fn test_migration_from_filesystem() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("chunks");
+
+        // Create a store, add chunks, then drop it
+        {
+            let mut store = ChunkStore::new(&store_path, 0.0).unwrap();
+            store.put(b"migrate1").unwrap();
+            store.put(b"migrate2").unwrap();
+            store.put(b"migrate3").unwrap();
+            assert_eq!(store.chunk_count(), 3);
+        }
+
+        // Delete the DB to simulate pre-SQLite state
+        let db_path = dir.path().join("chunks.db");
+        let _ = fs::remove_file(&db_path);
+        let _ = fs::remove_file(db_path.with_extension("db-wal"));
+        let _ = fs::remove_file(db_path.with_extension("db-shm"));
+
+        // Re-open — should auto-migrate from filesystem
+        let store = ChunkStore::new(&store_path, 0.0).unwrap();
+        assert_eq!(store.chunk_count(), 3);
     }
 }

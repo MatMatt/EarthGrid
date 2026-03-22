@@ -1,5 +1,5 @@
 {
-  "updated": "2026-03-22T05:10:02Z",
+  "updated": "2026-03-22T05:50:01Z",
   "version": "0.5.0",
   "network": {
     "nodes_alive": 2,
@@ -1602,8 +1602,20 @@
       "name": "ndvi"
     },
     {
-      "description": "Render RGB composite",
-      "name": "rgb"
+      "description": "Compute NDWI from green/NIR bands",
+      "name": "ndwi"
+    },
+    {
+      "description": "Compute NDSI from green/SWIR bands",
+      "name": "ndsi"
+    },
+    {
+      "description": "Compute EVI from blue/red/NIR bands",
+      "name": "evi"
+    },
+    {
+      "description": "Render true-color RGB composite",
+      "name": "true_color"
     },
     {
       "description": "Apply cloud masking",
@@ -1612,6 +1624,10 @@
     {
       "description": "Re-tile and rechunk item",
       "name": "rechunk"
+    },
+    {
+      "description": "Custom band math expression",
+      "name": "band_math"
     }
   ],
   "gamification": {
@@ -1676,10 +1692,10 @@
     },
     "economy": {
       "data_served_gb": 0.0,
-      "estimated_replication_factor": 1.0,
+      "estimated_replication_factor": 0.0,
       "factors": {
         "data_redundancy": {
-          "score": 15.0,
+          "score": 0.0,
           "weight": 0.25
         },
         "data_reuse": {
@@ -1687,7 +1703,7 @@
           "weight": 0.2
         },
         "node_diversity": {
-          "score": 20.0,
+          "score": 0.0,
           "weight": 0.25
         },
         "storage_headroom": {
@@ -1695,11 +1711,11 @@
           "weight": 0.3
         }
       },
-      "label": "Growing",
-      "nodes_alive": 1,
+      "label": "Needs attention",
+      "nodes_alive": 0,
       "nodes_total": 2,
-      "score": 40,
-      "status": "yellow",
+      "score": 31,
+      "status": "red",
       "storage_pledged_gb": 5070.0,
       "storage_used_gb": 795.4,
       "storage_utilization_pct": 16.0
@@ -1713,8 +1729,8 @@
           "metric": "items_ingested",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "18h 49m",
-          "remaining_seconds": 67797.9454023838,
+          "remaining_human": "18h 9m",
+          "remaining_seconds": 65398.48196220398,
           "start_ts": 1773619200.0,
           "title": "Weekly Ingest Champion",
           "top3": []
@@ -1726,8 +1742,8 @@
           "metric": "gb_stored",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "18h 49m",
-          "remaining_seconds": 67797.9454023838,
+          "remaining_human": "18h 9m",
+          "remaining_seconds": 65398.48196220398,
           "start_ts": 1773619200.0,
           "title": "Storage Hero",
           "top3": []
@@ -1739,8 +1755,8 @@
           "metric": "gb_served",
           "participants": 0,
           "period": "weekly",
-          "remaining_human": "18h 49m",
-          "remaining_seconds": 67797.9454023838,
+          "remaining_human": "18h 9m",
+          "remaining_seconds": 65398.48196220398,
           "start_ts": 1773619200.0,
           "title": "Serving Star",
           "top3": []
@@ -1753,7 +1769,7 @@
           "participants": 0,
           "period": "monthly",
           "remaining_human": "9d 18h",
-          "remaining_seconds": 845397.9454023838,
+          "remaining_seconds": 842998.481962204,
           "start_ts": 1772323200.0,
           "title": "Monthly Marathon",
           "top3": []

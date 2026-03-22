@@ -23,8 +23,7 @@ pub(crate) async fn get_chunk(State(state): State<AppState>, Path(sha): Path<Str
 pub(crate) async fn list_chunks(State(state): State<AppState>, Query(q): Query<LimitQuery>) -> impl IntoResponse {
     let store = state.store.lock().await;
     let limit = q.limit.unwrap_or(100).min(10000);
-    let mut chunks = store.list_chunks();
-    chunks.truncate(limit);
+    let chunks = store.list_chunks(Some(limit));
     let count = chunks.len();
     Json(serde_json::json!({"chunks": chunks, "count": count}))
 }

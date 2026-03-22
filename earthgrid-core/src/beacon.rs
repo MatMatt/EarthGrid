@@ -281,7 +281,6 @@ impl BeaconRegistry {
             pos += 1;
         }
         if req.storage_limit_gb.is_some() {
-            sets.push(format!("storage_limit_gb = ?{}", pos));
             pos += 1;
         }
 
@@ -634,6 +633,7 @@ mod tests {
             uptime_seconds: Some(3600),
             collections: None,
             can_source: None,
+            storage_limit_gb: None,
         };
         let updated = reg.heartbeat(&hb).unwrap().unwrap();
         assert_eq!(updated.item_count, 42);
@@ -653,7 +653,7 @@ mod tests {
                 chunk_count: None,
                 chunks_bytes: None,
                 can_source: None,
-                storage_limit_gb: None,
+            storage_limit_gb: None,
                 sponsor_name: None,
                 sponsor_url: None,
                 node_url: None,
