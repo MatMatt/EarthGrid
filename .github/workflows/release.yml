@@ -12,25 +12,24 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgdal-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+          sudo apt-get install -y libgdal-dev libclang-dev libnetcdf-dev
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: earthgrid-core
       - name: Build
         working-directory: earthgrid-core
         run: cargo build --release
-      - name: Strip binaries
+      - name: Strip & package
         run: |
-          strip earthgrid-core/target/release/earthgrid-core
-          strip earthgrid-core/target/release/earthgrid-tray
-      - name: Package
-        run: |
+          strip earthgrid-core/target/release/earthgrid
           mkdir -p dist
-          cp earthgrid-core/target/release/earthgrid-core dist/earthgrid-linux-x86_64
-          cp earthgrid-core/target/release/earthgrid-tray dist/earthgrid-tray-linux-x86_64
-          cd dist && tar czf earthgrid-linux-x86_64.tar.gz earthgrid-linux-x86_64 earthgrid-tray-linux-x86_64
+          cp earthgrid-core/target/release/earthgrid dist/earthgrid-linux-x86_64
+          cd dist && tar czf earthgrid-linux-x86_64.tar.gz earthgrid-linux-x86_64
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
@@ -39,94 +38,32 @@ jobs:
   build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install dependencies
-        run: brew install gdal
+        run: brew install gdal pkg-config netcdf
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build all binaries
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: earthgrid-core
+      - name: Build
         working-directory: earthgrid-core
         run: cargo build --release
-      - name: Strip binaries
+        env:
+          GDAL_HOME: /opt/homebrew/opt/gdal
+          PKG_CONFIG_PATH: /opt/homebrew/opt/gdal/lib/pkgconfig
+      - name: Strip & package
         run: |
-          strip earthgrid-core/target/release/earthgrid-core
-          strip earthgrid-core/target/release/earthgrid-tray
-      - name: Package
-        run: |
+          strip earthgrid-core/target/release/earthgrid
           mkdir -p dist
-          cp earthgrid-core/target/release/earthgrid-core dist/earthgrid-macos-arm64
-          cp earthgrid-core/target/release/earthgrid-tray dist/earthgrid-tray-macos-arm64
-          cd dist && tar czf earthgrid-macos-arm64.tar.gz earthgrid-macos-arm64 earthgrid-tray-macos-arm64
+          cp earthgrid-core/target/release/earthgrid dist/earthgrid-macos-arm64
+          cd dist && tar czf earthgrid-macos-arm64.tar.gz earthgrid-macos-arm64
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
           path: dist/earthgrid-macos-arm64.tar.gz
 
-  build-windows:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@v4
-      - uses: conda-incubator/setup-miniconda@v3
-        with:
-          channels: conda-forge
-          activate-environment: build
-      - name: Install GDAL
-        shell: bash -l {0}
-        run: conda install -y gdal libgdal
-      - name: Set GDAL env
-        shell: bash -l {0}
-        run: |
-          CONDA_PREFIX=$(conda info --base)/envs/build
-          echo "GDAL_HOME=$CONDA_PREFIX/Library" >> $GITHUB_ENV
-          echo "GDAL_LIB_DIR=$CONDA_PREFIX/Library/lib" >> $GITHUB_ENV
-          echo "GDAL_INCLUDE_DIR=$CONDA_PREFIX/Library/include" >> $GITHUB_ENV
-          echo "$CONDA_PREFIX/Library/bin" >> $GITHUB_PATH
-      - name: Create gdal.dll.lib alias
-        shell: pwsh
-        run: |
-          $lib = "C:\Miniconda\envs\build\Library\lib"
-          $bin = "C:\Miniconda\envs\build\Library\bin"
-          Write-Host "=== lib/ contents (gdal*) ==="
-          Get-ChildItem "$lib" -Filter "gdal*" | Select-Object Name | Format-Table
-          Write-Host "=== bin/ contents (gdal*) ==="
-          Get-ChildItem "$bin" -Filter "gdal*" | Select-Object Name | Format-Table
-          # Find the import lib (gdal_i.lib or gdal.lib)
-          $src = Get-ChildItem "$lib" -Filter "gdal*.lib" | Select-Object -First 1
-          if ($src) {
-            Write-Host "Source: $($src.FullName)"
-            # Place copy in both lib and bin so linker finds it regardless
-            Copy-Item $src.FullName "$lib\gdal.dll.lib" -Force
-            Copy-Item $src.FullName "$bin\gdal.dll.lib" -Force
-            Write-Host "Placed gdal.dll.lib in lib/ and bin/"
-          } else {
-            Write-Error "No gdal*.lib found!"
-          }
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build
-        working-directory: earthgrid-core
-        shell: bash -l {0}
-        run: |
-          export LIBPATH="C:\\Miniconda\\envs\\build\\Library\\lib;C:\\Miniconda\\envs\\build\\Library\\bin"
-          cargo build --release
-        env:
-          GDAL_HOME: C:\Miniconda\envs\build\Library
-          GDAL_LIB_DIR: C:\Miniconda\envs\build\Library\lib
-          GDAL_INCLUDE_DIR: C:\Miniconda\envs\build\Library\include
-      - name: Package
-        run: |
-          mkdir dist
-          copy earthgrid-core\target\release\earthgrid-core.exe dist\earthgrid-windows-x86_64.exe
-          copy earthgrid-core\target\release\earthgrid-tray.exe dist\earthgrid-tray-windows-x86_64.exe
-          Compress-Archive -Path dist\earthgrid-windows-x86_64.exe,dist\earthgrid-tray-windows-x86_64.exe -DestinationPath dist\earthgrid-windows-x86_64.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-x86_64
-          path: dist/earthgrid-windows-x86_64.zip
-
   release:
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -141,5 +78,4 @@ jobs:
           files: |
             artifacts/linux-x86_64/earthgrid-linux-x86_64.tar.gz
             artifacts/macos-arm64/earthgrid-macos-arm64.tar.gz
-            artifacts/windows-x86_64/earthgrid-windows-x86_64.zip
           generate_release_notes: true
