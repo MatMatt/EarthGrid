@@ -44,7 +44,7 @@ pub(crate) async fn stac_landing(
     // Only beacon nodes serve the HTML info page; regular nodes always return STAC JSON
     let accept = headers.get("accept").and_then(|v| v.to_str().ok()).unwrap_or("");
     if state.is_beacon && accept.contains("text/html") && !accept.starts_with("application/json") {
-        return crate::routes::misc::landing_html(State(state)).await.into_response();
+        return crate::routes::misc::landing_html().await.into_response();
     }
     stac_landing_json(State(state)).await.into_response()
 }

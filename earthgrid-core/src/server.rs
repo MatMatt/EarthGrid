@@ -188,7 +188,7 @@ pub fn router(state: AppState) -> Router {
         .route("/federation/users", get(crate::routes::federation::federation_list_users).post(crate::routes::federation::federation_import_users))
         // HTML dashboard + UI
         .route("/dashboard", get(crate::routes::misc::dashboard))
-        .route("/ui", get(crate::routes::misc::ui_page))
+        .route("/ui", get(crate::routes::misc::dashboard))
         // openEO compatibility aliases (without /stac/ prefix)
         .route("/collections", get(crate::routes::stac::list_collections))
         .route("/collections/{id}", get(crate::routes::stac::get_collection))

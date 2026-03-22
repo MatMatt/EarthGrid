@@ -134,90 +134,15 @@ pub(crate) async fn download_item(
 // ---------------------------------------------------------------------------
 
 /// GET / (HTML) — Info page about the grid (like GH Pages but with live API)
-pub(crate) async fn landing_html(State(_state): State<AppState>) -> impl IntoResponse {
-    // Serve the same page as GH Pages docs/index.html
-    // but it will use same-origin API (EARTHGRID_API = '')
-    let html = include_str!("../../../docs/index.html");
-    axum::response::Html(html)
+pub(crate) async fn landing_html() -> impl IntoResponse {
+    axum::response::Redirect::permanent("/dashboard").into_response()
 }
 
 
-pub(crate) async fn dashboard(State(state): State<AppState>) -> impl IntoResponse {
-    let catalog = state.catalog.lock().await;
-    let store = state.store.lock().await;
-    let item_count = catalog.item_count(None).unwrap_or(0);
-    let collections = catalog.list_collections().unwrap_or_default();
-    let total_bytes = store.total_bytes();
-    let chunk_count = store.chunk_count();
-    drop(catalog);
-    drop(store);
-
-    let cols_html: String = collections.iter().map(|c| {
-        format!("<li><strong>{}</strong> — {}</li>", c.id, c.description)
-    }).collect::<Vec<_>>().join("\n");
-
-    let html = format!(r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="earthgrid-api" content="">
-<title>EarthGrid Node Dashboard</title>
-<style>
-  body {{ font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #0a0a1a; color: #e0e0e0; }}
-  h1 {{ color: #4fc3f7; }}
-  .card {{ background: #111; border: 1px solid #222; border-radius: 8px; padding: 16px; margin: 12px 0; }}
-  .stat {{ display: inline-block; margin: 8px 16px 8px 0; }}
-  .stat .val {{ font-size: 2em; font-weight: bold; color: #4fc3f7; }}
-  .stat .lbl {{ color: #888; font-size: 0.85em; }}
-  ul {{ list-style: none; padding: 0; }}
-  li {{ padding: 4px 0; border-bottom: 1px solid #222; }}
-  a {{ color: #4fc3f7; }}
-</style>
-</head>
-<body>
-<h1>🌍 EarthGrid Node</h1>
-<div class="card">
-  <h2>{node_name}</h2>
-  <div class="stat"><div class="val">{item_count}</div><div class="lbl">Items</div></div>
-  <div class="stat"><div class="val">{chunk_count}</div><div class="lbl">Chunks</div></div>
-  <div class="stat"><div class="val">{storage_gb:.1} GB</div><div class="lbl">Storage Used</div></div>
-  <div class="stat"><div class="val">{col_count}</div><div class="lbl">Collections</div></div>
-</div>
-<div class="card">
-  <h3>Collections</h3>
-  <ul>{cols_html}</ul>
-</div>
-<div class="card">
-  <h3>Quick Links</h3>
-  <ul>
-    <li><a href="/node-info">/node-info</a> — Node info JSON</li>
-    <li><a href="/stats">/stats</a> — Statistics</li>
-    <li><a href="/stac/collections">/stac/collections</a> — STAC Collections</li>
-    <li><a href="/peers">/peers</a> — Federation peers</li>
-    <li><a href="/ui">/ui</a> — Management UI</li>
-  </ul>
-</div>
-<p style="color:#555;font-size:0.8em">EarthGrid v{version} | Node ID: {node_id}</p>
-</body>
-</html>"#,
-        node_name = state.node_name,
-        item_count = item_count,
-        chunk_count = chunk_count,
-        storage_gb = total_bytes as f64 / 1_073_741_824.0,
-        col_count = collections.len(),
-        cols_html = cols_html,
-        version = state.version,
-        node_id = state.node_id,
-    );
-
-    Html(html).into_response()
-}
-
-
-pub(crate) async fn ui_page() -> impl IntoResponse {
+pub(crate) async fn dashboard() -> impl IntoResponse {
     Html(include_str!("../../assets/ui.html")).into_response()
 }
+
 
 
 // nodes list — mirrors /peers but returns node-centric view
