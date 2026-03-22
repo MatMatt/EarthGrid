@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EarthGrid — Decentralized Geodata Network</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --orange: #db6d28;
+  --radius: 10px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Header */
+.header {
+  background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 40px 20px;
+  text-align: center;
+}
+.header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.header h1 svg { flex-shrink: 0; }
+.header .subtitle {
+  color: var(--muted);
+  font-size: 15px;
+  max-width: 600px;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+.header .version {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Container */
+.container { max-width: 1000px; margin: 0 auto; padding: 24px 20px; }
+
+/* Section */
+.section { margin-bottom: 32px; }
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Grid */
+.grid { display: grid; gap: 14px; }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 768px) {
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+}
+
+/* Stat card */
+.stat {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.stat-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+}
+.stat-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+/* Card */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+/* Node card */
+.node-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.node-info { flex: 1; }
+.node-name { font-weight: 600; font-size: 15px; }
+.node-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.node-stats-row { display: flex; gap: 16px; margin-top: 6px; flex-wrap: wrap; }
+.node-stat-item { font-size: 12px; color: var(--muted); }
+.node-stat-item span { color: var(--text); font-weight: 600; }
+
+/* Status dot */
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.red { background: var(--red); }
+.dot.yellow { background: var(--yellow); }
+
+/* Tag */
+.tag {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.tag.green { background: rgba(63,185,80,0.1); border: 1px solid rgba(63,185,80,0.3); color: var(--green); }
+.tag.red { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); color: var(--red); }
+.tag.blue { background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.3); color: var(--accent); }
+.tag.yellow { background: rgba(210,153,34,0.1); border: 1px solid rgba(210,153,34,0.3); color: var(--yellow); }
+
+/* Leaderboard */
+.lb-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  gap: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.lb-row:last-child { border-bottom: none; }
+.lb-rank {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--muted);
+  width: 30px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.lb-rank.gold { color: #f0c040; }
+.lb-rank.silver { color: #c0c0c0; }
+.lb-rank.bronze { color: #cd7f32; }
+.lb-name { font-weight: 600; flex: 1; }
+.lb-score { font-weight: 700; color: var(--accent); font-size: 15px; }
+.lb-detail { font-size: 12px; color: var(--muted); }
+
+/* Health bar */
+.health-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+.health-label { font-size: 13px; color: var(--muted); width: 120px; flex-shrink: 0; }
+.health-track { flex: 1; background: var(--bg); border-radius: 4px; height: 8px; overflow: hidden; }
+.health-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+.health-fill.green { background: var(--green); }
+.health-fill.yellow { background: var(--yellow); }
+.health-fill.red { background: var(--red); }
+.health-value { font-size: 13px; font-weight: 600; width: 50px; text-align: right; flex-shrink: 0; }
+
+/* Operations */
+.op-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.op-tag {
+  background: rgba(88,166,255,0.08);
+  border: 1px solid rgba(88,166,255,0.2);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Footer */
+.footer {
+  text-align: center;
+  padding: 30px 20px;
+  color: var(--muted);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+.footer a { color: var(--accent); }
+
+/* Loading */
+.loading { text-align: center; padding: 40px; color: var(--muted); }
+.spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* STAC badge */
+.stac-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(63,185,80,0.08);
+  border: 1px solid rgba(63,185,80,0.2);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--green);
+  font-weight: 500;
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+    EarthGrid
+  </h1>
+  <div class="subtitle">Decentralized peer-to-peer network for geospatial data. STAC-native, chunk-based storage, federated search.</div>
+  <div class="version" id="version-info">Loading...</div>
+</div>
+
+<div class="container">
+
+  <!-- Grid Stats -->
+  <div class="section">
+    <div class="section-title">📊 Network Overview</div>
+    <div class="grid grid-4" id="grid-stats">
+      <div class="stat"><div class="stat-label">Nodes Online</div><div class="stat-value" id="s-nodes">—</div><div class="stat-sub" id="s-nodes-sub">loading</div></div>
+      <div class="stat"><div class="stat-label">Total Items</div><div class="stat-value" id="s-items">—</div><div class="stat-sub" id="s-items-sub">STAC items</div></div>
+      <div class="stat"><div class="stat-label">Total Storage</div><div class="stat-value" id="s-storage">—</div><div class="stat-sub" id="s-storage-sub">across all nodes</div></div>
+      <div class="stat"><div class="stat-label">Network Score</div><div class="stat-value" id="s-score">—</div><div class="stat-sub" id="s-score-sub">gamification points</div></div>
+    </div>
+  </div>
+
+  <!-- Grid Health -->
+  <div class="section">
+    <div class="section-title">🏥 Grid Health</div>
+    <div class="card" id="health-card">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- Nodes -->
+  <div class="section">
+    <div class="section-title">🖥️ Active Nodes</div>
+    <div id="nodes-list">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- Leaderboard -->
+  <div class="section">
+    <div class="section-title">🏆 Leaderboard</div>
+    <div class="card" id="leaderboard">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- Collections -->
+  <div class="section">
+    <div class="section-title">🛰️ Available Data</div>
+    <div id="collections-info">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- Operations -->
+  <div class="section">
+    <div class="section-title">⚙️ Processing Operations</div>
+    <div class="card" id="operations">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- API -->
+  <div class="section">
+    <div class="section-title">🔗 API Access</div>
+    <div class="card">
+      <p style="margin-bottom:10px;color:var(--muted)">EarthGrid exposes a standard STAC API. Connect with any STAC client:</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+        <span class="stac-badge">STAC v1.0.0</span>
+        <span class="stac-badge">OGC Features</span>
+        <span class="stac-badge">Item Search</span>
+      </div>
+      <div style="background:var(--bg);border-radius:6px;padding:12px;font-family:'SF Mono','Fira Code',monospace;font-size:13px;color:var(--accent);overflow-x:auto">
+        <span style="color:var(--muted)"># STAC catalog root</span><br>
+        curl <span id="api-url">https://mattiuzzi.zapto.org/earthgrid</span>/stac/collections<br><br>
+        <span style="color:var(--muted)"># Search items</span><br>
+        curl "<span id="api-url2">https://mattiuzzi.zapto.org/earthgrid</span>/stac/search?collections=sentinel-2-l2a&amp;bbox=11,46,12,47"
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  EarthGrid — Open-source decentralized geodata network · <a href="https://github.com/MatMatt/EarthGrid" target="_blank">GitHub</a> · License: EUPL-1.2<br>
+  <span id="last-updated" style="font-size:11px"></span>
+</div>
+
+<script>
+const BASE = '';
+
+function fmt_num(n) {
+  if (n == null) return '—';
+  return n.toLocaleString('en-US');
+}
+
+function fmt_bytes(b) {
+  if (!b) return '0 B';
+  const u = ['B','KB','MB','GB','TB','PB'];
+  let i = 0;
+  let v = b;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return v.toFixed(i > 0 ? 1 : 0) + ' ' + u[i];
+}
+
+function timeAgo(ts) {
+  const diff = Date.now() / 1000 - ts;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+async function api(path) {
+  const r = await fetch(BASE + path);
+  if (!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+
+async function loadAll() {
+  try {
+    // Parallel fetch
+    const [nodes, leaderboard, gamStats, economy, operations, nodeInfo] = await Promise.all([
+      api('/beacon/nodes').catch(() => ({ nodes: [] })),
+      api('/gamification/leaderboard?type=nodes&limit=20').catch(() => ({ leaderboard: [] })),
+      api('/gamification/stats').catch(() => ({})),
+      api('/gamification/economy').catch(() => ({})),
+      api('/process/operations').catch(() => ({ operations: [] })),
+      api('/node-info').catch(() => ({})),
+    ]);
+
+    const allNodes = nodes.nodes || [];
+    const alive = allNodes.filter(n => n.alive !== false);
+    const totalItems = allNodes.reduce((s, n) => s + (n.item_count || 0), 0);
+    const totalChunks = allNodes.reduce((s, n) => s + (n.chunk_count || 0), 0);
+    const totalBytes = allNodes.reduce((s, n) => s + (n.chunks_bytes || 0), 0);
+    const totalPledged = allNodes.reduce((s, n) => s + (n.storage_limit_gb || 0), 0);
+
+    // Version
+    document.getElementById('version-info').textContent = `v${nodeInfo.version || '?'} · ${allNodes.length} nodes · ${fmt_bytes(totalBytes)} stored`;
+
+    // Stats
+    document.getElementById('s-nodes').textContent = alive.length;
+    document.getElementById('s-nodes-sub').textContent = `of ${allNodes.length} registered`;
+    document.getElementById('s-items').textContent = fmt_num(totalItems);
+    document.getElementById('s-items-sub').textContent = fmt_num(totalChunks) + ' chunks';
+    document.getElementById('s-storage').textContent = fmt_bytes(totalBytes);
+    document.getElementById('s-storage-sub').textContent = fmt_num(Math.round(totalPledged)) + ' GB pledged';
+    document.getElementById('s-score').textContent = fmt_num(gamStats.total_network_score || 0);
+    document.getElementById('s-score-sub').textContent = (gamStats.opted_in_nodes || 0) + ' contributing nodes';
+
+    // Health
+    const usedPct = totalPledged > 0 ? (totalBytes / (totalPledged * 1073741824) * 100) : 0;
+    const nodePct = allNodes.length > 0 ? (alive.length / allNodes.length * 100) : 0;
+    const repl = economy.estimated_replication_factor || 1;
+    const healthLabel = economy.label || 'Unknown';
+    const healthColor = economy.status === 'green' ? 'green' : economy.status === 'yellow' ? 'yellow' : 'red';
+
+    document.getElementById('health-card').innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <span class="dot ${healthColor}"></span>
+        <span style="font-weight:600;font-size:15px">Grid Status: ${healthLabel}</span>
+        <span class="tag ${healthColor}" style="margin-left:auto">${economy.score || 0}/100</span>
+      </div>
+      <div class="health-bar">
+        <div class="health-label">Node Availability</div>
+        <div class="health-track"><div class="health-fill ${nodePct > 80 ? 'green' : nodePct > 50 ? 'yellow' : 'red'}" style="width:${nodePct}%"></div></div>
+        <div class="health-value">${nodePct.toFixed(0)}%</div>
+      </div>
+      <div class="health-bar">
+        <div class="health-label">Storage Used</div>
+        <div class="health-track"><div class="health-fill ${usedPct < 70 ? 'green' : usedPct < 90 ? 'yellow' : 'red'}" style="width:${Math.min(usedPct, 100)}%"></div></div>
+        <div class="health-value">${usedPct.toFixed(1)}%</div>
+      </div>
+      <div class="health-bar">
+        <div class="health-label">Replication</div>
+        <div class="health-track"><div class="health-fill ${repl >= 2 ? 'green' : repl >= 1.5 ? 'yellow' : 'red'}" style="width:${Math.min(repl / 3 * 100, 100)}%"></div></div>
+        <div class="health-value">${repl.toFixed(1)}x</div>
+      </div>
+    `;
+
+    // Nodes
+    if (!allNodes.length) {
+      document.getElementById('nodes-list').innerHTML = '<div class="card" style="text-align:center;color:var(--muted)">No nodes registered</div>';
+    } else {
+      let html = '<div style="display:flex;flex-direction:column;gap:10px">';
+      for (const n of allNodes) {
+        const isAlive = n.alive !== false;
+        const collections = (n.collections || []).slice(0, 5);
+        html += `<div class="node-card">
+          <div class="node-info">
+            <div class="node-name">${n.node_name || 'Unknown'}</div>
+            <div class="node-meta">Last seen ${timeAgo(n.last_seen)}</div>
+            <div class="node-stats-row">
+              <div class="node-stat-item">Items: <span>${fmt_num(n.item_count)}</span></div>
+              <div class="node-stat-item">Chunks: <span>${fmt_num(n.chunk_count)}</span></div>
+              <div class="node-stat-item">Storage: <span>${fmt_bytes(n.chunks_bytes)}</span></div>
+              <div class="node-stat-item">Pledged: <span>${fmt_num(n.storage_limit_gb)} GB</span></div>
+            </div>
+            ${collections.length ? `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">${collections.map(c => `<span class="tag blue">${c}</span>`).join('')}</div>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="dot ${isAlive ? 'green' : 'red'}"></span>
+            <span class="tag ${isAlive ? 'green' : 'red'}">${isAlive ? 'Online' : 'Offline'}</span>
+          </div>
+        </div>`;
+      }
+      html += '</div>';
+      document.getElementById('nodes-list').innerHTML = html;
+    }
+
+    // Leaderboard
+    const lb = leaderboard.leaderboard || [];
+    if (!lb.length) {
+      document.getElementById('leaderboard').innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px">No leaderboard data yet</div>';
+    } else {
+      let html = '';
+      for (const e of lb) {
+        const rankClass = e.rank === 1 ? 'gold' : e.rank === 2 ? 'silver' : e.rank === 3 ? 'bronze' : '';
+        html += `<div class="lb-row">
+          <div class="lb-rank ${rankClass}">#${e.rank}</div>
+          <div style="flex:1">
+            <div class="lb-name">${e.node_name || 'Anonymous'}</div>
+            <div class="lb-detail">${fmt_num(e.items)} items · ${e.gb_stored?.toFixed(1) || 0} GB stored · ${e.gb_pledged?.toFixed(0) || 0} GB pledged</div>
+          </div>
+          <div class="lb-score">${fmt_num(e.score)}</div>
+        </div>`;
+      }
+      document.getElementById('leaderboard').innerHTML = html;
+    }
+
+    // Collections
+    const allCollections = [...new Set(allNodes.flatMap(n => n.collections || []))];
+    if (!allCollections.length) {
+      document.getElementById('collections-info').innerHTML = '<div class="card" style="text-align:center;color:var(--muted)">No collections yet</div>';
+    } else {
+      let html = '<div class="grid grid-2">';
+      for (const col of allCollections) {
+        const colItems = allNodes.reduce((s, n) => s + ((n.collections || []).includes(col) ? (n.item_count || 0) : 0), 0);
+        const colNodes = allNodes.filter(n => (n.collections || []).includes(col)).length;
+        html += `<div class="card">
+          <div style="font-weight:600;font-size:15px;margin-bottom:6px">${col}</div>
+          <div style="font-size:12px;color:var(--muted)">
+            ${fmt_num(colItems)} items across ${colNodes} node${colNodes !== 1 ? 's' : ''}
+          </div>
+        </div>`;
+      }
+      html += '</div>';
+      document.getElementById('collections-info').innerHTML = html;
+    }
+
+    // Operations
+    const ops = operations.operations || [];
+    if (!ops.length) {
+      document.getElementById('operations').innerHTML = '<div style="color:var(--muted)">No processing operations available</div>';
+    } else {
+      document.getElementById('operations').innerHTML = `
+        <p style="margin-bottom:12px;color:var(--muted);font-size:13px">Server-side processing via openEO-compatible API:</p>
+        <div class="op-grid">${ops.map(o => `<div class="op-tag" title="${o.description}">${o.name}</div>`).join('')}</div>
+      `;
+    }
+
+    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+
+  } catch (e) {
+    console.error('Load failed:', e);
+  }
+}
+
+loadAll();
+// Refresh every 60s
+setInterval(loadAll, 60000);
+</script>
+</body>
+</html>

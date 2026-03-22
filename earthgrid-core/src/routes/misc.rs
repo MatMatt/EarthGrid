@@ -135,7 +135,7 @@ pub(crate) async fn download_item(
 
 /// GET / (HTML) — Info page about the grid (like GH Pages but with live API)
 pub(crate) async fn landing_html() -> impl IntoResponse {
-    axum::response::Redirect::permanent("/dashboard").into_response()
+    Html(include_str!("../../assets/beacon.html")).into_response()
 }
 
 
