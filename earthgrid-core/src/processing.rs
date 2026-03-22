@@ -315,8 +315,6 @@ mod tests {
 
     #[test]
     fn test_band_math_ndvi() {
-        let r: Vec<u8> = vec![0, 0x45, 0x8c, 0x0]; // two u16 pixels: 0x4500=17664, 0x008c=140  -- use simple values
-        // Use simple values: two pixels of Red=4000, NIR=8000
         let red_bytes: Vec<u8> = vec![0xa0, 0x0f, 0xa0, 0x0f]; // 4000 LE twice
         let nir_bytes: Vec<u8> = vec![0x40, 0x1f, 0x40, 0x1f]; // 8000 LE twice
         let mut bands: HashMap<String, &[u8]> = HashMap::new();
@@ -326,5 +324,144 @@ mod tests {
         assert_eq!(result.len(), 8); // 2 pixels × 4 bytes
         let v = f32::from_le_bytes(result[0..4].try_into().unwrap());
         assert!((v - 0.3333).abs() < 0.001, "band_math NDVI = {v}");
+    }
+
+    fn read_f32(bytes: &[u8], idx: usize) -> f32 {
+        f32::from_le_bytes(bytes[idx * 4..(idx + 1) * 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn test_ndvi_float32() {
+        let red: Vec<u8> = 2000.0f32.to_le_bytes().to_vec();
+        let nir: Vec<u8> = 6000.0f32.to_le_bytes().to_vec();
+        let result = compute_ndvi(&red, &nir, "float32");
+        let v = read_f32(&result, 0);
+        // (6000-2000)/(6000+2000) = 0.5
+        assert!((v - 0.5).abs() < 1e-5, "NDVI f32 = {v}");
+    }
+
+    #[test]
+    fn test_ndvi_negative() {
+        // Red > NIR → negative NDVI (bare soil / water)
+        let red = 8000u16.to_le_bytes().to_vec();
+        let nir = 2000u16.to_le_bytes().to_vec();
+        let result = compute_ndvi(&red, &nir, "uint16");
+        let v = read_f32(&result, 0);
+        assert!((v - (-0.6)).abs() < 0.001, "negative NDVI = {v}");
+    }
+
+    #[test]
+    fn test_ndvi_multi_pixel() {
+        let mut red = Vec::new();
+        let mut nir = Vec::new();
+        for (r, n) in [(1000u16, 3000u16), (5000, 5000), (0, 8000)] {
+            red.extend_from_slice(&r.to_le_bytes());
+            nir.extend_from_slice(&n.to_le_bytes());
+        }
+        let result = compute_ndvi(&red, &nir, "uint16");
+        assert_eq!(result.len(), 12); // 3 pixels × 4 bytes
+        assert!((read_f32(&result, 0) - 0.5).abs() < 0.001);    // (3000-1000)/4000
+        assert!((read_f32(&result, 1) - 0.0).abs() < 0.001);    // (5000-5000)/10000
+        assert!((read_f32(&result, 2) - 1.0).abs() < 0.001);    // (8000-0)/8000
+    }
+
+    #[test]
+    fn test_ndwi_basic() {
+        // Green=6000, NIR=2000 → NDWI = (6000-2000)/(6000+2000) = 0.5
+        let green = 6000u16.to_le_bytes().to_vec();
+        let nir = 2000u16.to_le_bytes().to_vec();
+        let result = compute_ndwi(&green, &nir, "uint16");
+        let v = read_f32(&result, 0);
+        assert!((v - 0.5).abs() < 0.001, "NDWI = {v}");
+    }
+
+    #[test]
+    fn test_ndwi_zero_denom() {
+        let green = 0u16.to_le_bytes().to_vec();
+        let nir = 0u16.to_le_bytes().to_vec();
+        let result = compute_ndwi(&green, &nir, "uint16");
+        assert_eq!(read_f32(&result, 0), 0.0);
+    }
+
+    #[test]
+    fn test_ndwi_negative() {
+        // NIR > Green → negative (land)
+        let green = 1000u16.to_le_bytes().to_vec();
+        let nir = 5000u16.to_le_bytes().to_vec();
+        let result = compute_ndwi(&green, &nir, "uint16");
+        let v = read_f32(&result, 0);
+        // (1000-5000)/(1000+5000) = -0.6667
+        assert!((v - (-0.6667)).abs() < 0.001, "NDWI negative = {v}");
+    }
+
+    #[test]
+    fn test_ndwi_float32() {
+        let green: Vec<u8> = 3000.0f32.to_le_bytes().to_vec();
+        let nir: Vec<u8> = 1000.0f32.to_le_bytes().to_vec();
+        let result = compute_ndwi(&green, &nir, "float32");
+        let v = read_f32(&result, 0);
+        assert!((v - 0.5).abs() < 1e-5, "NDWI f32 = {v}");
+    }
+
+    #[test]
+    fn test_evi_basic() {
+        // B=1000, R=2000, N=8000 → EVI = 2.5*(8000-2000)/(8000+6*2000-7.5*1000+1)
+        // denom = 8000 + 12000 - 7500 + 1 = 12501
+        // EVI = 2.5 * 6000 / 12501 ≈ 1.1999 → clamped to 1.0
+        let blue = 1000u16.to_le_bytes().to_vec();
+        let red = 2000u16.to_le_bytes().to_vec();
+        let nir = 8000u16.to_le_bytes().to_vec();
+        let result = compute_evi(&blue, &red, &nir, "uint16");
+        let v = read_f32(&result, 0);
+        assert!(v <= 1.0, "EVI should be clamped: {v}");
+        assert!(v > 0.0, "EVI should be positive: {v}");
+    }
+
+    #[test]
+    fn test_evi_zero_denom() {
+        // Craft values so denom ≈ 0: N + 6R - 7.5B + 1 = 0
+        // N=0, R=0, B=0 → denom = 1 → EVI = 2.5*0/1 = 0
+        let z = 0u16.to_le_bytes().to_vec();
+        let result = compute_evi(&z, &z, &z, "uint16");
+        assert_eq!(read_f32(&result, 0), 0.0);
+    }
+
+    #[test]
+    fn test_evi_clamp_range() {
+        let blue = 100u16.to_le_bytes().to_vec();
+        let red = 100u16.to_le_bytes().to_vec();
+        let nir = 10000u16.to_le_bytes().to_vec();
+        let result = compute_evi(&blue, &red, &nir, "uint16");
+        let v = read_f32(&result, 0);
+        assert!((-1.0..=1.0).contains(&v), "EVI out of [-1,1]: {v}");
+    }
+
+    #[test]
+    fn test_evi_float32() {
+        let blue: Vec<u8> = 500.0f32.to_le_bytes().to_vec();
+        let red: Vec<u8> = 1000.0f32.to_le_bytes().to_vec();
+        let nir: Vec<u8> = 5000.0f32.to_le_bytes().to_vec();
+        let result = compute_evi(&blue, &red, &nir, "float32");
+        let v = read_f32(&result, 0);
+        assert!((-1.0..=1.0).contains(&v), "EVI f32 = {v}");
+        assert!(v > 0.0, "EVI should be positive for vegetation");
+    }
+
+    #[test]
+    fn test_cloud_mask_all_clear() {
+        let scl = vec![4u8, 5, 6, 7, 2, 3, 11];
+        let result = cloud_mask(&scl);
+        for i in 0..scl.len() {
+            assert_eq!(read_f32(&result, i), 1.0, "pixel {i} should be clear");
+        }
+    }
+
+    #[test]
+    fn test_cloud_mask_all_cloud() {
+        let scl = vec![8u8, 9, 10];
+        let result = cloud_mask(&scl);
+        for i in 0..scl.len() {
+            assert_eq!(read_f32(&result, i), 0.0, "pixel {i} should be cloud");
+        }
     }
 }

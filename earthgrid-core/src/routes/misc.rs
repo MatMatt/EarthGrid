@@ -280,3 +280,101 @@ pub(crate) async fn openeo_job_status(
     }))).into_response()
 }
 
+
+/// GET /file_formats — openEO output/input format catalogue
+pub(crate) async fn openeo_file_formats() -> impl IntoResponse {
+    (StatusCode::OK, Json(serde_json::json!({
+        "input": {
+            "GTiff": {
+                "title": "GeoTIFF",
+                "gis_data_types": ["raster"],
+                "parameters": {}
+            }
+        },
+        "output": {
+            "GTiff": {
+                "title": "GeoTIFF",
+                "gis_data_types": ["raster"],
+                "parameters": {}
+            },
+            "netCDF": {
+                "title": "netCDF-4",
+                "gis_data_types": ["raster"],
+                "parameters": {}
+            }
+        }
+    }))).into_response()
+}
+
+
+/// POST /result — openEO synchronous execution
+pub(crate) async fn openeo_result(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()));
+
+    if state.auth.check_write(token).is_err() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"code": "AuthenticationRequired", "message": "API key required"})),
+        ).into_response();
+    }
+
+    // Accept both wrapped (process.process_graph) and bare (process_graph) payloads
+    let graph_value = body
+        .get("process")
+        .and_then(|p| p.get("process_graph"))
+        .cloned()
+        .or_else(|| body.get("process_graph").cloned())
+        .map(|pg| serde_json::json!({ "process_graph": pg }))
+        .unwrap_or(body);
+
+    let graph: crate::openeo::ProcessGraph = match serde_json::from_value(graph_value) {
+        Ok(g) => g,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "code": "ProcessGraphInvalid",
+                    "message": format!("Invalid process graph: {}", e)
+                })),
+            ).into_response();
+        }
+    };
+
+    let fmt = crate::openeo::extract_output_format(&graph).unwrap_or_else(|| "GTiff".to_string());
+    match crate::openeo::execute_sync(&graph, &state.catalog, &state.store).await {
+        Ok((data, meta)) => {
+            if let Some(ref m) = meta {
+                match crate::openeo::wrap_output(&data, m, &fmt) {
+                    Ok((output, ct)) => (
+                        StatusCode::OK,
+                        [(axum::http::header::CONTENT_TYPE, ct)],
+                        output,
+                    ).into_response(),
+                    Err(e) => (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"code": "FormatError", "message": e})),
+                    ).into_response(),
+                }
+            } else {
+                (
+                    StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+                    data,
+                ).into_response()
+            }
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"code": "ProcessingError", "message": e})),
+        ).into_response(),
+    }
+}
+

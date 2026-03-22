@@ -189,64 +189,41 @@ Priority-based bandwidth allocation, inspired by Unix `nice`.
 - SHA-256 verification on every chunk transfer
 - Corrupt chunks automatically re-fetched from peers or source
 
-## Current State (v0.5.0)
+## Current State (v0.3.0)
+
+Single Rust binary. Python prototype has been fully replaced.
 
 **Implemented:**
 - Content-addressed chunk storage (SHA-256, two-level dirs)
-- STAC catalog with spatial/temporal search (OGC API Features compliant)
-- Peer federation (register, sync, key exchange, item sync)
+- STAC catalog with spatial/temporal search
+- Axum HTTP server with full REST API
+- openEO v1.2 Gateway (process graph parsing + execution)
+- Spectral indices: NDVI, NDWI, EVI, cloud mask
+- Source User management (encrypted credential pool, round-robin)
+- Auto-ingest pipeline (download → chunk → propagate)
+- Statistics engine (access tracking, bandwidth, downloads)
+- Bandwidth control with Unix-style nice levels
+- Smart replication (access-driven promote/demote)
+- Peer federation (register, sync, gossip, federated search)
 - Beacon mode for node discovery
-- Two-tier API key authentication + user auth
-- Full Rust implementation (single binary, axum HTTP server)
-- openEO Gateway (process graph parsing + execution)
-- Auto-ingest pipeline (fetch from CDSE/Element84 → chunk → propagate)
-- Statistics engine (access tracking, ingest history, uptake, coverage)
-- Bandwidth control and rate limiting
-- Smart replication (hot/cold data management)
-- Gamification system (leaderboard, achievements, challenges, economy)
-- Processing operations (NDVI, NDWI, NDSI, EVI, cloud mask, band math, true color)
-- Point extraction and chunk-map endpoints
-- Admin API (user management, collection management, node management)
-- GitHub Pages dashboard with auto-updated stats
+- libp2p networking (Kademlia DHT, mDNS, relay, NAT traversal)
+- Two-tier API key authentication
+- Gamification (leaderboards, achievements, challenges)
+- CLI (clap-based: ingest, serve, start/stop, fetch, setup)
+- Docker image (single binary, Ubuntu + GDAL)
+- GDAL bindings for GeoTIFF/COG ingest and SAR warping
 
 **Planned:**
-- [ ] Replication factor auto-promote/demote based on access patterns
-- [ ] Mutual TLS for inter-node communication
-- [ ] Sentinel-1 GRD support (auto-warp during ingest)
-- [ ] Additional data sources (CMEMS, C3S/CDS)
+- [ ] Mutual TLS for inter-node authentication
+- [ ] Replication factor auto-tuning based on network-wide stats
+- [ ] Sentinel-3 support (requires swath-to-grid preprocessing)
 
 ## Tech Stack
 
-- **Runtime:** Rust (single binary, ~21 MB)
-- **HTTP:** axum (async, tokio-based)
-- **Storage:** Content-addressed filesystem (SHA-256)
-- **Metadata:** STAC catalog (SQLite-backed)
-- **Container:** Docker (alpine-based)
+- **Language:** Rust (edition 2021)
+- **HTTP:** Axum 0.8, Tokio
+- **P2P:** libp2p 0.54
+- **Storage:** Content-addressed filesystem (SHA-256), SQLite (rusqlite)
+- **Geospatial:** GDAL 0.19
+- **Container:** Docker
 - **License:** EUPL-1.2
-
-## Migration: Python → Rust
-
-**Decision (2026-03-18):** Rust replaces Python completely. Single binary, no Python runtime.
-
-### Roadmap
-
-**Phase 1 — Current:** Python is the running node. Rust core exists as parallel implementation with matching APIs.
-
-**Phase 2 — Feature parity:** Build out remaining Rust functionality:
-- [ ] openEO Gateway (process graph parsing + execution)
-- [ ] Source User management (encrypted credentials)
-- [ ] Auto-ingest pipeline
-- [ ] CLI (clap-based, replacing Python Click)
-- [ ] Docker image (single static binary, alpine-based)
-- [ ] GDAL bindings (via gdal-rs crate)
-
-**Phase 3 — Switch:** Deploy Rust binary alongside Python on Nucleus, compare, then decommission Python.
-
-**Phase 4 — Cleanup:** Remove `earthgrid/` Python directory. Single codebase in `earthgrid-core/`.
-
-### Why
-
-- One static binary, zero dependencies for users
-- Better performance (chunks, networking, concurrency)
-- Simpler deployment (no venv, no pip, no Python version issues)
-- Infrastructure software should be self-contained

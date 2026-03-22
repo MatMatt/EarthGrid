@@ -1,28 +1,31 @@
-FROM python:3.12-slim
+FROM rust:1.86-bookworm AS builder
 
-# GDAL for rasterio + nice/ionice utils
-RUN apt-get update && apt-get install -y --no-install-recommends     libgdal-dev gcc g++ util-linux supervisor &&     rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libgdal-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-COPY pyproject.toml README.md LICENSE ./
-COPY earthgrid/ earthgrid/
-COPY docs/ docs/
+WORKDIR /build
+COPY earthgrid-core/ ./earthgrid-core/
+WORKDIR /build/earthgrid-core
+RUN cargo build --release
 
-# Rust core binary (pre-compiled on host)
-COPY earthgrid-core/target/release/earthgrid-core /usr/local/bin/earthgrid-core
+FROM debian:bookworm-slim
 
-RUN pip install --no-cache-dir ".[full]"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libgdal32 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Supervisor config to run both Python + Rust
-COPY docker/supervisord.conf /etc/supervisor/conf.d/earthgrid.conf
+# Cargo binary name is "earthgrid"; install as earthgrid-core for compatibility.
+COPY --from=builder /build/earthgrid-core/target/release/earthgrid /usr/local/bin/earthgrid-core
+RUN chmod +x /usr/local/bin/earthgrid-core
 
 EXPOSE 8400
-
-VOLUME /data
+VOLUME ["/data"]
 
 ENV EARTHGRID_STORE_PATH=/data/store
 ENV EARTHGRID_CATALOG_PATH=/data/catalog.db
-ENV EARTHGRID_RUST_CORE_URL=http://127.0.0.1:8401
 
-# Run both processes via supervisor at lowest priority
-CMD ["nice", "-n", "19", "ionice", "-c", "3", "supervisord", "-n", "-c", "/etc/supervisor/conf.d/earthgrid.conf"]
+ENTRYPOINT ["earthgrid-core"]
+CMD ["--data-dir", "/data", "serve", "--host", "0.0.0.0", "--port", "8400"]

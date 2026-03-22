@@ -1,5 +1,6 @@
 *.pyc
 __pycache__/
+.venv-openeo/
 *.egg-info/
 data/
 .pytest_cache/

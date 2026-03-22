@@ -297,6 +297,51 @@ docker pull ghcr.io/matmatt/earthgrid-core:latest
 docker run -d -p 8400:8400 -v earthgrid-data:/data ghcr.io/matmatt/earthgrid-core:latest serve
 ```
 
+### Docker Compose (dev + prod volume path)
+
+The compose file supports both local development and production storage paths:
+
+```bash
+# Dev (default, in docker/.env): EARTHGRID_HOST_DATA_DIR=./data
+cd docker
+docker compose up -d --build
+```
+
+```bash
+# Prod host path (example)
+cd docker
+EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid docker compose up -d --build
+```
+
+Or set it once in `docker/.env`:
+
+```bash
+EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid
+```
+
+### Run locally (no Docker)
+
+From source:
+
+```bash
+cd earthgrid-core
+cargo run -- --data-dir ~/.earthgrid-data serve --host 0.0.0.0 --port 8400
+```
+
+Health check:
+
+```bash
+curl http://localhost:8400/health
+```
+
+Optional environment variables:
+
+```bash
+export EARTHGRID_NODE_NAME=node-local
+export EARTHGRID_STORE_PATH=$HOME/.earthgrid-data/store
+export EARTHGRID_CATALOG_PATH=$HOME/.earthgrid-data/catalog.db
+```
+
 ---
 
 ## Security Model
@@ -332,12 +377,13 @@ Every node generates an **Ed25519 keypair** on first start. Peers verify each ot
 
 ## openEO Gateway
 
-EarthGrid includes an openEO v1.2.0 compatible gateway. Missing data is automatically fetched on demand.
+EarthGrid includes an openEO v1.2.0 compatible gateway.
 
 **Python:**
 
 ```python
 import openeo
+
 conn = openeo.connect("http://localhost:8400")
 cube = conn.load_collection("sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
@@ -350,8 +396,10 @@ cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")
 
 ```r
 library(openeo)
+
 con <- connect("http://localhost:8400")
 p <- processes()
+
 cube <- p$load_collection("sentinel-2-l2a",
     spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
     temporal_extent = c("2026-03-01", "2026-03-12"),
