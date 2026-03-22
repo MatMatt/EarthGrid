@@ -1140,14 +1140,21 @@ function renderNodes(nodes) {
     return;
   }
   // Sort: alive first, then by stored bytes desc
-  nodes.sort((a, b) => (b.alive ? 1 : 0) - (a.alive ? 1 : 0) || (b.chunks_bytes||0) - (a.chunks_bytes||0));
+  nodes.sort((a, b) => {
+    const aAlive = a.alive !== undefined ? a.alive : true;
+    const bAlive = b.alive !== undefined ? b.alive : true;
+    return (bAlive ? 1 : 0) - (aAlive ? 1 : 0) || (b.chunks_bytes||b.storage_gb*1e9||0) - (a.chunks_bytes||a.storage_gb*1e9||0);
+  });
   let html = '';
   for (const n of nodes) {
-    const status = n.alive ? '<span style="color:var(--green)">● online</span>' : '<span style="color:#f85149">● offline</span>';
-    const stored = fmtBytes(n.chunks_bytes || 0);
-    const items = (n.item_count || 0).toLocaleString();
+    const isAlive = n.alive !== undefined ? n.alive : true;
+    const status = isAlive ? '<span style="color:var(--green)">● online</span>' : '<span style="color:#f85149">● offline</span>';
+    const stored = n.chunks_bytes ? fmtBytes(n.chunks_bytes) : (n.storage_gb ? fmtGB(n.storage_gb) : '0 B');
+    const items = (n.items || n.item_count || 0).toLocaleString();
+    const chunks = n.chunks ? n.chunks.toLocaleString() + ' chunks' : '';
     const cols = (n.collections || []).join(', ') || '—';
     const seen = n.last_seen ? fmtTime(n.last_seen) : '—';
+    const pubUrl = n.public_url ? '<a href="' + n.public_url + '" target="_blank">' + n.public_url + '</a>' : '';
     html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem">';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">';
     html += '<strong style="font-size:1.1rem">' + (n.node_name || n.node_id || 'Unknown') + '</strong>';
@@ -1155,8 +1162,11 @@ function renderNodes(nodes) {
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;font-size:0.85rem">';
     html += '<div><span style="color:var(--dim)">Stored:</span> ' + stored + '</div>';
     html += '<div><span style="color:var(--dim)">Items:</span> ' + items + '</div>';
-    html += '<div style="grid-column:1/-1"><span style="color:var(--dim)">Collections:</span> ' + cols + '</div>';
-    html += '<div style="grid-column:1/-1"><span style="color:var(--dim)">Last seen:</span> ' + seen + '</div>';
+    if (chunks) html += '<div><span style="color:var(--dim)">Chunks:</span> ' + chunks + '</div>';
+    if (n.storage_limit_gb) html += '<div><span style="color:var(--dim)">Limit:</span> ' + fmtGB(n.storage_limit_gb) + '</div>';
+    if (n.collections) html += '<div style="grid-column:1/-1"><span style="color:var(--dim)">Collections:</span> ' + cols + '</div>';
+    if (n.last_seen) html += '<div style="grid-column:1/-1"><span style="color:var(--dim)">Last seen:</span> ' + seen + '</div>';
+    if (pubUrl) html += '<div style="grid-column:1/-1"><span style="color:var(--dim)">URL:</span> ' + pubUrl + '</div>';
     html += '</div></div>';
   }
   document.getElementById('nodesGrid').innerHTML = html;
@@ -1181,7 +1191,7 @@ async function load() {
   if (isGitHubPages) {
     try {
       const r = await fetch('stats.json?t=' + Date.now());
-      if (r.ok) { d = await r.json(); apiOk = true; console.log('Loaded stats.json'); }
+      if (r.ok) { d = await r.json(); apiOk = true; console.log('Loaded stats.json'); if (d.nodes) renderNodes(d.nodes); }
     } catch(e) { console.error('stats.json load error:', e); }
   }
 
@@ -1305,7 +1315,7 @@ async function load() {
     document.getElementById('sStorage').classList.remove('loading');
 
     // Total items across all nodes
-    const totalItems = (d.nodes || []).reduce((s, n) => s + (n.item_count || 0), 0);
+    const totalItems = (d.nodes || []).reduce((s, n) => s + (n.items || n.item_count || 0), 0);
     document.getElementById('vItems').textContent = totalItems.toLocaleString();
     document.getElementById('sItems').classList.remove('loading');
 
