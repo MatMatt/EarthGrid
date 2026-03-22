@@ -81,6 +81,8 @@ pub struct GridMetricPoint {
 #[derive(Debug, Deserialize)]
 pub struct HeartbeatRequest {
     pub node_id: String,
+    pub url: Option<String>,
+    pub node_name: Option<String>,
     pub item_count: Option<i64>,
     pub chunk_count: Option<i64>,
     pub chunks_bytes: Option<i64>,
@@ -281,6 +283,15 @@ impl BeaconRegistry {
             pos += 1;
         }
         if req.storage_limit_gb.is_some() {
+            sets.push(format!("storage_limit_gb = ?{}", pos));
+            pos += 1;
+        }
+        if req.url.is_some() {
+            sets.push(format!("url = ?{}", pos));
+            pos += 1;
+        }
+        if req.node_name.is_some() {
+            sets.push(format!("node_name = ?{}", pos));
             pos += 1;
         }
 
@@ -306,6 +317,8 @@ impl BeaconRegistry {
         }
         if let Some(v) = req.can_source { param_values.push(Box::new(v as i64)); }
         if let Some(v) = req.storage_limit_gb { param_values.push(Box::new(v)); }
+        if let Some(ref v) = req.url { param_values.push(Box::new(v.clone())); }
+        if let Some(ref v) = req.node_name { param_values.push(Box::new(v.clone())); }
         param_values.push(Box::new(req.node_id.clone()));
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();

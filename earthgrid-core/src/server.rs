@@ -523,9 +523,12 @@ pub async fn serve(
                         cat.list_collections().unwrap_or_default().into_iter().map(|c| c.id).collect()
                     };
 
+                    let public_url = std::env::var("EARTHGRID_PUBLIC_URL")
+                        .unwrap_or_else(|_| format!("http://127.0.0.1:{}", hb_port));
                     let body = serde_json::json!({
                         "node_id": hb_node_id,
                         "node_name": hb_node_name,
+                        "url": public_url,
                         "can_source": true,
                         "item_count": item_count,
                         "chunk_count": chunk_count,
