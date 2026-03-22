@@ -203,7 +203,30 @@ enum Commands {
     },
 }
 
+/// Load environment variables from ~/.earthgrid/.env (simple key=value format).
+fn load_dotenv() {
+    let env_path = earthgrid_home().join(".env");
+    if let Ok(content) = std::fs::read_to_string(&env_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((key, val)) = line.split_once('=') {
+                let key = key.trim();
+                let val = val.trim();
+                // Only set if not already set (env vars take precedence)
+                if std::env::var(key).is_err() {
+                    std::env::set_var(key, val);
+                }
+            }
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    // Load .env from ~/.earthgrid/.env (if exists) before parsing CLI
+    load_dotenv();
     let cli = Cli::parse();
     let store_path = cli.data_dir.join("store");
     let catalog_path = cli.data_dir.join("catalog.db");
