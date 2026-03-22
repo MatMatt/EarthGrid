@@ -216,6 +216,25 @@ impl BeaconRegistry {
             }
         }
 
+        // Reject if node_name already exists under a different node_id
+        if let Some(ref name) = req.node_name {
+            if !name.is_empty() {
+                let existing_id: Option<String> = self.conn.query_row(
+                    "SELECT node_id FROM beacon_nodes WHERE node_name = ?1",
+                    rusqlite::params![name],
+                    |row| row.get(0),
+                ).ok();
+                if let Some(ref eid) = existing_id {
+                    if eid != &req.node_id {
+                        return Err(crate::error::EarthGridError::Other(format!(
+                            "node_name '{}' is already taken by node {}. Choose a different name.",
+                            name, eid
+                        )));
+                    }
+                }
+            }
+        }
+
         let collections_json = serde_json::to_string(
             &req.collections.clone().unwrap_or_default(),
         )?;
