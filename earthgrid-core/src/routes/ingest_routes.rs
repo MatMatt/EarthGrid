@@ -147,6 +147,8 @@ pub struct FetchQuery {
     pub bands: Option<String>,
     pub limit: Option<usize>,
     pub collection: Option<String>,
+    /// If true, skip distribution and ingest locally only.
+    pub local_only: Option<bool>,
 }
 
 
@@ -278,19 +280,44 @@ pub(crate) async fn fetch_handler(
         .map(|s| s.split(',').map(|b| b.trim().to_string()).filter(|b| !b.is_empty()).collect())
         .unwrap_or_default();
 
-    let result = fetcher::fetch_and_ingest(
-        state.store.clone(),
-        state.catalog.clone(),
-        bbox,
-        start_date,
-        end_date,
-        cloud_cover,
-        &bands,
-        limit,
-        collection,
-        tile_filter.as_deref(),
-    )
-    .await;
+    let local_only = q.local_only.unwrap_or(false);
+    let result = if state.is_beacon && !local_only {
+        // Beacon mode: distribute across grid nodes
+        let port = std::env::var("EARTHGRID_PORT").unwrap_or_else(|_| "8400".to_string());
+        let beacon_url = format!("http://127.0.0.1:{}", port);
+        let admin_key = state.auth.admin_key.clone();
+        fetcher::fetch_distributed(
+            state.store.clone(),
+            state.catalog.clone(),
+            bbox,
+            start_date,
+            end_date,
+            cloud_cover,
+            &bands,
+            limit,
+            collection,
+            tile_filter.as_deref(),
+            &beacon_url,
+            &state.node_name,
+            &admin_key,
+        )
+        .await
+    } else {
+        // Non-beacon or local_only: ingest locally
+        fetcher::fetch_and_ingest(
+            state.store.clone(),
+            state.catalog.clone(),
+            bbox,
+            start_date,
+            end_date,
+            cloud_cover,
+            &bands,
+            limit,
+            collection,
+            tile_filter.as_deref(),
+        )
+        .await
+    };
 
     state.audit.log("fetch", collection, "", result.errors.is_empty());
 

@@ -543,7 +543,7 @@ pub async fn serve(
                             let register_body = serde_json::json!({
                                 "node_id": hb_node_id,
                                 "node_name": hb_node_name,
-                                "url": format!("http://127.0.0.1:{}", hb_port),
+                                "url": std::env::var("EARTHGRID_PUBLIC_URL").unwrap_or_else(|_| format!("http://127.0.0.1:{}", hb_port)),
                                 "can_source": true,
                                 "item_count": item_count,
                                 "chunk_count": chunk_count,

@@ -652,3 +652,246 @@ pub async fn beacon_inventory(
 
     Ok(ids)
 }
+
+
+// ---------------------------------------------------------------------------
+// Distributed fetch — beacon distributes items across grid nodes
+// ---------------------------------------------------------------------------
+
+/// Node info for distribution decisions.
+#[derive(Debug, Clone)]
+struct GridNode {
+    node_name: String,
+    url: String,
+    free_gb: f64,
+    is_local: bool,
+    admin_key: String,
+}
+
+/// Query the beacon for alive nodes with free storage.
+async fn get_grid_nodes(beacon_url: &str) -> Vec<GridNode> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    let url = format!("{}/beacon/nodes?alive_only=true", beacon_url.trim_end_matches('/'));
+    let resp = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => {
+            warn!("Cannot reach beacon at {}", url);
+            return vec![];
+        }
+    };
+
+    let data: serde_json::Value = match resp.json().await {
+        Ok(d) => d,
+        Err(_) => return vec![],
+    };
+
+    let mut nodes = vec![];
+    if let Some(arr) = data.get("nodes").and_then(|v| v.as_array()) {
+        for n in arr {
+            let limit_gb = n.get("storage_limit_gb").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let used_bytes = n.get("chunks_bytes").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let free_gb = if limit_gb > 0.0 {
+                limit_gb - (used_bytes / 1_073_741_824.0)
+            } else {
+                999999.0 // unlimited
+            };
+            let url = n.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if url.is_empty() { continue; }
+
+            nodes.push(GridNode {
+                node_name: n.get("node_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                url,
+                free_gb: free_gb.max(0.0),
+                is_local: false, // will be set by caller
+                admin_key: String::new(),
+            });
+        }
+    }
+    // Sort by free space descending
+    nodes.sort_by(|a, b| b.free_gb.partial_cmp(&a.free_gb).unwrap_or(std::cmp::Ordering::Equal));
+    nodes
+}
+
+/// Send a fetch request to a remote node.
+async fn delegate_fetch_to_node(
+    node: &GridNode,
+    bbox: [f64; 4],
+    start_date: &str,
+    end_date: &str,
+    cloud_cover: f64,
+    bands: &[String],
+    limit: usize,
+    collection: &str,
+    admin_key: &str,
+) -> FetchResult {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_default();
+
+    let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
+    let bands_str = bands.join(",");
+    let url = format!(
+        "{}/fetch?bbox={}&start_date={}&end_date={}&cloud_cover={}&bands={}&limit={}&collection={}&local_only=true",
+        node.url.trim_end_matches('/'), bbox_str, start_date, end_date, cloud_cover, bands_str, limit, collection
+    );
+
+    info!("Delegating fetch to {} ({}): {} items max", node.node_name, node.url, limit);
+
+    let resp = client.post(&url)
+        .header("x-api-key", admin_key)
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            if let Ok(data) = r.json::<serde_json::Value>().await {
+                FetchResult {
+                    items_searched: data.get("items_searched").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                    items_downloaded: data.get("items_downloaded").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                    items_skipped: data.get("items_skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                    bytes_downloaded: data.get("bytes_downloaded").and_then(|v| v.as_u64()).unwrap_or(0),
+                    errors: data.get("errors").and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+                        .unwrap_or_default(),
+                }
+            } else {
+                FetchResult { items_searched: 0, items_downloaded: 0, items_skipped: 0, bytes_downloaded: 0,
+                    errors: vec![format!("Bad response from {}", node.node_name)] }
+            }
+        }
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            warn!("Delegate to {} failed: {} {}", node.node_name, status, body);
+            FetchResult { items_searched: 0, items_downloaded: 0, items_skipped: 0, bytes_downloaded: 0,
+                errors: vec![format!("{}: {} {}", node.node_name, status, body)] }
+        }
+        Err(e) => {
+            warn!("Delegate to {} error: {}", node.node_name, e);
+            FetchResult { items_searched: 0, items_downloaded: 0, items_skipped: 0, bytes_downloaded: 0,
+                errors: vec![format!("{}: {}", node.node_name, e)] }
+        }
+    }
+}
+
+/// Distributed fetch: search Element84 then spread items across grid nodes.
+/// Each node gets a proportional share based on free storage.
+pub async fn fetch_distributed(
+    store: Arc<Mutex<ChunkStore>>,
+    catalog: Arc<Mutex<Catalog>>,
+    bbox: [f64; 4],
+    start_date: &str,
+    end_date: &str,
+    cloud_cover: f64,
+    bands: &[String],
+    limit: usize,
+    collection: &str,
+    tile_filter: Option<&str>,
+    beacon_url: &str,
+    local_node_name: &str,
+    admin_key: &str,
+) -> FetchResult {
+    // Get alive nodes from beacon
+    let mut nodes = get_grid_nodes(beacon_url).await;
+    if nodes.is_empty() {
+        info!("No grid nodes found, falling back to local fetch");
+        return fetch_and_ingest(store, catalog, bbox, start_date, end_date, cloud_cover, bands, limit, collection, tile_filter).await;
+    }
+
+    // Mark local node (match by name OR by localhost URL)
+    for n in &mut nodes {
+        if n.node_name == local_node_name
+            || n.url.contains("127.0.0.1")
+            || n.url.contains("localhost")
+        {
+            n.is_local = true;
+        }
+    }
+
+    // Filter out full nodes (< 0.5 GB free)
+    nodes.retain(|n| n.free_gb >= 0.5);
+    if nodes.is_empty() {
+        warn!("All nodes full, falling back to local fetch");
+        return fetch_and_ingest(store, catalog, bbox, start_date, end_date, cloud_cover, bands, limit, collection, tile_filter).await;
+    }
+
+    let node_count = nodes.len();
+    let total_free: f64 = nodes.iter().map(|n| n.free_gb).sum();
+
+    // Calculate items per node (weighted by free space)
+    let mut assignments: Vec<(GridNode, usize)> = vec![];
+    let mut assigned = 0usize;
+    for (i, node) in nodes.iter().enumerate() {
+        let share = if total_free > 0.0 {
+            ((node.free_gb / total_free) * limit as f64).round() as usize
+        } else {
+            limit / node_count
+        };
+        let share = if i == nodes.len() - 1 {
+            limit.saturating_sub(assigned) // last node gets remainder
+        } else {
+            share.max(1).min(limit.saturating_sub(assigned))
+        };
+        if share > 0 {
+            assignments.push((node.clone(), share));
+            assigned += share;
+        }
+    }
+
+    info!("Distributing fetch across {} nodes: {:?}",
+        assignments.len(),
+        assignments.iter().map(|(n, s)| format!("{}={}", n.node_name, s)).collect::<Vec<_>>());
+
+    // Execute in parallel: local node uses fetch_and_ingest, remote nodes get /fetch
+    let mut handles = vec![];
+    for (node, share) in assignments {
+        if node.is_local {
+            let s = store.clone();
+            let c = catalog.clone();
+            let b = bands.to_vec();
+            let coll = collection.to_string();
+            let tf = tile_filter.map(|t| t.to_string());
+            let sd = start_date.to_string();
+            let ed = end_date.to_string();
+            handles.push(tokio::spawn(async move {
+                fetch_and_ingest(s, c, bbox, &sd, &ed, cloud_cover, &b, share, &coll, tf.as_deref()).await
+            }));
+        } else {
+            let n = node.clone();
+            let b = bands.to_vec();
+            let coll = collection.to_string();
+            let ak = admin_key.to_string();
+            let sd = start_date.to_string();
+            let ed = end_date.to_string();
+            handles.push(tokio::spawn(async move {
+                delegate_fetch_to_node(&n, bbox, &sd, &ed, cloud_cover, &b, share, &coll, &ak).await
+            }));
+        }
+    }
+
+    // Collect results
+    let mut combined = FetchResult {
+        items_searched: 0, items_downloaded: 0, items_skipped: 0, bytes_downloaded: 0, errors: vec![],
+    };
+    for handle in handles {
+        match handle.await {
+            Ok(r) => {
+                combined.items_searched += r.items_searched;
+                combined.items_downloaded += r.items_downloaded;
+                combined.items_skipped += r.items_skipped;
+                combined.bytes_downloaded += r.bytes_downloaded;
+                combined.errors.extend(r.errors);
+            }
+            Err(e) => {
+                combined.errors.push(format!("Task error: {}", e));
+            }
+        }
+    }
+
+    combined
+}
