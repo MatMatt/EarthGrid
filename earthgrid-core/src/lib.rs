@@ -22,6 +22,7 @@ pub mod peers;
 pub mod processing;
 pub mod ratelimit;
 pub mod replication;
+pub mod routes;
 pub mod server;
 pub mod smart_replication;
 pub mod source_users;
