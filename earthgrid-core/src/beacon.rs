@@ -201,6 +201,21 @@ impl BeaconRegistry {
 
     /// Register or update a node.
     pub fn register(&self, req: &RegisterRequest) -> Result<BeaconNode> {
+        // Reject if node_id already exists with a different URL
+        let existing: Option<String> = self.conn.query_row(
+            "SELECT url FROM beacon_nodes WHERE node_id = ?1",
+            rusqlite::params![req.node_id],
+            |row| row.get(0),
+        ).ok();
+        if let Some(ref old_url) = existing {
+            if old_url != &req.url && !old_url.is_empty() {
+                return Err(crate::error::EarthGridError::Other(format!(
+                    "node_id {} is already registered with a different URL ({}).                      Use a different node_id or remove the existing node first.",
+                    req.node_id, old_url
+                )));
+            }
+        }
+
         let collections_json = serde_json::to_string(
             &req.collections.clone().unwrap_or_default(),
         )?;
