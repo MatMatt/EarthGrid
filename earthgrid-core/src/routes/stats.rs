@@ -226,8 +226,51 @@ pub(crate) async fn stats_json_alias(State(state): State<AppState>) -> impl Into
             Err(_) => {}
         }
     }
-    // Fallback to internal stats
-    stats(State(state)).await.into_response()
+    // Fallback: build combined stats with ingest + uptake
+    let store = state.store.lock().await;
+    let s = store.stats().clone();
+    let total_chunks = store.chunk_count();
+    let total_bytes = store.total_bytes();
+    drop(store);
+
+    // Ingest history (30 days)
+    let ingest = state.stats.ingest_history(30).ok().map(|h| {
+        serde_json::json!({
+            "total_gb_fetched": h.total_bytes as f64 / 1_073_741_824.0,
+            "total_items": h.total_items,
+            "daily": h.daily,
+            "hourly": h.hourly,
+        })
+    }).unwrap_or(serde_json::json!({}));
+
+    // Uptake summary (30 days)
+    let uptake = state.stats.ingest_history(30).ok().map(|h| {
+        let total_gb = h.total_bytes as f64 / 1_073_741_824.0;
+        serde_json::json!({
+            "summary": {
+                "total_requests": h.total_items,
+                "total_gb": (total_gb * 1000.0).round() / 1000.0,
+            }
+        })
+    }).unwrap_or(serde_json::json!({}));
+
+    // Network info placeholder (beacon.html fetches /beacon/nodes separately)
+    let network = serde_json::json!({});
+
+    let catalog = state.catalog.lock().await;
+    let items = catalog.item_count(None).unwrap_or(0);
+    drop(catalog);
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "version": state.version,
+        "chunks": total_chunks,
+        "items": items,
+        "coverage": { "total_bytes": total_bytes },
+        "network": network,
+        "ingest": ingest,
+        "uptake": uptake,
+        "updated": chrono::Utc::now().to_rfc3339(),
+    }))).into_response()
 }
 
 
