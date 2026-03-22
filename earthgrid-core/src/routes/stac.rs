@@ -1,3 +1,4 @@
+use axum::http::HeaderMap;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -53,6 +54,8 @@ pub(crate) async fn stac_landing(
 /// JSON STAC Landing
 pub(crate) async fn stac_landing_json(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
+        "api_version": "1.2.0",
+        "backend_version": state.version,
         "type": "Catalog",
         "id": state.node_id,
         "title": state.node_name,
@@ -68,13 +71,22 @@ pub(crate) async fn stac_landing_json(State(state): State<AppState>) -> Json<ser
             "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30",
             "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson",
         ],
+        "endpoints": [
+            {"path": "/collections",                        "methods": ["GET"]},
+            {"path": "/collections/{collection_id}",        "methods": ["GET"]},
+            {"path": "/collections/{collection_id}/items",  "methods": ["GET"]},
+            {"path": "/processes",                          "methods": ["GET"]},
+            {"path": "/result",                             "methods": ["POST"]},
+            {"path": "/file_formats",                       "methods": ["GET"]},
+            {"path": "/validate",                           "methods": ["POST"]},
+        ],
         "links": [
-            {"rel": "self", "href": "/", "type": "application/json"},
-            {"rel": "root", "href": "/", "type": "application/json"},
-            {"rel": "conformance", "href": "/conformance", "type": "application/json"},
-            {"rel": "data", "href": "/stac/collections", "type": "application/json"},
-            {"rel": "search", "href": "/stac/search", "type": "application/geo+json", "method": "GET"},
-            {"rel": "search", "href": "/stac/search", "type": "application/geo+json", "method": "POST"},
+            {"rel": "self",        "href": "/",                "type": "application/json"},
+            {"rel": "root",        "href": "/",                "type": "application/json"},
+            {"rel": "conformance", "href": "/conformance",     "type": "application/json"},
+            {"rel": "data",        "href": "/collections",     "type": "application/json"},
+            {"rel": "search",      "href": "/stac/search",     "type": "application/geo+json", "method": "GET"},
+            {"rel": "search",      "href": "/stac/search",     "type": "application/geo+json", "method": "POST"},
         ]
     }))
 }
@@ -93,6 +105,27 @@ pub(crate) async fn stac_conformance() -> Json<serde_json::Value> {
             "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30",
             "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson",
         ]
+    }))
+}
+
+/// GET /.well-known/openeo — openEO version discovery
+pub(crate) async fn well_known_openeo(headers: HeaderMap) -> Json<serde_json::Value> {
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost:8400");
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    let base_url = format!("{proto}://{host}/");
+
+    Json(serde_json::json!({
+        "versions": [{
+            "url": base_url,
+            "api_version": "1.2.0",
+            "production": false
+        }]
     }))
 }
 
@@ -119,7 +152,9 @@ pub(crate) async fn list_collections(State(state): State<AppState>) -> impl Into
 pub(crate) async fn get_collection(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     match catalog.get_collection(&id) {
-        Ok(Some(col)) => (StatusCode::OK, Json(serde_json::to_value(col).unwrap())).into_response(),
+        Ok(Some(col)) => serde_json::to_value(col)
+            .map(|v| (StatusCode::OK, Json(v)).into_response())
+            .unwrap_or_else(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response()),
         Ok(None) => err(StatusCode::NOT_FOUND, "Collection not found").into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
@@ -184,7 +219,9 @@ pub(crate) async fn get_collection_item(
 ) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     match catalog.get_collection_item(&collection_id, &item_id) {
-        Ok(Some(item)) => (StatusCode::OK, Json(serde_json::to_value(item).unwrap())).into_response(),
+        Ok(Some(item)) => serde_json::to_value(item)
+            .map(|v| (StatusCode::OK, Json(v)).into_response())
+            .unwrap_or_else(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response()),
         Ok(None) => err(StatusCode::NOT_FOUND, "Item not found").into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }

@@ -98,6 +98,7 @@ pub fn router(state: AppState) -> Router {
         .route("/stats", get(crate::routes::stats::stats))
         // STAC Landing + Conformance
         .route("/", get(crate::routes::stac::stac_landing))
+        .route("/.well-known/openeo", get(crate::routes::stac::well_known_openeo))
         .route("/conformance", get(crate::routes::stac::stac_conformance))
         // STAC Collections + Items
         .route("/stac/collections", get(crate::routes::stac::list_collections))
@@ -193,6 +194,8 @@ pub fn router(state: AppState) -> Router {
         .route("/collections/{id}", get(crate::routes::stac::get_collection))
         // openEO processes + validate + jobs
         .route("/processes", get(crate::routes::misc::openeo_processes))
+        .route("/file_formats", get(crate::routes::misc::openeo_file_formats))
+        .route("/result", post(crate::routes::misc::openeo_result))
         .route("/validate", post(crate::routes::misc::openeo_validate))
         .route("/jobs/{job_id}", get(crate::routes::misc::openeo_job_status))
         .layer(CorsLayer::permissive())

@@ -663,8 +663,36 @@ fn read_pid() -> Option<u32> {
 }
 
 fn is_process_alive(pid: u32) -> bool {
-    // Check via /proc on Linux
-    PathBuf::from(format!("/proc/{}", pid)).exists()
+    #[cfg(unix)]
+    {
+        // signal 0 checks process existence without sending a signal
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(windows)]
+    {
+        // Match exact PID field to avoid substring false positives.
+        let pid_str = pid.to_string();
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .output()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout).lines().any(|line| {
+                    let mut parts = line.split_whitespace();
+                    parts.nth(1) == Some(pid_str.as_str())
+                })
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
 }
 
 fn prompt(label: &str, default: &str) -> anyhow::Result<String> {
