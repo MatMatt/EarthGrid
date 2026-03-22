@@ -206,6 +206,7 @@ Single Rust binary. Python prototype has been fully replaced.
 - Smart replication (access-driven promote/demote)
 - Peer federation (register, sync, gossip, federated search)
 - Beacon mode for node discovery
+- Beacon federation (real-time WebSocket sync between beacons)
 - libp2p networking (Kademlia DHT, mDNS, relay, NAT traversal)
 - Two-tier API key authentication
 - Gamification (leaderboards, achievements, challenges)

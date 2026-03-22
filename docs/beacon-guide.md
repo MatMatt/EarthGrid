@@ -86,7 +86,7 @@ curl http://<your-public-ip>:8400/node-info
 
 ## Federation
 
-Beacons can federate with each other — sharing their node registries so the whole network stays connected even if individual beacons go down.
+Beacons federate with each other via **real-time WebSocket connections** — sharing their node registries so every beacon has the complete grid view.
 
 ```bash
 # Add a peer beacon
@@ -96,7 +96,21 @@ export EARTHGRID_BEACON_PEERS=http://other-beacon.example.com:8400
 export EARTHGRID_BEACON_PEERS=http://beacon1.example.com:8400,http://beacon2.example.com:8400
 ```
 
-Federation syncs happen automatically in the background.
+### How it works
+
+1. On startup, each beacon connects to its peers via WebSocket (`/beacon/ws`)
+2. **Full sync** on connect — the entire node registry is exchanged
+3. After that, **push events** in real-time:
+   - `node_register` — new node joined
+   - `node_heartbeat` — node stats updated
+   - `node_pruned` — stale node removed
+4. **Loop prevention**: events carry a `beacon_origin` ID — events received from remote beacons are applied locally but never re-broadcast
+5. **Consistency**: `last_seen` timestamp is authoritative — newer data always wins
+6. **Auto-reconnect**: if a peer connection drops, exponential backoff (1s → 60s max)
+
+### Node perspective
+
+Nodes don't need to know about federation. A node registers with one beacon, sends heartbeats to that beacon, and the federation layer ensures all other beacons learn about it within milliseconds.
 
 ## Beacon + Data Node
 
@@ -123,9 +137,12 @@ A pure beacon (no data storage) is very lightweight:
 
 | Endpoint | Description |
 |---|---|
-| `POST /register` | Data node registers itself |
-| `POST /heartbeat` | Periodic node heartbeat |
-| `GET /nodes` | List all registered nodes |
+| `POST /beacon/register` | Data node registers itself |
+| `POST /beacon/heartbeat` | Periodic node heartbeat |
+| `GET /beacon/nodes` | List all registered nodes |
+| `GET /beacon/nodes/{id}` | Get a specific node |
+| `DELETE /beacon/nodes/{id}` | Remove a node |
+| `GET /beacon/metrics` | Grid metrics time series |
+| `WS /beacon/ws` | Federation WebSocket (beacon-to-beacon sync) |
 | `GET /seed/nodes` | Bootstrap seed list for new nodes |
-| `POST /beacon/sync` | Federate with peer beacons |
 | `GET /peers.json` | Gossip-friendly peer list |
