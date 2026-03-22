@@ -95,7 +95,7 @@ a:hover { text-decoration:underline; }
 
 <div class="stats">
   <div class="stat loading" id="sNodes"><div class="value" id="vNodes">—</div><div class="label">Active Nodes in Grid</div></div>
-  <div class="stat loading" id="sAvailStorage"><div class="value" id="vAvailStorage">—</div><div class="label">Available Storage across Grid</div></div>
+  <div class="stat loading" id="sAvailStorage"><div class="value" id="vAvailStorage">—</div><div class="label">Total Storage across Grid</div></div>
   <div class="stat loading" id="sItems"><div class="value" id="vItems">—</div><div class="label">Items across Grid</div></div>
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Data across Grid</div></div>
   <div class="stat loading" id="sUptakeReq"><div class="value" id="vUptakeReq">—</div><div class="label">Requests from Grid (30d)</div></div>
@@ -104,12 +104,7 @@ a:hover { text-decoration:underline; }
 </div>
 
 
-<div class="section">
-<h2>🖥️ Network Nodes</h2>
-<div id="nodesGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem">
-  <em style="color:var(--dim)">Loading nodes...</em>
-</div>
-</div>
+
 
 <div class="section">
 <h2>🌐 Network Economy</h2>
@@ -1162,6 +1157,7 @@ function renderNodes(nodes) {
 }
 
 async function load() {
+  console.log('EARTHGRID_API =', EARTHGRID_API);
   const api = EARTHGRID_API || '';
 
   // Helper to fetch JSON without throwing
@@ -1215,7 +1211,7 @@ async function load() {
       const aliveNodes = nodes.filter(n => n.alive);
       const totalBytesFromNodes = nodes.reduce((s, n) => s + (n.chunks_bytes || 0), 0);
       const availStorageGB = aliveNodes.reduce((s, n) => {
-        return s + Math.max(0, (n.storage_limit_gb || 0) - (n.chunks_bytes || 0) / 1e9);
+        return s + (n.storage_limit_gb || 0);
       }, 0);
 
       d.network = {
@@ -1311,13 +1307,22 @@ async function load() {
     if (d.version) document.getElementById('ver').textContent = d.version;
 
     // Coverage table
-    const sensors = d.coverage || {};
-    if (Object.keys(sensors).length > 0) {
-      let html = '<table class="cov-table"><thead><tr><th>Sensor</th><th class="num">Tiles</th><th class="num">Dates</th></tr></thead><tbody>';
-      for (const [col, s] of Object.entries(sensors).sort((a,b) => (b[1].items||0) - (a[1].items||0))) {
-        html += '<tr><td class="sensor">' + sensorLabel(col) + '</td>';
-        html += '<td class="num">' + (s.tiles||0) + '</td>';
-        html += '<td class="num">' + (s.dates||s.items||0) + '</td></tr>';
+    const covCols = d.coverage?.collections || [];
+    const spCols = d.spatial_coverage?.collections || {};
+    if (covCols.length > 0) {
+      let html = '<table class="cov-table"><thead><tr><th>Grid Level</th><th class="num">Tiles</th><th class="num">Files</th></tr></thead><tbody>';
+      for (const cc of covCols.sort((a,b) => (b.item_count||0) - (a.item_count||0))) {
+        const colId = cc.collection;
+        const sp = spCols[colId];
+        let tileCount = 0, fileCount = cc.item_count || 0;
+        if (sp) {
+          const cells = Array.isArray(sp) ? sp : (sp.cells || []);
+          const tileSet = new Set(cells.map(c => c.tile_id));
+          tileCount = tileSet.size;
+        }
+        html += '<tr><td class="sensor">' + sensorLabel(colId) + '</td>';
+        html += '<td class="num">' + tileCount.toLocaleString() + '</td>';
+        html += '<td class="num">' + fileCount.toLocaleString() + '</td></tr>';
       }
       html += '</tbody></table>';
       document.getElementById('coverageTable').innerHTML = html;

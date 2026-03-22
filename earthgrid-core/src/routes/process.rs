@@ -53,7 +53,6 @@ pub(crate) async fn process_operations() -> Json<serde_json::Value> {
             {"name": "evi", "description": "Compute EVI from blue/red/NIR bands"},
             {"name": "true_color", "description": "Render true-color RGB composite"},
             {"name": "cloud_mask", "description": "Apply cloud masking"},
-            {"name": "rechunk", "description": "Re-tile and rechunk item"},
             {"name": "band_math", "description": "Custom band math expression"},
         ]
     }))
