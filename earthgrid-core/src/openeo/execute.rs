@@ -317,7 +317,7 @@ pub async fn execute_sync(
                 ref_meta = Some(base_meta.clone());
             }
             let (red_data, nir_data) = truncate_pair("NDVI", &red_data, &nir_data)?;
-            let dtype = detect_spectral_dtype(red_data);
+            let dtype = base_meta.dtype.as_str();
             let ndvi_u8 = processing::compute_ndvi(red_data, nir_data, dtype);
             let ndvi_f32: Vec<f32> = ndvi_u8
                 .chunks_exact(4)
@@ -362,7 +362,7 @@ pub async fn execute_sync(
             let (red_data, meta) = load_band(&op.red, &mut store)?;
             let (nir_data, _) = load_band(&op.nir, &mut store)?;
             let (red_data, nir_data) = truncate_pair("NDVI", &red_data, &nir_data)?;
-            let dtype = detect_spectral_dtype(red_data);
+            let dtype = meta.as_ref().map(|m| m.dtype.as_str()).unwrap_or_else(|| detect_spectral_dtype(red_data));
             Ok((processing::compute_ndvi(red_data, nir_data, dtype), meta))
         }
         Some("ndwi") => {
@@ -370,7 +370,7 @@ pub async fn execute_sync(
             let (green_data, meta) = load_band(&op.green, &mut store)?;
             let (nir_data, _) = load_band(&op.nir, &mut store)?;
             let (green_data, nir_data) = truncate_pair("NDWI", &green_data, &nir_data)?;
-            let dtype = detect_spectral_dtype(green_data);
+            let dtype = meta.as_ref().map(|m| m.dtype.as_str()).unwrap_or_else(|| detect_spectral_dtype(green_data));
             Ok((processing::compute_ndwi(green_data, nir_data, dtype), meta))
         }
         Some("evi") => {
@@ -380,7 +380,7 @@ pub async fn execute_sync(
             let (nir_data, _) = load_band(&op.nir, &mut store)?;
             let (blue_data, red_data, nir_data) =
                 truncate_three("EVI", &blue_data, &red_data, &nir_data)?;
-            let dtype = detect_spectral_dtype(red_data);
+            let dtype = meta.as_ref().map(|m| m.dtype.as_str()).unwrap_or_else(|| detect_spectral_dtype(red_data));
             Ok((processing::compute_evi(blue_data, red_data, nir_data, dtype), meta))
         }
         Some("cloud_mask") => {
