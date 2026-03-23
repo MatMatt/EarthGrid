@@ -393,8 +393,8 @@ code:hover::after { opacity: 0.8; }
     </div>
 
     <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Daily Summary</div>
-      <div id="activity-daily">
+      <div class="card-title">Node Activity in Grid</div>
+      <div id="activity-grid">
         <div class="loading"><div class="spinner"></div> Loading…</div>
       </div>
     </div>
@@ -1393,47 +1393,54 @@ async function submitNodeRename() {
 async function loadActivity() {
   const days = parseInt(document.getElementById('activity-days').value) || 7;
   try {
-    const data = await apiFetch('/admin/activity?days=' + days);
-    const entries = data.activity || data.entries || [];
-    
-    // Ongoing: no structured jobs in Rust, show empty
+    // Load grid-relevant stats
+    const [statsData, ingestData, activityData] = await Promise.all([
+      apiFetch('/stats').catch(() => null),
+      apiFetch('/stats/ingest?period_days=' + days).catch(() => null),
+      apiFetch('/admin/activity?days=' + days).catch(() => null),
+    ]);
+
+    // Ongoing jobs
     setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">😴</div>No active jobs</div>');
-    
-    // Daily summary from entries
-    const byDay = {};
-    for (const e of entries) {
-      const day = (e.ts || '').slice(0, 10);
-      if (!byDay[day]) byDay[day] = { count: 0, ok: 0, fail: 0 };
-      byDay[day].count++;
-      if (e.ok) byDay[day].ok++; else byDay[day].fail++;
+
+    // Node Activity in Grid
+    let ghtml = '';
+    if (statsData) {
+      const upSecs = statsData.started ? Math.floor(Date.now()/1000 - statsData.started) : 0;
+      const upDays = Math.floor(upSecs / 86400);
+      const upHrs = Math.floor((upSecs % 86400) / 3600);
+      ghtml += '<div class="kv"><span class="kv-key">⏱️ Uptime</span><span class="kv-val">' + upDays + 'd ' + upHrs + 'h</span></div>';
+      ghtml += '<div class="kv"><span class="kv-key">📥 Data Ingested</span><span class="kv-val">' + fmt_bytes(statsData.bytes_ingested || 0) + '</span></div>';
+      ghtml += '<div class="kv"><span class="kv-key">📤 Data Served to Grid</span><span class="kv-val">' + fmt_bytes(statsData.bytes_served || 0) + ' (' + (statsData.chunks_served || 0) + ' chunks)</span></div>';
+      ghtml += '<div class="kv"><span class="kv-key">📦 Total Stored</span><span class="kv-val">' + fmt_bytes(statsData.total_bytes || 0) + ' (' + (statsData.total_chunks || 0).toLocaleString() + ' chunks)</span></div>';
+      ghtml += '<div class="kv"><span class="kv-key">🔄 Requests Handled</span><span class="kv-val">' + (statsData.requests_total || 0).toLocaleString() + '</span></div>';
     }
-    const days_sorted = Object.keys(byDay).sort().reverse();
-    if (days_sorted.length) {
-      let dhtml = '<div class="table-wrap"><table><thead><tr><th>Date</th><th>Total</th><th>OK</th><th>Failed</th></tr></thead><tbody>';
-      for (const day of days_sorted) {
-        const d = byDay[day];
-        dhtml += '<tr><td>' + day + '</td><td>' + d.count + '</td><td style="color:var(--green)">' + d.ok + '</td><td style="color:var(--red)">' + d.fail + '</td></tr>';
+    // Daily ingest trend
+    if (ingestData && ingestData.daily && ingestData.daily.length) {
+      ghtml += '<div style="margin-top:12px;font-weight:600;color:var(--text);font-size:13px">📊 Ingest History (' + days + 'd)</div>';
+      ghtml += '<div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>Date</th><th>Items</th><th>Size</th></tr></thead><tbody>';
+      for (const d of ingestData.daily.reverse()) {
+        ghtml += '<tr><td>' + d.date + '</td><td>' + d.items + '</td><td>' + d.gb.toFixed(1) + ' GB</td></tr>';
       }
-      dhtml += '</tbody></table></div>';
-      setHtml('activity-daily', dhtml);
-    } else {
-      setHtml('activity-daily', '<div class="empty"><div class="empty-icon">📭</div>No activity in period</div>');
+      ghtml += '</tbody></table></div>';
     }
-    
-    // Recent activity from entries (reverse for newest first)
-    const recent = entries.slice().reverse().slice(0, 50);
-    if (recent.length) {
+    setHtml('activity-grid', ghtml || '<div class="empty"><div class="empty-icon">📭</div>No stats available</div>');
+
+    // Recent Downloads from audit log
+    const entries = (activityData && (activityData.activity || activityData.entries)) || [];
+    const fetchEntries = entries.filter(e => e.action && (e.action.includes('fetch') || e.action.includes('ingest') || e.action.includes('resize') || e.action.includes('evict'))).reverse().slice(0, 30);
+    if (fetchEntries.length) {
       let rhtml = '<div class="table-wrap"><table><thead><tr><th>Time</th><th>Status</th><th>Action</th><th>Details</th></tr></thead><tbody>';
-      for (const e of recent) {
-        rhtml += '<tr><td style="white-space:nowrap">' + fmt_date(e.ts) + '</td><td>' + (e.ok ? '<span class="tag green">OK</span>' : '<span class="tag red">Fail</span>') + '</td><td style="color:var(--accent)">' + (e.action||'') + '</td><td style="color:var(--muted)">' + (e.detail||'') + '</td></tr>';
+      for (const e of fetchEntries) {
+        rhtml += '<tr><td style="white-space:nowrap">' + fmt_date(e.ts) + '</td><td>' + (e.ok ? '<span class="tag green">OK</span>' : '<span class="tag red">Fail</span>') + '</td><td style="color:var(--accent)">' + (e.action||'') + '</td><td style="color:var(--muted)">' + (e.detail||'').substring(0,80) + '</td></tr>';
       }
       rhtml += '</tbody></table></div>';
       setHtml('activity-downloads', rhtml);
     } else {
-      setHtml('activity-downloads', '<div class="empty"><div class="empty-icon">📭</div>No recent activity</div>');
+      setHtml('activity-downloads', '<div class="empty"><div class="empty-icon">📭</div>No recent downloads</div>');
     }
   } catch(e) {
-    setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">⚠️</div>' + e.message + '</div>');
+    setHtml('activity-grid', '<div class="empty"><div class="empty-icon">⚠️</div>' + e.message + '</div>');
   }
 }
 
