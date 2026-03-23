@@ -68,12 +68,12 @@
 
 | Node | Role | Items | Status |
 |------|------|-------|--------|
-| node-alpha (Nucleus) | Beacon + Node | ~3941 | ✅ Online |
-| wild-mesa-9687 (LenovoTP) | Node | ~474 | ✅ Online |
+| node-alpha | Beacon + Node | — | Online |
+| (example) | Node | — | Online |
 
 ## Infrastructure
 
-- **Beacon**: `mattiuzzi.zapto.org/earthgrid` (port 8400, Nucleus)
+- **Beacon**: `<your-domain>/earthgrid` (port 8400, Nucleus)
 - **Dashboard**: GitHub Pages + live beacon API
 - **CI/CD**: GitHub Actions — Linux (.tar.gz + .deb), macOS arm64, Docker (ghcr.io)
 - **Docker**: `ghcr.io/matmatt/earthgrid-core:latest`

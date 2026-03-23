@@ -148,8 +148,8 @@ docker build -t earthgrid .
 | `EARTHGRID_PORT` | HTTP port | `8400` |
 | `EARTHGRID_DATA_DIR` | Data storage path | `./data` |
 | `EARTHGRID_NODE_NAME` | Node display name | `node-alpha` |
-| `EARTHGRID_PUBLIC_URL` | Public URL for registration | `http://192.168.188.60:8400` |
-| `EARTHGRID_BEACON_URL` | Beacon URL to register with | `http://192.168.188.60:8400` |
+| `EARTHGRID_PUBLIC_URL` | Public URL for registration | `http://<your-beacon-ip>:8400` |
+| `EARTHGRID_BEACON_URL` | Beacon URL to register with | `http://<your-beacon-ip>:8400` |
 | `EARTHGRID_SOURCE_KEY` | Data source API key | (Element84 key) |
 | `EARTHGRID_ADMIN_KEY` | Admin API key | (generated) |
 | `EARTHGRID_STORAGE_LIMIT_GB` | Max storage in GB | `1000` |
@@ -178,5 +178,5 @@ cargo test --lib catalog
 
 ## Active Nodes for Testing
 
-- **Nucleus** (192.168.188.60:8400) — beacon + node-alpha
-- **LenovoTP** (192.168.188.219:8400) — wild-mesa-9687
+- Beacon node (configure EARTHGRID_BEACON_URL)
+- Data node(s) — connect to beacon
