@@ -182,6 +182,23 @@ impl BeaconRegistry {
         let _ = self.conn.execute_batch(
             "ALTER TABLE beacon_nodes ADD COLUMN catalog_version INTEGER NOT NULL DEFAULT 0;",
         );
+
+        // Spatial coverage tiles aggregated from all nodes
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS beacon_node_tiles (
+                node_id TEXT NOT NULL,
+                collection TEXT NOT NULL,
+                tile_id TEXT NOT NULL,
+                bbox_west REAL,
+                bbox_south REAL,
+                bbox_east REAL,
+                bbox_north REAL,
+                date_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (node_id, collection, tile_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_bnt_node ON beacon_node_tiles(node_id);"
+        )?;
+
         Ok(())
     }
 
@@ -431,6 +448,11 @@ impl BeaconRegistry {
     /// Prune stale nodes that haven't sent a heartbeat in `max_age_secs`.
     pub fn prune_stale(&self, max_age_secs: f64) -> Result<usize> {
         let threshold = now_ts() - max_age_secs;
+        // Also clean up tiles for pruned nodes
+        self.conn.execute(
+            "DELETE FROM beacon_node_tiles WHERE node_id IN (SELECT node_id FROM beacon_nodes WHERE last_seen < ?1)",
+            params![threshold],
+        )?;
         let affected = self.conn.execute(
             "DELETE FROM beacon_nodes WHERE last_seen < ?1",
             params![threshold],
@@ -453,6 +475,105 @@ impl BeaconRegistry {
             println!("Deduped {} beacon node(s) with duplicate names", affected);
         }
 Ok(affected)
+    }
+
+    /// Get the stored catalog_version for a node.
+    pub fn get_catalog_version(&self, node_id: &str) -> Option<u64> {
+        self.conn.query_row(
+            "SELECT catalog_version FROM beacon_nodes WHERE node_id = ?1",
+            params![node_id],
+            |row| row.get::<_, i64>(0),
+        ).ok().map(|v| v as u64)
+    }
+
+    /// Replace all tiles for a node with fresh data from /coverage/spatial.
+    pub fn store_node_tiles(&self, node_id: &str, coverage: &serde_json::Value) -> Result<usize> {
+        self.conn.execute(
+            "DELETE FROM beacon_node_tiles WHERE node_id = ?1",
+            params![node_id],
+        )?;
+        let mut count = 0usize;
+        if let Some(collections) = coverage.get("collections").and_then(|c| c.as_object()) {
+            for (collection, data) in collections {
+                if let Some(cells) = data.get("cells").and_then(|c| c.as_array()) {
+                    for cell in cells {
+                        let tile_id = cell.get("tile_id").and_then(|t| t.as_str()).unwrap_or("");
+                        let bbox = cell.get("bbox").and_then(|b| b.as_array());
+                        let (w, s, e, n) = if let Some(bbox) = bbox {
+                            (
+                                bbox.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                bbox.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                bbox.get(2).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                bbox.get(3).and_then(|v| v.as_f64()).unwrap_or(0.0),
+                            )
+                        } else {
+                            (0.0, 0.0, 0.0, 0.0)
+                        };
+                        let date_count = cell.get("date_count").and_then(|d| d.as_i64()).unwrap_or(0);
+                        self.conn.execute(
+                            "INSERT OR REPLACE INTO beacon_node_tiles
+                                (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            params![node_id, collection, tile_id, w, s, e, n, date_count],
+                        )?;
+                        count += 1;
+                    }
+                }
+            }
+        }
+        Ok(count)
+    }
+
+    /// Get aggregated spatial coverage from all nodes.
+    pub fn get_aggregated_coverage(&self) -> Result<serde_json::Value> {
+        let mut stmt = self.conn.prepare(
+            "SELECT collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north,
+                    SUM(date_count) as total_dates, COUNT(DISTINCT node_id) as node_count
+             FROM beacon_node_tiles
+             GROUP BY collection, tile_id"
+        )?;
+        let mut collections: std::collections::HashMap<String, Vec<serde_json::Value>> =
+            std::collections::HashMap::new();
+        let rows = stmt.query_map([], |row| {
+            let collection: String = row.get(0)?;
+            let tile_id: String = row.get(1)?;
+            let w: f64 = row.get(2)?;
+            let s: f64 = row.get(3)?;
+            let e: f64 = row.get(4)?;
+            let n: f64 = row.get(5)?;
+            let date_count: i64 = row.get(6)?;
+            let node_count: i64 = row.get(7)?;
+            Ok((collection, tile_id, w, s, e, n, date_count, node_count))
+        })?;
+        for row in rows {
+            if let Ok((collection, tile_id, w, s, e, n, date_count, node_count)) = row {
+                collections.entry(collection).or_default().push(
+                    serde_json::json!({
+                        "bbox": [w, s, e, n],
+                        "tile_id": tile_id,
+                        "date_count": date_count,
+                        "node_count": node_count,
+                    })
+                );
+            }
+        }
+        let col_map: serde_json::Value = collections
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::json!({ "cells": v })))
+            .collect();
+        Ok(serde_json::json!({
+            "collections": col_map,
+            "source": "beacon_aggregated",
+        }))
+    }
+
+    /// Remove tiles for a node (called when node is pruned).
+    pub fn remove_node_tiles(&self, node_id: &str) -> Result<usize> {
+        let affected = self.conn.execute(
+            "DELETE FROM beacon_node_tiles WHERE node_id = ?1",
+            params![node_id],
+        )?;
+        Ok(affected)
     }
 
     /// Federated upsert: insert or update a node from a remote beacon.
@@ -574,7 +695,16 @@ async fn register_node(
     }
     let registry = state.registry.lock().await;
     match registry.register(&req) {
-        Ok(node) => (StatusCode::CREATED, Json(serde_json::to_value(node).unwrap())).into_response(),
+        Ok(node) => {
+            // First registration → fetch coverage
+            let node_url = node.url.clone();
+            let node_id = node.node_id.clone();
+            let reg_clone = state.registry.clone();
+            tokio::spawn(async move {
+                fetch_and_store_coverage(&reg_clone, &node_id, &node_url).await;
+            });
+            (StatusCode::CREATED, Json(serde_json::to_value(node).unwrap())).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
 }
@@ -586,9 +716,33 @@ async fn heartbeat_node(
     if req.node_id.is_empty() {
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
+
+    // Check if catalog_version changed → need coverage refresh
+    let old_version = {
+        let reg = state.registry.lock().await;
+        reg.get_catalog_version(&req.node_id)
+    };
+    let new_version = req.catalog_version;
+    let version_changed = match (old_version, new_version) {
+        (Some(old), Some(new)) => new != old,
+        (None, Some(_)) => true, // first time seeing this node's version
+        _ => false,
+    };
+
     let registry = state.registry.lock().await;
     match registry.heartbeat(&req) {
-        Ok(Some(node)) => (StatusCode::OK, Json(serde_json::to_value(node).unwrap())).into_response(),
+        Ok(Some(node)) => {
+            // Spawn async coverage fetch if version changed
+            if version_changed {
+                let node_url = node.url.clone();
+                let node_id = node.node_id.clone();
+                let reg_clone = state.registry.clone();
+                tokio::spawn(async move {
+                    fetch_and_store_coverage(&reg_clone, &node_id, &node_url).await;
+                });
+            }
+            (StatusCode::OK, Json(serde_json::to_value(node).unwrap())).into_response()
+        }
         Ok(None) => err(StatusCode::NOT_FOUND, "Node not registered").into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
@@ -634,6 +788,46 @@ async fn remove_node(
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({"status": "removed", "node_id": node_id}))).into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "Node not found").into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Async coverage fetch helper
+// ---------------------------------------------------------------------------
+
+/// Fetch /coverage/spatial from a node and store tiles in the beacon DB.
+async fn fetch_and_store_coverage(
+    registry: &Arc<Mutex<BeaconRegistry>>,
+    node_id: &str,
+    node_url: &str,
+) {
+    let url = format!("{}/coverage/spatial", node_url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(coverage) => {
+                        let reg = registry.lock().await;
+                        match reg.store_node_tiles(node_id, &coverage) {
+                            Ok(n) => println!("🗺️  Coverage sync: {} tiles stored for node {}", n, &node_id[..8.min(node_id.len())]),
+                            Err(e) => eprintln!("⚠️  Coverage store failed for {}: {}", &node_id[..8.min(node_id.len())], e),
+                        }
+                    }
+                    Err(e) => eprintln!("⚠️  Coverage parse failed for {}: {}", &node_id[..8.min(node_id.len())], e),
+                }
+            } else {
+                eprintln!("⚠️  Coverage fetch {} returned {}", &node_id[..8.min(node_id.len())], resp.status());
+            }
+        }
+        Err(e) => {
+            // Node may be behind NAT or unreachable — this is normal for some nodes
+            eprintln!("⚠️  Coverage fetch failed for {}: {}", &node_id[..8.min(node_id.len())], e);
+        }
     }
 }
 
