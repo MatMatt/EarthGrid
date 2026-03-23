@@ -548,6 +548,23 @@ Ok(affected)
                                 bbox.get(2).and_then(|v| v.as_f64()).unwrap_or(0.0),
                                 bbox.get(3).and_then(|v| v.as_f64()).unwrap_or(0.0),
                             )
+                        } else if let Some(polygon) = cell.get("polygon").and_then(|p| p.as_array()) {
+                            // Derive bbox from polygon coordinates [lon, lat]
+                            let mut min_lon = f64::MAX;
+                            let mut min_lat = f64::MAX;
+                            let mut max_lon = f64::MIN;
+                            let mut max_lat = f64::MIN;
+                            for coord in polygon {
+                                if let Some(arr) = coord.as_array() {
+                                    if let (Some(lon), Some(lat)) = (arr.get(0).and_then(|v| v.as_f64()), arr.get(1).and_then(|v| v.as_f64())) {
+                                        min_lon = min_lon.min(lon);
+                                        min_lat = min_lat.min(lat);
+                                        max_lon = max_lon.max(lon);
+                                        max_lat = max_lat.max(lat);
+                                    }
+                                }
+                            }
+                            if min_lon < f64::MAX { (min_lon, min_lat, max_lon, max_lat) } else { (0.0, 0.0, 0.0, 0.0) }
                         } else {
                             (0.0, 0.0, 0.0, 0.0)
                         };
