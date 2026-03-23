@@ -606,24 +606,30 @@ async function loadStatus() {
 
 function renderBeaconInfo(info) {
   let html = '';
-  if (info.beacon) {
+  if (info.is_beacon || info.beacon) {
     html = `
       <div class="status-row" style="margin-bottom:10px">
         <div class="dot green"></div>
         <span>This node is a Beacon</span>
         <span class="tag green" style="margin-left:auto">Beacon</span>
       </div>`;
-  } else {
-    // Try to infer beacon URL from peers or settings
+  } else if (info.beacon_url) {
     html = `
       <div class="status-row" style="margin-bottom:10px">
-        <div class="dot ${info.peers > 0 ? 'green' : 'yellow'}"></div>
-        <span>${info.peers > 0 ? 'Connected' : 'No beacon configured'}</span>
+        <div class="dot green"></div>
+        <span>Beacon: <a href="${info.beacon_url}" target="_blank" style="color:var(--accent)">${info.beacon_url}</a></span>
+      </div>`;
+  } else {
+    html = `
+      <div class="status-row" style="margin-bottom:10px">
+        <div class="dot yellow"></div>
+        <span>No beacon configured</span>
       </div>`;
   }
   html += `<div class="kv"><span class="kv-key">Peers</span><span class="kv-val">${fmt_num(info.peers)}</span></div>`;
   html += `<div class="kv"><span class="kv-key">Redundancy Index</span><span class="kv-val">${info.redundancy_index ?? '—'}×</span></div>`;
   html += `<div class="kv"><span class="kv-key">OpenEO</span><span class="kv-val">${info.openeo ? '✓ Enabled' : 'Disabled'}</span></div>`;
+  html += `<div class="kv"><span class="kv-key">Auto-Update</span><span class="kv-val">${info.auto_update === 'yes' ? '✓ Yes' : 'No'}</span></div>`;
   if (info.bandwidth) {
     const bw = info.bandwidth;
     html += `<div class="kv"><span class="kv-key">Bandwidth</span><span class="kv-val">${bw.upload_mbps ?? '—'} / ${bw.download_mbps ?? '—'} Mbps</span></div>`;
