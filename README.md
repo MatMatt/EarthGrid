@@ -272,8 +272,6 @@ earthgrid status                         # Show if running + node stats
 earthgrid info                           # Show local storage info
 earthgrid update                         # Git pull + cargo build + restart
 earthgrid resize --size 100              # Change storage limit to 100 GB
-earthgrid install-service                # Install systemd user service
-earthgrid uninstall-service              # Remove systemd user service
 earthgrid serve                          # Start HTTP server (foreground)
 ```
 
