@@ -365,6 +365,7 @@ impl BeaconRegistry {
         }
         if let Some(v) = req.can_source { param_values.push(Box::new(v as i64)); }
         if let Some(v) = req.storage_limit_gb { param_values.push(Box::new(v)); }
+        if let Some(v) = req.catalog_version { param_values.push(Box::new(v as i64)); }
         if let Some(ref v) = req.url { param_values.push(Box::new(v.clone())); }
         if let Some(ref v) = req.node_name { param_values.push(Box::new(v.clone())); }
         param_values.push(Box::new(req.node_id.clone()));
