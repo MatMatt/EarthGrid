@@ -6,7 +6,7 @@ Distributed storage and openEO processing for Earth observation data.
 
 [![Live Dashboard](https://img.shields.io/badge/dashboard-live-brightgreen)](https://mattiuzzi.zapto.org/earthgrid)
 [![Rust](https://img.shields.io/badge/rust-stable-orange)](https://github.com/MatMatt/EarthGrid)
-[![Tests](https://img.shields.io/badge/tests-81%20passing-brightgreen)](https://github.com/MatMatt/EarthGrid)
+[![Tests](https://img.shields.io/badge/tests-148%20passing-brightgreen)](https://github.com/MatMatt/EarthGrid)
 [![License](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSE)
 
 > ## 🚧 Early Stage — Test Phase
@@ -52,6 +52,10 @@ Download the latest release for your platform from [**Releases**](https://github
 # Linux / macOS (binary)
 chmod +x earthgrid-*
 sudo mv earthgrid-linux-x86_64 /usr/local/bin/earthgrid
+
+# ⚠️ GDAL is required on all platforms (see Prerequisites below)
+# macOS: brew install gdal
+# Linux: sudo apt install libgdal-dev
 ```
 
 #### Debian/Ubuntu (.deb package)
@@ -217,7 +221,7 @@ The entire codebase is written in Rust for performance and reliability:
 | `user_auth.rs`         | API key management                                                                      |
 | `federation.rs`        | Federated search across peers                                                           |
 | + more                 | network, transport, peers, auth, audit                                                  |
-| **Total**              | **14k LOC, 81 tests passing**                                                           |
+| **Total**              | **~15k LOC, 148 tests passing**                                                         |
 
 ### Network Roles
 
