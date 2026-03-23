@@ -498,28 +498,34 @@ fn main() -> anyhow::Result<()> {
                 println!("✅ Restarted via systemd");
             } else {
                 // Stop old daemon if running, then auto-restart
-                let was_running = if let Some(pid) = read_pid() {
-                    if is_process_alive(pid) {
-                        let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        true
-                    } else { false }
-                } else {
-                    // Fallback: check for running earthgrid process via pgrep
-                    let pgrep = process::Command::new("pgrep")
-                        .args(["-f", "earthgrid.*serve"])
-                        .output();
-                    if let Ok(out) = pgrep {
-                        if out.status.success() {
-                            if let Some(pid_str) = String::from_utf8_lossy(&out.stdout).lines().next() {
-                                if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                                    let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
-                                    std::thread::sleep(std::time::Duration::from_secs(2));
+                let was_running = {
+                    let mut found = false;
+                    // Try PID file first
+                    if let Some(pid) = read_pid() {
+                        if is_process_alive(pid) {
+                            let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            found = true;
+                        }
+                    }
+                    // Always try pgrep as fallback (PID file may be stale)
+                    if !found {
+                        let pgrep = process::Command::new("pgrep")
+                            .args(["-f", "earthgrid.*serve"])
+                            .output();
+                        if let Ok(out) = pgrep {
+                            if out.status.success() {
+                                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                                    if let Ok(pid) = line.trim().parse::<u32>() {
+                                        let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                                    }
                                 }
+                                std::thread::sleep(std::time::Duration::from_secs(2));
+                                found = true;
                             }
-                            true
-                        } else { false }
-                    } else { false }
+                        }
+                    }
+                    found
                 };
 
                 if was_running {
