@@ -214,14 +214,52 @@ pub(crate) async fn resize_storage(
             }
         }
     }
+    // Smart eviction: if new limit is below current usage, evict items
+    let current_bytes = {
+        let store = state.store.lock().await;
+        store.total_bytes()
+    };
+    let current_gb = current_bytes as f64 / 1_073_741_824.0;
+    let eviction_result = if size_gb < current_gb {
+        let beacon_db_path = state.data_dir.join("beacon.db");
+        let beacon_path = if beacon_db_path.exists() { Some(beacon_db_path) } else { None };
+        let catalog = state.catalog.lock().await;
+        let mut store = state.store.lock().await;
+        match crate::eviction::evict(
+            &catalog,
+            &mut store,
+            size_gb,
+            beacon_path.as_deref(),
+        ) {
+            Ok(result) => Some(result),
+            Err(e) => {
+                eprintln!("⚠️  Eviction error: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     state.audit.log("resize", &format!("size_gb={} (was {})", size_gb, old_gb), "", true);
-    (StatusCode::OK, Json(serde_json::json!({
+    let mut resp = serde_json::json!({
         "status": "resized",
         "old_gb": old_gb,
         "new_gb": size_gb,
         "config_path": config_path.display().to_string(),
-        "note": "Restart node for new limit to take effect on ChunkStore",
-    }))).into_response()
+    });
+    if let Some(ev) = eviction_result {
+        resp["eviction"] = serde_json::json!({
+            "items_deleted": ev.items_deleted,
+            "bytes_freed": ev.bytes_freed,
+            "gb_freed": ev.bytes_freed as f64 / 1_073_741_824.0,
+            "items_kept_as_last_replica": ev.items_kept,
+            "reason": ev.reason,
+        });
+    } else {
+        resp["note"] = serde_json::json!("Storage within new limit, no eviction needed");
+    }
+    (StatusCode::OK, Json(resp)).into_response()
 }
 
 

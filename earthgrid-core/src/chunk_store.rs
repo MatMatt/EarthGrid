@@ -266,6 +266,16 @@ impl ChunkStore {
         self.chunk_path(hash).exists()
     }
 
+    /// Get the size in bytes of a single chunk from the DB index.
+    pub fn chunk_size(&self, hash: &str) -> Result<u64> {
+        let size: i64 = self.db.query_row(
+            "SELECT size_bytes FROM chunks WHERE hash = ?1",
+            rusqlite::params![hash],
+            |r| r.get(0),
+        )?;
+        Ok(size as u64)
+    }
+
     /// Verify a chunk's integrity against its hash.
     ///
     /// Returns `Ok(true)` if valid, `Err(IntegrityViolation)` if corrupted.

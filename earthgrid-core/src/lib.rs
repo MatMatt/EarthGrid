@@ -10,6 +10,7 @@ pub mod chunk_store;
 pub mod client;
 pub mod config;
 pub mod error;
+pub mod eviction;
 pub mod federation;
 pub mod fetcher;
 pub mod gamification;
