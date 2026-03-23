@@ -354,3 +354,33 @@ pub(crate) async fn fetch_handler(
     (status, Json(serde_json::to_value(result).unwrap_or_default())).into_response()
 }
 
+
+
+// ---------------------------------------------------------------------------
+// Catalog changes endpoint — GET /catalog/changes
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ChangesQuery {
+    /// Unix timestamp — return items added after this time.
+    pub since: f64,
+}
+
+/// GET /catalog/changes?since=<unix_timestamp>
+/// Returns items added/modified since the given timestamp + current catalog_version.
+pub(crate) async fn catalog_changes(
+    State(state): State<AppState>,
+    Query(q): Query<ChangesQuery>,
+) -> impl IntoResponse {
+    let catalog = state.catalog.lock().await;
+    let version = catalog.catalog_version().unwrap_or(0);
+    let items = catalog.changes_since(q.since).unwrap_or_default();
+    let count = items.len();
+
+    Json(serde_json::json!({
+        "catalog_version": version,
+        "since": q.since,
+        "items": items,
+        "count": count,
+    }))
+}

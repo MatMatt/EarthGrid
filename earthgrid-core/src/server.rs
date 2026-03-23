@@ -128,6 +128,7 @@ pub fn router(state: AppState) -> Router {
         // Element84 STAC Fetcher
         .route("/fetch", post(crate::routes::ingest_routes::fetch_handler))
         .route("/fetch/preview", get(crate::routes::ingest_routes::fetch_preview))
+        .route("/catalog/changes", get(crate::routes::ingest_routes::catalog_changes))
         // Stats
         .route("/stats/downloads", get(crate::routes::stats::stats_downloads))
         .route("/stats/hot-chunks", get(crate::routes::stats::stats_hot_chunks))
@@ -539,6 +540,10 @@ pub async fn serve(
                         cat.list_collections().unwrap_or_default().into_iter().map(|c| c.id).collect()
                     };
 
+                    let catalog_version = {
+                        let cat = hb_catalog.lock().await;
+                        cat.catalog_version().unwrap_or(0)
+                    };
                     let public_url = std::env::var("EARTHGRID_PUBLIC_URL")
                         .unwrap_or_else(|_| format!("http://127.0.0.1:{}", hb_port));
                     let body = serde_json::json!({
@@ -551,6 +556,7 @@ pub async fn serve(
                         "chunks_bytes": chunks_bytes,
                         "collections": collections,
                         "storage_limit_gb": hb_storage_limit_gb,
+                        "catalog_version": catalog_version,
                     });
 
                     // First attempt: heartbeat (fast path for already-registered nodes)
@@ -569,6 +575,7 @@ pub async fn serve(
                                 "chunks_bytes": chunks_bytes,
                                 "collections": collections,
                                 "storage_limit_gb": hb_storage_limit_gb,
+                                "catalog_version": catalog_version,
                             });
                             let _ = client.post(&register_url).json(&register_body).send().await;
                         }

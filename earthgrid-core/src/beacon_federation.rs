@@ -366,6 +366,7 @@ mod tests {
                 node_url: None,
                 group_id: None,
                 uptime_seconds: 3600,
+                catalog_version: 0,
                 alive: true,
             },
             beacon_origin: "beacon-abc".into(),

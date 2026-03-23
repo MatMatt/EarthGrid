@@ -47,6 +47,8 @@ pub struct BeaconNode {
     pub node_url: Option<String>,
     pub group_id: Option<String>,
     pub uptime_seconds: i64,
+    /// Monotonic catalog version — changes on every ingest/delete.
+    pub catalog_version: u64,
     /// Computed: last_seen > now - 300s
     pub alive: bool,
 }
@@ -66,6 +68,7 @@ pub struct RegisterRequest {
     pub sponsor_url: Option<String>,
     pub node_url: Option<String>,
     pub group: Option<String>,
+    pub catalog_version: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -91,6 +94,7 @@ pub struct HeartbeatRequest {
     pub collections: Option<Vec<String>>,
     pub can_source: Option<bool>,
     pub storage_limit_gb: Option<f64>,
+    pub catalog_version: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +178,10 @@ impl BeaconRegistry {
             );
             CREATE INDEX IF NOT EXISTS idx_grid_metrics_ts ON grid_metrics(ts);",
         )?;
+        // Safe migration: add catalog_version column if missing
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_nodes ADD COLUMN catalog_version INTEGER NOT NULL DEFAULT 0;",
+        );
         Ok(())
     }
 
@@ -196,6 +204,7 @@ impl BeaconRegistry {
             node_url: row.get(12)?,
             group_id: row.get(13)?,
             uptime_seconds: row.get(14)?,
+            catalog_version: row.get::<_, i64>(15).unwrap_or(0) as u64,
             alive: is_alive(last_seen),
         })
     }
@@ -319,6 +328,10 @@ impl BeaconRegistry {
         }
         if req.storage_limit_gb.is_some() {
             sets.push(format!("storage_limit_gb = ?{}", pos));
+            pos += 1;
+        }
+        if req.catalog_version.is_some() {
+            sets.push(format!("catalog_version = ?{}", pos));
             pos += 1;
         }
         if req.url.is_some() {
@@ -690,6 +703,7 @@ mod tests {
             sponsor_url: None,
             node_url: None,
             group: None,
+            catalog_version: None,
         };
         let node = reg.register(&req).unwrap();
         assert_eq!(node.node_id, "node-1");
@@ -717,6 +731,7 @@ mod tests {
             sponsor_url: None,
             node_url: None,
             group: None,
+            catalog_version: None,
         };
         reg.register(&req).unwrap();
 
@@ -731,6 +746,7 @@ mod tests {
             collections: None,
             can_source: None,
             storage_limit_gb: None,
+            catalog_version: None,
         };
         let updated = reg.heartbeat(&hb).unwrap().unwrap();
         assert_eq!(updated.item_count, 42);
@@ -755,6 +771,7 @@ mod tests {
                 sponsor_url: None,
                 node_url: None,
                 group: None,
+                catalog_version: None,
             }).unwrap();
         }
         let all = reg.list(false).unwrap();
