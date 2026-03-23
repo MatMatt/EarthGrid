@@ -107,11 +107,18 @@ impl Settings {
     // -----------------------------------------------------------------------
 
     /// Load settings from a JSON config file. Missing fields use defaults.
+    /// Default beacon URL baked into the binary.
+    pub const DEFAULT_BEACON_URL: &str = "http://mattiuzzi.zapto.org/earthgrid";
+
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("reading config from {}", path.display()))?;
         let mut s: Self = serde_json::from_str(&raw)
             .with_context(|| format!("parsing config JSON from {}", path.display()))?;
+        // If beacon_url is empty after loading config, use the compiled default
+        if s.beacon_url.is_empty() {
+            s.beacon_url = Self::DEFAULT_BEACON_URL.to_string();
+        }
         s.apply_env_overrides();
         s.ensure_node_id();
         s.ensure_node_name();
