@@ -75,6 +75,10 @@ impl UserAuth {
             CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key);
             CREATE INDEX IF NOT EXISTS idx_users_active  ON users(active);",
         )?;
+        // Migration: add last_used column if missing (pre-v0.6 DBs)
+        let _ = conn.execute_batch(
+            "ALTER TABLE users ADD COLUMN last_used REAL NOT NULL DEFAULT 0;"
+        );
         Ok(())
     }
 
