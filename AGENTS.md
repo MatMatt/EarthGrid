@@ -35,7 +35,7 @@ earthgrid-core/
 │   ├── catalog.rs        # STAC catalog management
 │   ├── ingest.rs         # GDAL ingest + COG
 │   ├── fetcher.rs        # Remote STAC fetch + distributed delegation
-│   ├── openeo.rs         # openEO processing gateway
+│   ├── openeo/           # openEO v1.2 gateway (graph, execute, output, geoprocess, catalogue, api)
 │   ├── processing.rs     # Raster operations (NDVI, etc.)
 │   ├── network.rs        # libp2p networking
 │   ├── federation.rs     # Cross-node catalog sync
@@ -164,7 +164,7 @@ cargo test
 cargo test --lib chunk_store
 cargo test --lib catalog
 
-# Current: 138 tests, all passing
+# Current: 148 tests passing, 1 ignored (gdalwarp integration; run with --ignored if gdalwarp on PATH)
 ```
 
 ## Contributing Workflow

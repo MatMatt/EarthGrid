@@ -42,10 +42,10 @@ EarthGrid stores **only official data** from sources like Copernicus (Sentinel) 
 
 Download the latest release for your platform from [**Releases**](https://github.com/MatMatt/EarthGrid/releases):
 
-| Platform | Binary | Tray App |
-|---|---|---|
-| 🐧 Linux x86_64 | `earthgrid-linux-x86_64` | `earthgrid-tray-linux-x86_64` |
-| 🍎 macOS arm64 | `earthgrid-macos-arm64` | `earthgrid-tray-macos-arm64` |
+| Platform         | Binary                         | Tray App                            |
+| ---------------- | ------------------------------ | ----------------------------------- |
+| 🐧 Linux x86_64   | `earthgrid-linux-x86_64`       | `earthgrid-tray-linux-x86_64`       |
+| 🍎 macOS arm64    | `earthgrid-macos-arm64`        | `earthgrid-tray-macos-arm64`        |
 | 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | `earthgrid-tray-windows-x86_64.exe` |
 
 ```bash
@@ -76,9 +76,9 @@ docker run -d \
 
 ### Prerequisites
 
-| Requirement | Version | Why |
-|---|---|---|
-| **GDAL** | ≥ 3.4 | Raster I/O (required on all platforms) |
+| Requirement | Version | Why                                    |
+| ----------- | ------- | -------------------------------------- |
+| **GDAL**    | ≥ 3.4   | Raster I/O (required on all platforms) |
 
 ```bash
 # Debian / Ubuntu
@@ -193,31 +193,31 @@ Open `http://localhost:8400/ui` in your browser to see the WebUI.
 
 The entire codebase is written in Rust for performance and reliability:
 
-| Module | Description |
-|---|---|
-| `main.rs` | CLI (clap v4) — all subcommands |
-| `gamification.rs` | Achievements, leaderboards, challenges |
-| `server.rs` | HTTP API (Actix-web) |
-| `openeo.rs` | openEO v1.2.0 gateway |
-| `fetcher.rs` | CDSE + Element84 data fetching |
-| `catalog.rs` | STAC catalog (SQLite) |
-| `beacon.rs` | Peer discovery + coordination |
-| `stats.rs` | Download statistics |
-| `smart_replication.rs` | Beacon-coordinated replication |
-| `ingest.rs` | GDAL spatial tiling + COG ingest |
-| `config.rs` | TOML config management |
-| `bandwidth.rs` | Token bucket rate control |
-| `chunk_store.rs` | Content-addressed storage (SHA-256) |
-| `client.rs` | M2M client for node access |
-| `reconstruct.rs` | COG reconstruction from chunks |
-| `processing.rs` | NDVI, NDWI, EVI, cloud mask |
-| `node_identity.rs` | Ed25519 keypair (libp2p) |
-| `source_users.rs` | CDSE credential management |
-| `ratelimit.rs` | Sliding window rate limiter |
-| `user_auth.rs` | API key management |
-| `federation.rs` | Federated search across peers |
-| + more | network, transport, peers, auth, audit |
-| **Total** | **14k LOC, 81 tests passing** |
+| Module                 | Description                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| `main.rs`              | CLI (clap v4) — all subcommands                                                         |
+| `gamification.rs`      | Achievements, leaderboards, challenges                                                  |
+| `server.rs`            | HTTP API (axum)                                                                         |
+| `openeo/`              | openEO v1.2 gateway — graph execution, formats, temporal aggregate, `gdalwarp` resample |
+| `fetcher.rs`           | CDSE + Element84 data fetching                                                          |
+| `catalog.rs`           | STAC catalog (SQLite)                                                                   |
+| `beacon.rs`            | Peer discovery + coordination                                                           |
+| `stats.rs`             | Download statistics                                                                     |
+| `smart_replication.rs` | Beacon-coordinated replication                                                          |
+| `ingest.rs`            | GDAL spatial tiling + COG ingest                                                        |
+| `config.rs`            | TOML config management                                                                  |
+| `bandwidth.rs`         | Token bucket rate control                                                               |
+| `chunk_store.rs`       | Content-addressed storage (SHA-256)                                                     |
+| `client.rs`            | M2M client for node access                                                              |
+| `reconstruct.rs`       | COG reconstruction from chunks                                                          |
+| `processing.rs`        | NDVI, NDWI, EVI, cloud mask                                                             |
+| `node_identity.rs`     | Ed25519 keypair (libp2p)                                                                |
+| `source_users.rs`      | CDSE credential management                                                              |
+| `ratelimit.rs`         | Sliding window rate limiter                                                             |
+| `user_auth.rs`         | API key management                                                                      |
+| `federation.rs`        | Federated search across peers                                                           |
+| + more                 | network, transport, peers, auth, audit                                                  |
+| **Total**              | **14k LOC, 81 tests passing**                                                           |
 
 ### Network Roles
 
@@ -346,20 +346,20 @@ export EARTHGRID_CATALOG_PATH=$HOME/.earthgrid-data/catalog.db
 
 ### What's open (by design)
 
-| Action | Why |
-|---|---|
-| Browse the STAC catalog | Public data should be discoverable |
-| Download data | Public data should be accessible |
-| View network status | Transparency builds trust |
-| Search across the network | That's the whole point |
+| Action                    | Why                                |
+| ------------------------- | ---------------------------------- |
+| Browse the STAC catalog   | Public data should be discoverable |
+| Download data             | Public data should be accessible   |
+| View network status       | Transparency builds trust          |
+| Search across the network | That's the whole point             |
 
 ### What's protected
 
-| Action | Protection | Why |
-|---|---|---|
-| Ingest new data | API key | Prevents unauthorized writes |
-| Run processing | Per-user API key | Only authenticated users can process |
-| Source credentials | **CLI only** | Provider credentials never leave the node |
+| Action             | Protection       | Why                                       |
+| ------------------ | ---------------- | ----------------------------------------- |
+| Ingest new data    | API key          | Prevents unauthorized writes              |
+| Run processing     | Per-user API key | Only authenticated users can process      |
+| Source credentials | **CLI only**     | Provider credentials never leave the node |
 
 ### Node Authentication
 
@@ -379,32 +379,40 @@ EarthGrid includes an openEO v1.2.0 compatible gateway.
 
 **Python:**
 
+Requires `pip install openeo`. The node must already hold matching scenes (e.g. `POST /fetch` for that bbox/bands) or `/result` will auto-fetch missing bands when possible. Use `fetch_metadata=False` because collection metadata from EarthGrid is minimal (no band dimension in STAC). 
+
 ```python
 import openeo
 
 conn = openeo.connect("http://localhost:8400")
-cube = conn.load_collection("sentinel-2-l2a",
+cube = conn.load_collection(
+    "sentinel-2-l2a",
     spatial_extent={"west": 12.4, "south": 55.6, "east": 12.6, "north": 55.7},
-    temporal_extent=["2026-03-01", "2026-03-12"],
-    bands=["B04", "B08"])
+    temporal_extent=["2024-06-01", "2024-06-15"],
+    bands=["B04", "B08"],
+    fetch_metadata=False,
+)
 cube.ndvi(red="B04", nir="B08").save_result("GTiff").download("ndvi.tif")
 ```
 
 **R:**
 
+Install [`openeo` from CRAN](https://cran.r-project.org/package=openeo). Use a `temporal_extent` that overlaps ingested Sentinel-2 data (same idea as Python: run `POST /fetch` first or rely on auto-fetch when the graph runs).
+
 ```r
 library(openeo)
 
 con <- connect("http://localhost:8400")
-p <- processes()
+p <- processes(con)
 
-cube <- p$load_collection("sentinel-2-l2a",
-    spatial_extent = list(west=12.4, south=55.6, east=12.6, north=55.7),
-    temporal_extent = c("2026-03-01", "2026-03-12"),
+cube <- p$load_collection(
+    "sentinel-2-l2a",
+    spatial_extent = list(west = 12.4, south = 55.6, east = 12.6, north = 55.7),
+    temporal_extent = c("2024-06-01", "2024-06-15"),
     bands = c("B04", "B08"))
-ndvi <- p$ndvi(cube, red="B04", nir="B08")
-result <- p$save_result(ndvi, format="GTiff")
-compute_result(result, "ndvi.tif")
+ndvi <- p$ndvi(cube, red = "B04", nir = "B08")
+result <- p$save_result(ndvi, format = "GTiff")
+compute_result(result, output_file = "ndvi.tif", con = con)
 ```
 
 ---
@@ -424,10 +432,10 @@ All gamification is privacy-respecting and opt-in.
 
 ## Data Sources
 
-| Provider | Account | Data | Format |
-|---|---|---|---|
-| **Element84** (AWS) | ❌ No | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG |
-| **CDSE** (Copernicus) | ✅ Free | S1, S2, S3, S5P, full archive | Converted to COG |
+| Provider              | Account | Data                          | Format           |
+| --------------------- | ------- | ----------------------------- | ---------------- |
+| **Element84** (AWS)   | ❌ No    | S2 L2A, S1 RTC, Landsat C2 L2 | Already COG      |
+| **CDSE** (Copernicus) | ✅ Free  | S1, S2, S3, S5P, full archive | Converted to COG |
 
 ---
 
@@ -450,11 +458,11 @@ Live network stats: **[mattiuzzi.zapto.org/earthgrid](https://mattiuzzi.zapto.or
 
 ## Data Licensing & Attribution
 
-| Data type | Required attribution |
-|---|---|
-| Unmodified Sentinel data | *"Copernicus Sentinel data [Year]"* |
-| Modified Sentinel data | *"Contains modified Copernicus Sentinel data [Year]"* |
-| Landsat data | *"Landsat Level-2 data courtesy of USGS"* |
+| Data type                | Required attribution                                  |
+| ------------------------ | ----------------------------------------------------- |
+| Unmodified Sentinel data | *"Copernicus Sentinel data [Year]"*                   |
+| Modified Sentinel data   | *"Contains modified Copernicus Sentinel data [Year]"* |
+| Landsat data             | *"Landsat Level-2 data courtesy of USGS"*             |
 
 ---
 
