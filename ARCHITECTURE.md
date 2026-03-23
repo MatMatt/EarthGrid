@@ -15,18 +15,38 @@ EarthGrid is a distributed, self-filling geospatial data grid. It stores Earth o
 - Deduplication is automatic: identical data is stored only once
 
 ### Intelligent Redundancy (not Full Replication)
-- Each chunk exists on **N nodes** (replication factor, default N=3)
+- Each chunk exists on **N nodes** (replication factor, dynamically computed)
 - NOT every node has everything — but everything is reachable
 - When a node needs a chunk, it fetches from the nearest peer that has it
 - If no peer has it → download from source (CDSE, Element84, etc.)
 
-### Replication Strategy
+### Dynamic Replication Strategy
+The replication factor adapts automatically based on network conditions:
+
+**Inputs:**
+- Total nodes alive in the grid
+- Total free storage across all nodes
+- Per-item access frequency (from stats engine)
+- Network health (node churn rate, uptime streaks)
+
+**Rules:**
 | Category | Replication Factor | Trigger |
 |---|---|---|
-| Hot data (frequently requested) | 4–6 | Auto-promote based on access stats |
-| Default | 3 | Standard for all new ingests |
-| Cold data (rarely accessed) | 2 | Auto-demote after inactivity period |
+| Hot data (frequently requested) | min(nodes, 4–6) | Access count > threshold in 7d window |
+| Default | max(2, min(3, alive_nodes - 1)) | Standard for all new ingests |
+| Cold data (rarely accessed) | max(2, grid_factor) | No access for 30+ days |
 | Minimum | 2 | Never below 2 (single-node-failure safe) |
+| Network < 3 nodes | 1 | Degrade gracefully, warn operator |
+
+**Auto-tuning loop (beacon):**
+1. Every 5 minutes, beacon computes 
+2. For each item: compare current copies vs. target factor
+3. Under-replicated → assign replication task to node with most free space
+4. Over-replicated → mark lowest-uptime copy as eviction candidate
+5. Hot promotion: items with >10 requests/week get +1 factor
+6. Cold demotion: items with 0 requests/30d get -1 factor (min 2)
+
+The goal: **maximize resilience within available storage**, not blindly replicate everything.
 
 ## Architecture Components
 
@@ -217,7 +237,12 @@ Single Rust binary. Python prototype has been fully replaced.
 **Planned:**
 - [ ] Mutual TLS for inter-node authentication
 - [ ] Replication factor auto-tuning based on network-wide stats
+- [ ] openEO User Defined Functions (UDF) support
+- [ ] Sentinel-1 GRD/SLC ingest and processing
+- [ ] Landsat Collection 2 ingest pipeline
 - [ ] Sentinel-3 support (requires swath-to-grid preprocessing)
+- [ ] CLMS data products (where processable via openEO)
+- [ ] Additional Sentinel missions (S5P atmospheric, S6 altimetry)
 
 ## Tech Stack
 

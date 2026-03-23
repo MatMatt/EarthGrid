@@ -504,7 +504,23 @@ fn main() -> anyhow::Result<()> {
                         std::thread::sleep(std::time::Duration::from_secs(2));
                         true
                     } else { false }
-                } else { false };
+                } else {
+                    // Fallback: check for running earthgrid process via pgrep
+                    let pgrep = process::Command::new("pgrep")
+                        .args(["-f", "earthgrid.*serve"])
+                        .output();
+                    if let Ok(out) = pgrep {
+                        if out.status.success() {
+                            if let Some(pid_str) = String::from_utf8_lossy(&out.stdout).lines().next() {
+                                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                                    let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                                    std::thread::sleep(std::time::Duration::from_secs(2));
+                                }
+                            }
+                            true
+                        } else { false }
+                    } else { false }
+                };
 
                 if was_running {
                     // Auto-restart: find binary in ~/.cargo/bin or PATH
