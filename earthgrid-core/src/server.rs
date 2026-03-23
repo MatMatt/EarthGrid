@@ -346,15 +346,24 @@ pub async fn serve(
         storage_limit_gb,
         data_dir: data_dir.clone(),
         active_requests: Arc::new(AtomicUsize::new(0)),
-        is_beacon: env::var("EARTHGRID_BEACON")
-            .map(|v| v.to_lowercase() == "true" || v == "1")
-            .unwrap_or(false),
+        is_beacon: {
+            let from_env = env::var("EARTHGRID_BEACON")
+                .map(|v| v.to_lowercase() == "true" || v == "1")
+                .unwrap_or(false);
+            let from_cfg = {
+                let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+                std::fs::read_to_string(&cfg_path)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|v| v["also_beacon"].as_bool())
+                    .unwrap_or(false)
+            };
+            from_env || from_cfg
+        },
     };
 
-    // Conditionally build beacon router (EARTHGRID_BEACON=true)
-    let beacon_enabled = env::var("EARTHGRID_BEACON")
-        .map(|v| v.to_lowercase() == "true" || v == "1")
-        .unwrap_or(false);
+    // Conditionally build beacon router (EARTHGRID_BEACON=true or also_beacon in config)
+    let beacon_enabled = state.is_beacon;
 
     let hb_peers = state.peers.clone();
     // Clones for P2P handler
