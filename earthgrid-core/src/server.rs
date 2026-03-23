@@ -393,6 +393,65 @@ pub async fn serve(
                 app = app.merge(beacon_router(beacon_state.clone()));
                 println!("🔦 Beacon registry enabled ({}) [beacon_id={}]", beacon_db_path.display(), &beacon_id[..8]);
 
+                // Self-registration: register this node in its own beacon DB
+                {
+                    let self_collections: Vec<String> = {
+                        let cat = state_clone_catalog.lock().await;
+                        cat.list_collections().unwrap_or_default().into_iter().map(|c| c.id).collect()
+                    };
+                    let (self_chunks, self_bytes) = {
+                        let store = state_clone_store.lock().await;
+                        (store.chunk_count(), store.total_bytes())
+                    };
+                    let self_items = {
+                        let cat = state_clone_catalog.lock().await;
+                        cat.item_count(None).unwrap_or(0)
+                    };
+                    let self_url = std::env::var("EARTHGRID_PUBLIC_URL")
+                        .unwrap_or_else(|_| format!("http://127.0.0.1:{}", port));
+                    let reg = beacon_state.registry.lock().await;
+                    let self_req = crate::beacon::RegisterRequest {
+                        node_id: state_node_id.clone(),
+                        node_name: Some(state_node_name.clone()),
+                        url: self_url,
+                        collections: Some(self_collections),
+                        item_count: Some(self_items as i64),
+                        chunk_count: Some(self_chunks as i64),
+                        chunks_bytes: Some(self_bytes as i64),
+                        can_source: Some(true),
+                        storage_limit_gb: Some(storage_limit_gb),
+                        sponsor_name: None,
+                        sponsor_url: None,
+                        node_url: None,
+                        group: None,
+                        catalog_version: None,
+                    };
+                    // Try heartbeat first (updates existing), fall back to register (creates new)
+                    match reg.heartbeat(&crate::beacon::HeartbeatRequest {
+                        node_id: self_req.node_id.clone(),
+                        url: Some(self_req.url.clone()),
+                        node_name: self_req.node_name.clone(),
+                        item_count: self_req.item_count,
+                        chunk_count: self_req.chunk_count,
+                        chunks_bytes: self_req.chunks_bytes,
+                        uptime_seconds: None,
+                        collections: self_req.collections.clone(),
+                        can_source: self_req.can_source,
+                        storage_limit_gb: self_req.storage_limit_gb,
+                        catalog_version: self_req.catalog_version.map(|v| v as u64),
+                    }) {
+                        Ok(Some(node)) => println!("✅ Beacon self-registered: {} ({})", node.node_name, &node.node_id[..8]),
+                        Ok(None) => {
+                            // Not registered yet, do initial register
+                            match reg.register(&self_req) {
+                                Ok(node) => println!("✅ Beacon self-registered: {} ({})", node.node_name, &node.node_id[..8]),
+                                Err(e) => eprintln!("⚠️  Beacon self-registration failed: {}", e),
+                            }
+                        }
+                        Err(e) => eprintln!("⚠️  Beacon self-heartbeat failed: {}", e),
+                    }
+                }
+
                 // Federation: connect to peer beacons if configured
                 let peer_urls: Vec<String> = std::env::var("EARTHGRID_BEACON_PEERS")
                     .unwrap_or_default()
