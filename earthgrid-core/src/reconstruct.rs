@@ -320,14 +320,14 @@ fn write_cog(
 fn extract_geotransform(props: &serde_json::Value, bbox: [f64; 4], width: u32, height: u32) -> [f64; 6] {
     if let Some(tf) = props.get("earthgrid:transform").and_then(|v| v.as_array()) {
         if tf.len() >= 6 {
-            return [
-                tf[0].as_f64().unwrap_or(0.0),
-                tf[1].as_f64().unwrap_or(1.0),
-                tf[2].as_f64().unwrap_or(0.0),
-                tf[3].as_f64().unwrap_or(0.0),
-                tf[4].as_f64().unwrap_or(0.0),
-                tf[5].as_f64().unwrap_or(-1.0),
-            ];
+            let raw: Vec<f64> = (0..6).map(|i| tf[i].as_f64().unwrap_or(0.0)).collect();
+            // earthgrid:transform may be stored as [px, rot, ox, rot, py, oy]
+            // GDAL expects [origin_x, pixel_x, rot, origin_y, rot, pixel_y]
+            return if raw[0].abs() < raw[2].abs() {
+                [raw[2], raw[0], raw[1], raw[5], raw[3], raw[4]]
+            } else {
+                [raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]]
+            };
         }
     }
     geotransform_from_bbox(bbox, width, height)

@@ -194,14 +194,16 @@ pub async fn execute_sync(
         if tf.len() < 6 {
             return None;
         }
-        let transform = [
-            tf[0].as_f64()?,
-            tf[1].as_f64()?,
-            tf[2].as_f64()?,
-            tf[3].as_f64()?,
-            tf[4].as_f64()?,
-            tf[5].as_f64()?,
-        ];
+        // earthgrid:transform is stored as [pixel_x, rot, origin_x, rot, pixel_y, origin_y]
+        // GDAL expects [origin_x, pixel_x, rot, origin_y, rot, pixel_y]
+        let raw: Vec<f64> = (0..6).map(|i| tf[i].as_f64().unwrap_or(0.0)).collect();
+        let transform = if raw[0].abs() < raw[2].abs() {
+            // Stored order: [px, rot, ox, rot, py, oy] → swap to GDAL order
+            [raw[2], raw[0], raw[1], raw[5], raw[3], raw[4]]
+        } else {
+            // Already GDAL order: [ox, px, rot, oy, rot, py]
+            [raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]]
+        };
         Some(RasterMeta {
             width,
             height,
