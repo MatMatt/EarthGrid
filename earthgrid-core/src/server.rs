@@ -667,31 +667,37 @@ pub async fn serve(
                         "item_count": item_count,
                         "chunk_count": chunk_count,
                         "chunks_bytes": chunks_bytes,
-                        "collections": collections,
+                        "collections": collections.clone(),
                         "storage_limit_gb": hb_storage_limit_gb,
                         "catalog_version": catalog_version,
                     });
 
                     // First attempt: heartbeat (fast path for already-registered nodes)
-                    let resp = client.post(&url).json(&body).send().await;
-                    // If not registered, register first then heartbeat
-                    if let Ok(r) = &resp {
-                        if r.status() == reqwest::StatusCode::NOT_FOUND {
-                            let register_url = url.replace("/beacon/heartbeat", "/beacon/register");
-                            let register_body = serde_json::json!({
-                                "node_id": hb_node_id,
-                                "node_name": hb_node_name,
-                                "url": std::env::var("EARTHGRID_PUBLIC_URL").unwrap_or_else(|_| format!("http://127.0.0.1:{}", hb_port)),
-                                "can_source": true,
-                                "item_count": item_count,
-                                "chunk_count": chunk_count,
-                                "chunks_bytes": chunks_bytes,
-                                "collections": collections,
-                                "storage_limit_gb": hb_storage_limit_gb,
-                                "catalog_version": catalog_version,
-                            });
-                            let _ = client.post(&register_url).json(&register_body).send().await;
+                    match client.post(&url).json(&body).send().await {
+                        Ok(r) => {
+                            let status = r.status();
+                            let _ = r.bytes().await; // consume body
+                            if status == reqwest::StatusCode::NOT_FOUND {
+                                // Not registered yet, register first
+                                let register_url = url.replace("/beacon/heartbeat", "/beacon/register");
+                                let register_body = serde_json::json!({
+                                    "node_id": hb_node_id,
+                                    "node_name": hb_node_name,
+                                    "url": std::env::var("EARTHGRID_PUBLIC_URL").unwrap_or_else(|_| format!("http://127.0.0.1:{}", hb_port)),
+                                    "can_source": true,
+                                    "item_count": item_count,
+                                    "chunk_count": chunk_count,
+                                    "chunks_bytes": chunks_bytes,
+                                    "collections": collections,
+                                    "storage_limit_gb": hb_storage_limit_gb,
+                                    "catalog_version": catalog_version,
+                                });
+                                if let Ok(rr) = client.post(&register_url).json(&register_body).send().await {
+                                    let _ = rr.bytes().await;
+                                }
+                            }
                         }
+                        Err(_) => {} // beacon unreachable, retry next tick
                     }
 
                     // Update gamification DB
