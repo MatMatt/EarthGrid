@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::error::Result;
+use crate::beacon_federation::FederationState;
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -46,6 +47,8 @@ pub struct BeaconNode {
     pub node_url: Option<String>,
     pub group_id: Option<String>,
     pub uptime_seconds: i64,
+    /// Monotonic catalog version — changes on every ingest/delete.
+    pub catalog_version: u64,
     /// Computed: last_seen > now - 300s
     pub alive: bool,
 }
@@ -65,17 +68,33 @@ pub struct RegisterRequest {
     pub sponsor_url: Option<String>,
     pub node_url: Option<String>,
     pub group: Option<String>,
+    pub catalog_version: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GridMetricPoint {
+    pub ts: f64,
+    pub nodes_total: i64,
+    pub nodes_alive: i64,
+    pub total_items: i64,
+    pub total_chunks: i64,
+    pub total_bytes: i64,
+    pub total_storage_limit_gb: f64,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct HeartbeatRequest {
     pub node_id: String,
+    pub url: Option<String>,
+    pub node_name: Option<String>,
     pub item_count: Option<i64>,
     pub chunk_count: Option<i64>,
     pub chunks_bytes: Option<i64>,
     pub uptime_seconds: Option<i64>,
     pub collections: Option<Vec<String>>,
     pub can_source: Option<bool>,
+    pub storage_limit_gb: Option<f64>,
+    pub catalog_version: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,8 +165,23 @@ impl BeaconRegistry {
                 group_id TEXT,
                 uptime_seconds INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_beacon_last_seen ON beacon_nodes(last_seen);",
+            CREATE INDEX IF NOT EXISTS idx_beacon_last_seen ON beacon_nodes(last_seen);
+
+            CREATE TABLE IF NOT EXISTS grid_metrics (
+                ts REAL NOT NULL,
+                nodes_total INTEGER NOT NULL DEFAULT 0,
+                nodes_alive INTEGER NOT NULL DEFAULT 0,
+                total_items INTEGER NOT NULL DEFAULT 0,
+                total_chunks INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER NOT NULL DEFAULT 0,
+                total_storage_limit_gb REAL NOT NULL DEFAULT 0.0
+            );
+            CREATE INDEX IF NOT EXISTS idx_grid_metrics_ts ON grid_metrics(ts);",
         )?;
+        // Safe migration: add catalog_version column if missing
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_nodes ADD COLUMN catalog_version INTEGER NOT NULL DEFAULT 0;",
+        );
         Ok(())
     }
 
@@ -170,12 +204,47 @@ impl BeaconRegistry {
             node_url: row.get(12)?,
             group_id: row.get(13)?,
             uptime_seconds: row.get(14)?,
+            catalog_version: row.get::<_, i64>(15).unwrap_or(0) as u64,
             alive: is_alive(last_seen),
         })
     }
 
     /// Register or update a node.
     pub fn register(&self, req: &RegisterRequest) -> Result<BeaconNode> {
+        // Reject if node_id already exists with a different URL
+        let existing: Option<String> = self.conn.query_row(
+            "SELECT url FROM beacon_nodes WHERE node_id = ?1",
+            rusqlite::params![req.node_id],
+            |row| row.get(0),
+        ).ok();
+        if let Some(ref old_url) = existing {
+            if old_url != &req.url && !old_url.is_empty() {
+                return Err(crate::error::EarthGridError::Other(format!(
+                    "node_id {} is already registered with a different URL ({}).                      Use a different node_id or remove the existing node first.",
+                    req.node_id, old_url
+                )));
+            }
+        }
+
+        // Reject if node_name already exists under a different node_id
+        if let Some(ref name) = req.node_name {
+            if !name.is_empty() {
+                let existing_id: Option<String> = self.conn.query_row(
+                    "SELECT node_id FROM beacon_nodes WHERE node_name = ?1",
+                    rusqlite::params![name],
+                    |row| row.get(0),
+                ).ok();
+                if let Some(ref eid) = existing_id {
+                    if eid != &req.node_id {
+                        return Err(crate::error::EarthGridError::Other(format!(
+                            "node_name '{}' is already taken by node {}. Choose a different name.",
+                            name, eid
+                        )));
+                    }
+                }
+            }
+        }
+
         let collections_json = serde_json::to_string(
             &req.collections.clone().unwrap_or_default(),
         )?;
@@ -221,6 +290,12 @@ impl BeaconRegistry {
 
     /// Update heartbeat fields for an existing node.
     pub fn heartbeat(&self, req: &HeartbeatRequest) -> Result<Option<BeaconNode>> {
+        // Opportunistic cleanup: prune stale nodes (>1h) and dedup on each heartbeat
+        let _ = self.prune_stale(3600.0);
+        let _ = self.dedup_by_name();
+        // Record grid-wide metrics snapshot (max every 10 min)
+        let _ = self.record_grid_snapshot();
+
         let now = now_ts();
 
         // Build dynamic UPDATE statement only for provided fields
@@ -251,6 +326,22 @@ impl BeaconRegistry {
             sets.push(format!("can_source = ?{}", pos));
             pos += 1;
         }
+        if req.storage_limit_gb.is_some() {
+            sets.push(format!("storage_limit_gb = ?{}", pos));
+            pos += 1;
+        }
+        if req.catalog_version.is_some() {
+            sets.push(format!("catalog_version = ?{}", pos));
+            pos += 1;
+        }
+        if req.url.is_some() {
+            sets.push(format!("url = ?{}", pos));
+            pos += 1;
+        }
+        if req.node_name.is_some() {
+            sets.push(format!("node_name = ?{}", pos));
+            pos += 1;
+        }
 
         // node_id placeholder
         let node_id_pos = pos;
@@ -273,6 +364,10 @@ impl BeaconRegistry {
             param_values.push(Box::new(serde_json::to_string(v).unwrap_or_default()));
         }
         if let Some(v) = req.can_source { param_values.push(Box::new(v as i64)); }
+        if let Some(v) = req.storage_limit_gb { param_values.push(Box::new(v)); }
+        if let Some(v) = req.catalog_version { param_values.push(Box::new(v as i64)); }
+        if let Some(ref v) = req.url { param_values.push(Box::new(v.clone())); }
+        if let Some(ref v) = req.node_name { param_values.push(Box::new(v.clone())); }
         param_values.push(Box::new(req.node_id.clone()));
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
@@ -332,6 +427,129 @@ impl BeaconRegistry {
             .execute("DELETE FROM beacon_nodes WHERE node_id = ?1", params![node_id])?;
         Ok(affected > 0)
     }
+
+    /// Prune stale nodes that haven't sent a heartbeat in `max_age_secs`.
+    pub fn prune_stale(&self, max_age_secs: f64) -> Result<usize> {
+        let threshold = now_ts() - max_age_secs;
+        let affected = self.conn.execute(
+            "DELETE FROM beacon_nodes WHERE last_seen < ?1",
+            params![threshold],
+        )?;
+        if affected > 0 {
+            println!("Pruned {} stale beacon node(s)", affected);
+        }
+        Ok(affected)
+    }
+
+    /// Deduplicate: if a node_name is registered with multiple IDs, keep only the most recent.
+    pub fn dedup_by_name(&self) -> Result<usize> {
+        let affected = self.conn.execute(
+            "DELETE FROM beacon_nodes WHERE rowid NOT IN (
+                SELECT MAX(rowid) FROM beacon_nodes GROUP BY node_name
+            ) AND node_name != ''",
+            [],
+        )?;
+        if affected > 0 {
+            println!("Deduped {} beacon node(s) with duplicate names", affected);
+        }
+Ok(affected)
+    }
+
+    /// Federated upsert: insert or update a node from a remote beacon.
+    /// Bypasses URL-conflict checks (the remote beacon is authoritative).
+    pub fn federated_upsert(&self, node: &BeaconNode) -> Result<()> {
+        let collections_json = serde_json::to_string(&node.collections)?;
+        self.conn.execute(
+            "INSERT INTO beacon_nodes
+                (node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
+                 can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT(node_id) DO UPDATE SET
+                node_name = excluded.node_name,
+                url = excluded.url,
+                collections_json = excluded.collections_json,
+                item_count = excluded.item_count,
+                chunk_count = excluded.chunk_count,
+                chunks_bytes = excluded.chunks_bytes,
+                can_source = excluded.can_source,
+                storage_limit_gb = excluded.storage_limit_gb,
+                last_seen = excluded.last_seen,
+                sponsor_name = excluded.sponsor_name,
+                sponsor_url = excluded.sponsor_url,
+                node_url = excluded.node_url,
+                group_id = excluded.group_id,
+                uptime_seconds = excluded.uptime_seconds",
+            rusqlite::params![
+                node.node_id,
+                node.node_name,
+                node.url,
+                collections_json,
+                node.item_count,
+                node.chunk_count,
+                node.chunks_bytes,
+                node.can_source as i64,
+                node.storage_limit_gb,
+                node.last_seen,
+                node.sponsor_name,
+                node.sponsor_url,
+                node.node_url,
+                node.group_id,
+                node.uptime_seconds,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Record a point-in-time snapshot of grid-wide metrics.
+    /// Called periodically (e.g. every heartbeat or every N minutes).
+    pub fn record_grid_snapshot(&self) -> Result<()> {
+        let now = now_ts();
+        // Only record if last snapshot is > 10 min old
+        let last: f64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(ts), 0.0) FROM grid_metrics", [], |r| r.get(0)
+        ).unwrap_or(0.0);
+        if now - last < 600.0 { return Ok(()); }
+
+        self.conn.execute(
+            "INSERT INTO grid_metrics (ts, nodes_total, nodes_alive, total_items, total_chunks, total_bytes, total_storage_limit_gb)
+             SELECT ?1,
+                    COUNT(*),
+                    SUM(CASE WHEN (?1 - last_seen) < 3600 THEN 1 ELSE 0 END),
+                    SUM(item_count),
+                    SUM(chunk_count),
+                    SUM(chunks_bytes),
+                    SUM(storage_limit_gb)
+             FROM beacon_nodes",
+            rusqlite::params![now],
+        )?;
+        // Keep max 1 year of data (~52k rows at 10-min intervals)
+        let cutoff = now - 365.0 * 86400.0;
+        self.conn.execute("DELETE FROM grid_metrics WHERE ts < ?1", rusqlite::params![cutoff])?;
+        Ok(())
+    }
+
+    /// Get grid metrics time series for the given number of days.
+    pub fn get_grid_metrics(&self, days: f64) -> Result<Vec<GridMetricPoint>> {
+        let cutoff = now_ts() - days * 86400.0;
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, nodes_total, nodes_alive, total_items, total_chunks, total_bytes, total_storage_limit_gb
+             FROM grid_metrics WHERE ts >= ?1 ORDER BY ts ASC"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![cutoff], |row| {
+            Ok(GridMetricPoint {
+                ts: row.get(0)?,
+                nodes_total: row.get(1)?,
+                nodes_alive: row.get(2)?,
+                total_items: row.get(3)?,
+                total_chunks: row.get(4)?,
+                total_bytes: row.get(5)?,
+                total_storage_limit_gb: row.get(6)?,
+            })
+        })?;
+        let mut result = Vec::new();
+        for r in rows { result.push(r?); }
+        Ok(result)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +559,7 @@ impl BeaconRegistry {
 #[derive(Clone)]
 pub struct BeaconState {
     pub registry: Arc<Mutex<BeaconRegistry>>,
+    pub federation: Option<FederationState>,
 }
 
 async fn register_node(
@@ -423,6 +642,30 @@ async fn remove_node(
 // ---------------------------------------------------------------------------
 
 /// Build the beacon router. Mount at "/" or nest under a prefix.
+#[derive(Debug, Deserialize)]
+pub struct MetricsQuery {
+    pub days: Option<f64>,
+}
+
+async fn grid_metrics(
+    State(state): State<BeaconState>,
+    axum::extract::Query(q): axum::extract::Query<MetricsQuery>,
+) -> Json<serde_json::Value> {
+    let days = q.days.unwrap_or(30.0);
+    let reg = state.registry.lock().await;
+    match reg.get_grid_metrics(days) {
+        Ok(points) => Json(serde_json::json!({
+            "days": days,
+            "count": points.len(),
+            "metrics": points,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "error": format!("{}", e),
+            "metrics": [],
+        })),
+    }
+}
+
 pub fn beacon_router(state: BeaconState) -> Router {
     Router::new()
         .route("/beacon/register", post(register_node))
@@ -430,12 +673,15 @@ pub fn beacon_router(state: BeaconState) -> Router {
         .route("/beacon/nodes", get(list_nodes))
         .route("/beacon/nodes/{node_id}", get(get_node))
         .route("/beacon/nodes/{node_id}", delete(remove_node))
+        .route("/beacon/metrics", get(grid_metrics))
+        .route("/beacon/ws", axum::routing::any(crate::beacon_federation::ws_handler))
         .with_state(state)
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
 
 #[cfg(test)]
 mod tests {
@@ -458,6 +704,7 @@ mod tests {
             sponsor_url: None,
             node_url: None,
             group: None,
+            catalog_version: None,
         };
         let node = reg.register(&req).unwrap();
         assert_eq!(node.node_id, "node-1");
@@ -485,17 +732,22 @@ mod tests {
             sponsor_url: None,
             node_url: None,
             group: None,
+            catalog_version: None,
         };
         reg.register(&req).unwrap();
 
         let hb = HeartbeatRequest {
             node_id: "node-2".to_string(),
+            url: None,
+            node_name: None,
             item_count: Some(42),
             chunk_count: Some(200),
             chunks_bytes: Some(512_000),
             uptime_seconds: Some(3600),
             collections: None,
             can_source: None,
+            storage_limit_gb: None,
+            catalog_version: None,
         };
         let updated = reg.heartbeat(&hb).unwrap().unwrap();
         assert_eq!(updated.item_count, 42);
@@ -515,11 +767,12 @@ mod tests {
                 chunk_count: None,
                 chunks_bytes: None,
                 can_source: None,
-                storage_limit_gb: None,
+            storage_limit_gb: None,
                 sponsor_name: None,
                 sponsor_url: None,
                 node_url: None,
                 group: None,
+                catalog_version: None,
             }).unwrap();
         }
         let all = reg.list(false).unwrap();

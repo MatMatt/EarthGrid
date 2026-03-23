@@ -392,6 +392,17 @@ impl GamificationEngine {
             .unwrap_or(0) > 0;
 
         if !exists {
+            // Dedup: remove old entries with same display_alias but different node_id
+            if !node_name.is_empty() {
+                let removed = conn.execute(
+                    "DELETE FROM node_scores WHERE display_alias = ?1 AND node_id != ?2",
+                    params![node_name, node_id],
+                ).unwrap_or(0);
+                if removed > 0 {
+                    eprintln!("Gamification: deduped {} old entry/entries for {}", removed, node_name);
+                }
+            }
+
             conn.execute(
                 "INSERT INTO node_scores
                  (node_id, opted_in, anonymous, display_alias, first_seen, last_seen,
@@ -407,6 +418,17 @@ impl GamificationEngine {
                 ],
             )?;
         } else {
+            // Dedup: also clean old entries with same name but different ID
+            if !node_name.is_empty() {
+                let removed = conn.execute(
+                    "DELETE FROM node_scores WHERE display_alias = ?1 AND node_id != ?2",
+                    params![node_name, node_id],
+                ).unwrap_or(0);
+                if removed > 0 {
+                    eprintln!("Gamification: deduped {} old entry/entries for {}", removed, node_name);
+                }
+            }
+
             let mut parts = vec!["last_seen=?1".to_string()];
             let mut idx = 2usize;
             let mut bind_vals: Vec<String> = vec![now.to_string()];
@@ -443,6 +465,62 @@ impl GamificationEngine {
             // Since we build dynamic SQL we use the connection directly with params_from_iter
             conn.execute(&sql, rusqlite::params_from_iter(bind_vals.iter()))?;
         }
+        Ok(())
+    }
+
+
+    /// Sync absolute node stats from beacon heartbeat data.
+    /// Called on each heartbeat to keep leaderboard current.
+    pub fn sync_node_stats(
+        &self,
+        node_id: &str,
+        node_name: &str,
+        items: i64,
+        bytes_stored: i64,
+        storage_pledged_gb: f64,
+    ) -> Result<()> {
+        let now = unix_now();
+        let conn = self.conn.lock().unwrap();
+
+        conn.execute(
+            "INSERT INTO node_scores (node_id, display_alias, items_ingested, bytes_stored,
+                                       storage_pledged_gb, last_seen, opted_in, score)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 0)
+             ON CONFLICT(node_id) DO UPDATE SET
+                items_ingested = ?3,
+                bytes_stored = ?4,
+                storage_pledged_gb = ?5,
+                display_alias = CASE WHEN ?2 != '' THEN ?2 ELSE display_alias END,
+                last_seen = ?6",
+            params![node_id, node_name, items, bytes_stored, storage_pledged_gb, now],
+        )?;
+
+        let score: i64 = conn.query_row(
+            "SELECT uptime_seconds, storage_pledged_gb, items_ingested,
+                    bytes_served, queries_answered, streak_days
+             FROM node_scores WHERE node_id=?1",
+            params![node_id],
+            |r| {
+                let uptime_days = r.get::<_, f64>(0)? / 86400.0;
+                let pledged = r.get::<_, f64>(1)?;
+                let items = r.get::<_, i64>(2)?;
+                let served = r.get::<_, i64>(3)? as f64 / 1_073_741_824.0;
+                let queries = r.get::<_, i64>(4)?;
+                let streak = r.get::<_, i64>(5)?;
+                Ok((uptime_days * 10.0
+                    + pledged * 5.0
+                    + items as f64 * 1.0
+                    + served * 3.0
+                    + (queries / 100) as f64
+                    + streak as f64 * 2.0) as i64)
+            },
+        ).unwrap_or(0);
+
+        conn.execute(
+            "UPDATE node_scores SET score=?1 WHERE node_id=?2",
+            params![score, node_id],
+        )?;
+
         Ok(())
     }
 

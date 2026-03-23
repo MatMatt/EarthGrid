@@ -203,7 +203,30 @@ enum Commands {
     },
 }
 
+/// Load environment variables from ~/.earthgrid/.env (simple key=value format).
+fn load_dotenv() {
+    let env_path = earthgrid_home().join(".env");
+    if let Ok(content) = std::fs::read_to_string(&env_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((key, val)) = line.split_once('=') {
+                let key = key.trim();
+                let val = val.trim();
+                // Only set if not already set (env vars take precedence)
+                if std::env::var(key).is_err() {
+                    std::env::set_var(key, val);
+                }
+            }
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    // Load .env from ~/.earthgrid/.env (if exists) before parsing CLI
+    load_dotenv();
     let cli = Cli::parse();
     let store_path = cli.data_dir.join("store");
     let catalog_path = cli.data_dir.join("catalog.db");
@@ -305,6 +328,15 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
+            // Check if port is already in use
+            match std::net::TcpListener::bind(format!("0.0.0.0:{}", port)) {
+                Ok(_listener) => { /* port free, listener drops immediately */ }
+                Err(_) => {
+                    eprintln!("❌ Port {} is already in use. Is EarthGrid already running?", port);
+                    return Ok(());
+                }
+            }
+
             // Spawn self as background process with 'serve'
             let exe = std::env::current_exe()?;
             let data_dir_str = cli.data_dir.to_string_lossy().to_string();
@@ -326,7 +358,7 @@ fn main() -> anyhow::Result<()> {
                 .create(true).append(true).open(&log_file)?;
             let log_err = log.try_clone()?;
 
-            let child = process::Command::new(&exe)
+            let mut child = process::Command::new(&exe)
                 .args(&args)
                 .stdin(process::Stdio::null())
                 .stdout(log)
@@ -337,6 +369,17 @@ fn main() -> anyhow::Result<()> {
             // Write PID
             fs::create_dir_all(earthgrid_home())?;
             fs::write(pid_file(), pid.to_string())?;
+
+            // Wait briefly and verify child is still alive
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = fs::remove_file(pid_file());
+                    eprintln!("❌ EarthGrid exited immediately ({}). Check {}", status, log_file.display());
+                    return Ok(());
+                }
+                _ => {} // Still running or can't check — OK
+            }
 
             println!("🚀 EarthGrid started (PID {})", pid);
             println!("   Port: {}", port);
@@ -455,13 +498,35 @@ fn main() -> anyhow::Result<()> {
                 println!("✅ Restarted via systemd");
             } else {
                 // Stop old daemon if running, then auto-restart
-                let was_running = if let Some(pid) = read_pid() {
-                    if is_process_alive(pid) {
-                        let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        true
-                    } else { false }
-                } else { false };
+                let was_running = {
+                    let mut found = false;
+                    // Try PID file first
+                    if let Some(pid) = read_pid() {
+                        if is_process_alive(pid) {
+                            let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            found = true;
+                        }
+                    }
+                    // Always try pgrep as fallback (PID file may be stale)
+                    if !found {
+                        let pgrep = process::Command::new("pgrep")
+                            .args(["-f", "earthgrid.*serve"])
+                            .output();
+                        if let Ok(out) = pgrep {
+                            if out.status.success() {
+                                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                                    if let Ok(pid) = line.trim().parse::<u32>() {
+                                        let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                                    }
+                                }
+                                std::thread::sleep(std::time::Duration::from_secs(2));
+                                found = true;
+                            }
+                        }
+                    }
+                    found
+                };
 
                 if was_running {
                     // Auto-restart: find binary in ~/.cargo/bin or PATH

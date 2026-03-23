@@ -1,0 +1,81 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgdal-dev libclang-dev libnetcdf-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: earthgrid-core
+      - name: Build
+        working-directory: earthgrid-core
+        run: cargo build --release
+      - name: Strip & package
+        run: |
+          strip earthgrid-core/target/release/earthgrid
+          mkdir -p dist
+          cp earthgrid-core/target/release/earthgrid dist/earthgrid-linux-x86_64
+          cd dist && tar czf earthgrid-linux-x86_64.tar.gz earthgrid-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist/earthgrid-linux-x86_64.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        run: brew install gdal pkg-config netcdf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: earthgrid-core
+      - name: Build
+        working-directory: earthgrid-core
+        run: cargo build --release
+        env:
+          GDAL_HOME: /opt/homebrew/opt/gdal
+          PKG_CONFIG_PATH: /opt/homebrew/opt/gdal/lib/pkgconfig
+      - name: Strip & package
+        run: |
+          strip earthgrid-core/target/release/earthgrid
+          mkdir -p dist
+          cp earthgrid-core/target/release/earthgrid dist/earthgrid-macos-arm64
+          cd dist && tar czf earthgrid-macos-arm64.tar.gz earthgrid-macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/earthgrid-macos-arm64.tar.gz
+
+  release:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/linux-x86_64/earthgrid-linux-x86_64.tar.gz
+            artifacts/macos-arm64/earthgrid-macos-arm64.tar.gz
+          generate_release_notes: true

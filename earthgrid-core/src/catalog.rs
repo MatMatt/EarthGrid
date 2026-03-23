@@ -127,9 +127,62 @@ impl Catalog {
                 FOREIGN KEY (collection) REFERENCES collections(id)
             );
             CREATE INDEX IF NOT EXISTS idx_items_collection ON items(collection);
-            CREATE INDEX IF NOT EXISTS idx_items_bbox ON items(bbox_west, bbox_south, bbox_east, bbox_north);",
+            CREATE INDEX IF NOT EXISTS idx_items_bbox ON items(bbox_west, bbox_south, bbox_east, bbox_north);
+
+            CREATE TABLE IF NOT EXISTS catalog_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT OR IGNORE INTO catalog_meta (key, value) VALUES ('catalog_version', '0');",
         )?;
         Ok(())
+    }
+
+
+    // --- Catalog Version ---
+
+    /// Get the current catalog version (monotonically increasing counter).
+    pub fn catalog_version(&self) -> Result<u64> {
+        let v: String = self.conn.query_row(
+            "SELECT value FROM catalog_meta WHERE key = 'catalog_version'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(v.parse::<u64>().unwrap_or(0))
+    }
+
+    /// Increment catalog version and return the new value.
+    pub fn increment_version(&self) -> Result<u64> {
+        self.conn.execute(
+            "UPDATE catalog_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'catalog_version'",
+            [],
+        )?;
+        self.catalog_version()
+    }
+
+    /// Return items with created_at > since_ts (for change detection).
+    pub fn changes_since(&self, since_ts: f64) -> Result<Vec<StacItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at
+             FROM items WHERE created_at > ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![since_ts], |row| {
+            let props_str: String = row.get(6)?;
+            let hashes_str: String = row.get(7)?;
+            Ok(StacItem {
+                id: row.get(0)?,
+                collection: row.get(1)?,
+                bbox: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?],
+                properties: serde_json::from_str(&props_str).unwrap_or_default(),
+                chunk_hashes: serde_json::from_str(&hashes_str).unwrap_or_default(),
+                created_at: row.get(8)?,
+            })
+        })?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
     }
 
     // --- Collections ---
@@ -212,6 +265,7 @@ impl Catalog {
                 item.created_at,
             ],
         )?;
+        self.increment_version()?;
         Ok(())
     }
 
@@ -431,6 +485,9 @@ impl Catalog {
         let affected = self
             .conn
             .execute("DELETE FROM items WHERE id = ?1", params![id])?;
+        if affected > 0 {
+            self.increment_version()?;
+        }
         Ok(affected > 0)
     }
 
@@ -441,6 +498,9 @@ impl Catalog {
             .execute("DELETE FROM items WHERE collection = ?1", params![collection_id])?;
         self.conn
             .execute("DELETE FROM collections WHERE id = ?1", params![collection_id])?;
+        if items_deleted > 0 {
+            self.increment_version()?;
+        }
         Ok(items_deleted)
     }
 }
@@ -606,6 +666,62 @@ mod tests {
             })
             .unwrap();
         assert_eq!(catalog.item_count(None).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_catalog_version() {
+        let catalog = Catalog::in_memory().unwrap();
+        assert_eq!(catalog.catalog_version().unwrap(), 0);
+
+        catalog.add_item(&StacItem {
+            id: "v1".to_string(),
+            collection: "c".to_string(),
+            bbox: [0.0; 4],
+            properties: serde_json::json!({}),
+            chunk_hashes: vec![],
+            created_at: now_ts(),
+        }).unwrap();
+        assert_eq!(catalog.catalog_version().unwrap(), 1);
+
+        catalog.add_item(&StacItem {
+            id: "v2".to_string(),
+            collection: "c".to_string(),
+            bbox: [0.0; 4],
+            properties: serde_json::json!({}),
+            chunk_hashes: vec![],
+            created_at: now_ts(),
+        }).unwrap();
+        assert_eq!(catalog.catalog_version().unwrap(), 2);
+
+        catalog.delete_item("v1").unwrap();
+        assert_eq!(catalog.catalog_version().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_changes_since() {
+        let catalog = Catalog::in_memory().unwrap();
+        let t1 = now_ts();
+        catalog.add_item(&StacItem {
+            id: "old".to_string(),
+            collection: "c".to_string(),
+            bbox: [0.0; 4],
+            properties: serde_json::json!({}),
+            chunk_hashes: vec![],
+            created_at: t1,
+        }).unwrap();
+        let t2 = t1 + 100.0;
+        catalog.add_item(&StacItem {
+            id: "new".to_string(),
+            collection: "c".to_string(),
+            bbox: [0.0; 4],
+            properties: serde_json::json!({}),
+            chunk_hashes: vec![],
+            created_at: t2,
+        }).unwrap();
+
+        let changes = catalog.changes_since(t1).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, "new");
     }
 
     #[test]
