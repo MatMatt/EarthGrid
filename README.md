@@ -4,7 +4,7 @@ Distributed storage and openEO processing for Earth observation data.
 
 **No single point of failure. No vendor lock-in. Community-driven.**
 
-[![Live Dashboard](https://img.shields.io/badge/dashboard-live-brightgreen)](https://matmatt.github.io/EarthGrid/)
+[![Live Dashboard](https://img.shields.io/badge/dashboard-live-brightgreen)](https://mattiuzzi.zapto.org/earthgrid)
 [![Rust](https://img.shields.io/badge/rust-stable-orange)](https://github.com/MatMatt/EarthGrid)
 [![Tests](https://img.shields.io/badge/tests-81%20passing-brightgreen)](https://github.com/MatMatt/EarthGrid)
 [![License](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSE)
@@ -444,7 +444,7 @@ Your other workloads always come first.
 
 ## Dashboard
 
-Live network stats: **[matmatt.github.io/EarthGrid](https://matmatt.github.io/EarthGrid/)**
+Live network stats: **[mattiuzzi.zapto.org/earthgrid](https://mattiuzzi.zapto.org/earthgrid)**
 
 ---
 
