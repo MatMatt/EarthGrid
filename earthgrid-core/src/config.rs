@@ -71,7 +71,7 @@ impl Default for Settings {
             port: 8400,
             peers: Vec::new(),
             role: "node".to_string(),
-            beacon_url: String::new(),
+            beacon_url: "http://mattiuzzi.zapto.org/earthgrid".to_string(),
             beacon_peers: Vec::new(),
             public_url: String::new(),
             storage_limit_gb: 50.0,
