@@ -616,7 +616,14 @@ pub async fn serve(
         let hb_storage_limit_gb = storage_limit_gb;
         let hb_gamification = state_clone_gamification.clone();
         let hb_port = port;
-        let beacon_url_env = std::env::var("EARTHGRID_BEACON_URL").ok();
+        let beacon_url_env = std::env::var("EARTHGRID_BEACON_URL").ok().or_else(|| {
+            // Fallback: read beacon_url from config.json
+            let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+            std::fs::read_to_string(&cfg_path)
+                .ok()
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
+        });
 
         let target_url = if beacon_enabled {
             Some(format!("http://127.0.0.1:{}/beacon/heartbeat", hb_port))
