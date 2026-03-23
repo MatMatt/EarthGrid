@@ -252,6 +252,40 @@ pub fn gdal_warp_geotiff(src_tiff: &[u8], cfg: &ResampleSpatialConfig) -> Result
     Ok(bytes)
 }
 
+/// Clip a GeoTIFF to a WGS84 bounding box using gdalwarp.
+/// The input may be in any CRS; gdalwarp handles reprojection via -te_srs.
+pub fn gdal_clip_bbox(src_tiff: &[u8], west: f64, south: f64, east: f64, north: f64) -> Result<Vec<u8>, String> {
+    let id = uuid::Uuid::new_v4();
+    let tmp_dir = std::env::temp_dir();
+    let src_path = tmp_dir.join(format!("eg_clip_src_{id}.tif"));
+    let dst_path = tmp_dir.join(format!("eg_clip_dst_{id}.tif"));
+
+    fs::write(&src_path, src_tiff).map_err(|e| format!("write clip src: {e}"))?;
+
+    let status = Command::new("gdalwarp")
+        .arg("-q")
+        .arg("-overwrite")
+        .arg("-of").arg("GTiff")
+        .arg("-te").arg(format!("{west}")).arg(format!("{south}")).arg(format!("{east}")).arg(format!("{north}"))
+        .arg("-te_srs").arg("EPSG:4326")
+        .arg("-co").arg("COMPRESS=LZW")
+        .arg(&src_path)
+        .arg(&dst_path)
+        .status()
+        .map_err(|e| format!("failed to spawn gdalwarp for clip: {e}"))?;
+
+    let _ = fs::remove_file(&src_path);
+
+    if !status.success() {
+        let _ = fs::remove_file(&dst_path);
+        return Err(format!("gdalwarp clip exited with {status}"));
+    }
+
+    let bytes = fs::read(&dst_path).map_err(|e| format!("read clip output: {e}"))?;
+    let _ = fs::remove_file(&dst_path);
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

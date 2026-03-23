@@ -14,7 +14,7 @@ use crate::openeo::graph::{
     resolve_band_alias, truncate_pair, truncate_three,
 };
 use crate::openeo::output::{
-    apply_resample_if_needed, decode_geotiff_first_band_f32,
+    apply_resample_if_needed, decode_geotiff_first_band_f32, wrap_geotiff,
 };
 use crate::openeo::types::{ProcessGraph, RasterMeta};
 use super::geoprocess;
@@ -408,5 +408,15 @@ pub async fn execute_sync(
         }
     }?;
 
-    apply_resample_if_needed(pixels, meta, res_cfg.as_ref())
+    let (pixels, meta) = apply_resample_if_needed(pixels, meta, res_cfg.as_ref())?;
+
+    // Clip to requested bbox (spatial_extent from load_collection)
+    if let (Some((w, s, e, n)), Some(m)) = (bbox, &meta) {
+        let tiff = wrap_geotiff(&pixels, m)?;
+        let clipped = geoprocess::gdal_clip_bbox(&tiff, w, s, e, n)?;
+        let (px, m2) = decode_geotiff_first_band_f32(&clipped)?;
+        Ok((px, Some(m2)))
+    } else {
+        Ok((pixels, meta))
+    }
 }
