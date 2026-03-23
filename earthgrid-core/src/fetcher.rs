@@ -665,6 +665,7 @@ struct GridNode {
     url: String,
     free_gb: f64,
     is_local: bool,
+    #[allow(dead_code)]
     admin_key: String,
 }
 
