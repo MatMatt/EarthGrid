@@ -44,6 +44,7 @@ pub(crate) async fn node_info(State(state): State<AppState>) -> Json<serde_json:
         "bytes_served": stats.bytes_served,
         "requests_total": stats.requests_total,
         "storage_limit_gb": state.storage_limit_gb,
+        "openeo": true,
     }))
 }
 
