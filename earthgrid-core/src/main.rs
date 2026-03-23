@@ -616,8 +616,19 @@ fn main() -> anyhow::Result<()> {
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or(serde_json::json!({}));
 
-            let node_name = prompt("Node name",
-                existing["node_name"].as_str().unwrap_or("earthgrid-node"))?;
+            // Generate a random default name if none exists
+            let default_name = existing["node_name"].as_str()
+                .filter(|n| !n.is_empty() && *n != "earthgrid-node")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    let id = uuid::Uuid::new_v4().to_string();
+                    let seed = id.bytes().fold(0usize, |acc, b| acc.wrapping_add(b as usize));
+                    let adj = ["swift","bold","calm","dark","fair","keen","wild","warm","cool","free","pure","vast","deep","high","blue","gold","iron","jade","onyx","ruby"][seed % 20];
+                    let noun = ["peak","lake","reef","mesa","vale","cove","dune","glen","rift","ford","cape","isle","arch","dale","knoll","ridge","brook","cliff","grove","shore"][(seed / 20) % 20];
+                    let suffix = &id[..4];
+                    format!("{adj}-{noun}-{suffix}")
+                });
+            let node_name = prompt("Node name", &default_name)?;
             let storage_path = prompt("Storage path",
                 existing["data_dir"].as_str().unwrap_or(&home.join("data").to_string_lossy()))?;
             let storage_limit = prompt("Storage limit (GB)",
@@ -694,7 +705,7 @@ fn run_serve(
     rt.block_on(async {
         let p2p_channels = if !no_p2p {
             let node_name = std::env::var("EARTHGRID_NODE_NAME")
-                .unwrap_or_else(|_| "earthgrid-node".to_string());
+                .unwrap_or_else(|_| String::new()); // empty → ensure_node_name() generates one
 
             let net_config = earthgrid_core::network::NetworkConfig {
                 data_dir: data_dir.clone(),
