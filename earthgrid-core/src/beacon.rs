@@ -121,6 +121,25 @@ fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 // BeaconRegistry
 // ---------------------------------------------------------------------------
 
+// Helper structs for coverage aggregation
+struct TileRow {
+    collection: String,
+    tile_id: String,
+    w: f64, s: f64, e: f64, n: f64,
+    dates_json: String,
+    bands_json: String,
+    _node_id: String,
+}
+
+struct TileAgg {
+    collection: String,
+    tile_id: String,
+    w: f64, s: f64, e: f64, n: f64,
+    dates: std::collections::BTreeSet<String>,
+    bands: std::collections::BTreeSet<String>,
+    node_count: i64,
+}
+
 /// In-memory cache backed by SQLite.
 pub struct BeaconRegistry {
     conn: Connection,
@@ -182,6 +201,13 @@ impl BeaconRegistry {
         let _ = self.conn.execute_batch(
             "ALTER TABLE beacon_nodes ADD COLUMN catalog_version INTEGER NOT NULL DEFAULT 0;",
         );
+        // Safe migration: add dates_json and bands_json to beacon_node_tiles
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_tiles ADD COLUMN dates_json TEXT NOT NULL DEFAULT '[]';",
+        );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_tiles ADD COLUMN bands_json TEXT NOT NULL DEFAULT '[]';",
+        );
 
         // Spatial coverage tiles aggregated from all nodes
         self.conn.execute_batch(
@@ -194,6 +220,8 @@ impl BeaconRegistry {
                 bbox_east REAL,
                 bbox_north REAL,
                 date_count INTEGER NOT NULL DEFAULT 0,
+                dates_json TEXT NOT NULL DEFAULT '[]',
+                bands_json TEXT NOT NULL DEFAULT '[]',
                 PRIMARY KEY (node_id, collection, tile_id)
             );
             CREATE INDEX IF NOT EXISTS idx_bnt_node ON beacon_node_tiles(node_id);
@@ -524,11 +552,17 @@ Ok(affected)
                             (0.0, 0.0, 0.0, 0.0)
                         };
                         let date_count = cell.get("date_count").and_then(|d| d.as_i64()).unwrap_or(0);
+                        let dates_json = cell.get("dates")
+                            .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".to_string()))
+                            .unwrap_or_else(|| "[]".to_string());
+                        let bands_json = cell.get("bands")
+                            .map(|b| serde_json::to_string(b).unwrap_or_else(|_| "[]".to_string()))
+                            .unwrap_or_else(|| "[]".to_string());
                         self.conn.execute(
                             "INSERT OR REPLACE INTO beacon_node_tiles
-                                (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                            params![node_id, collection, tile_id, w, s, e, n, date_count],
+                                (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count, dates_json, bands_json)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                            params![node_id, collection, tile_id, w, s, e, n, date_count, dates_json, bands_json],
                         )?;
                         count += 1;
                     }
@@ -539,37 +573,71 @@ Ok(affected)
     }
 
     /// Get aggregated spatial coverage from all nodes.
+    /// Merges dates/bands across nodes for the same tile (union of dates).
     pub fn get_aggregated_coverage(&self) -> Result<serde_json::Value> {
         let mut stmt = self.conn.prepare(
             "SELECT collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north,
-                    SUM(date_count) as total_dates, COUNT(DISTINCT node_id) as node_count
+                    dates_json, bands_json, node_id
              FROM beacon_node_tiles
-             GROUP BY collection, tile_id"
+             ORDER BY collection, tile_id"
         )?;
+
+        // Aggregate per (collection, tile_id)
+        let mut tile_map: std::collections::HashMap<(String, String), TileAgg> =
+            std::collections::HashMap::new();
+
+        let rows = stmt.query_map([], |row| {
+            Ok(TileRow {
+                collection: row.get(0)?,
+                tile_id: row.get(1)?,
+                w: row.get(2)?,
+                s: row.get(3)?,
+                e: row.get(4)?,
+                n: row.get(5)?,
+                dates_json: row.get(6)?,
+                bands_json: row.get(7)?,
+                _node_id: row.get(8)?,
+            })
+        })?;
+
+        for row in rows {
+            if let Ok(r) = row {
+                let key = (r.collection.clone(), r.tile_id.clone());
+                let agg = tile_map.entry(key).or_insert_with(|| TileAgg {
+                    collection: r.collection,
+                    tile_id: r.tile_id,
+                    w: r.w, s: r.s, e: r.e, n: r.n,
+                    dates: std::collections::BTreeSet::new(),
+                    bands: std::collections::BTreeSet::new(),
+                    node_count: 0,
+                });
+                // Merge dates (union)
+                if let Ok(dates) = serde_json::from_str::<Vec<String>>(&r.dates_json) {
+                    for d in dates { agg.dates.insert(d); }
+                }
+                // Merge bands (union)
+                if let Ok(bands) = serde_json::from_str::<Vec<String>>(&r.bands_json) {
+                    for b in bands { agg.bands.insert(b); }
+                }
+                agg.node_count += 1;
+            }
+        }
+
         let mut collections: std::collections::HashMap<String, Vec<serde_json::Value>> =
             std::collections::HashMap::new();
-        let rows = stmt.query_map([], |row| {
-            let collection: String = row.get(0)?;
-            let tile_id: String = row.get(1)?;
-            let w: f64 = row.get(2)?;
-            let s: f64 = row.get(3)?;
-            let e: f64 = row.get(4)?;
-            let n: f64 = row.get(5)?;
-            let date_count: i64 = row.get(6)?;
-            let node_count: i64 = row.get(7)?;
-            Ok((collection, tile_id, w, s, e, n, date_count, node_count))
-        })?;
-        for row in rows {
-            if let Ok((collection, tile_id, w, s, e, n, date_count, node_count)) = row {
-                collections.entry(collection).or_default().push(
-                    serde_json::json!({
-                        "bbox": [w, s, e, n],
-                        "tile_id": tile_id,
-                        "date_count": date_count,
-                        "node_count": node_count,
-                    })
-                );
-            }
+        for ((_, _), agg) in tile_map {
+            let dates: Vec<&String> = agg.dates.iter().collect();
+            let bands: Vec<&String> = agg.bands.iter().collect();
+            collections.entry(agg.collection).or_default().push(
+                serde_json::json!({
+                    "bbox": [agg.w, agg.s, agg.e, agg.n],
+                    "tile_id": agg.tile_id,
+                    "date_count": dates.len(),
+                    "dates": dates,
+                    "bands": bands,
+                    "node_count": agg.node_count,
+                })
+            );
         }
         let col_map: serde_json::Value = collections
             .into_iter()
