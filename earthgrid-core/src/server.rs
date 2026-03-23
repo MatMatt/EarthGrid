@@ -365,6 +365,8 @@ pub async fn serve(
     let state_node_id = state.node_id.clone();
     let state_node_name = state.node_name.clone();
     let state_version = state.version.clone();
+    let sync_is_beacon = state.is_beacon;
+    let sync_gamification = state.gamification.clone();
     let repl_peers = state.peers.clone();
     let mut app = router(state);
 
@@ -401,6 +403,42 @@ pub async fn serve(
     }
 
     let addr = format!("{}:{}", host, port);
+    // Sync beacon_nodes -> gamification leaderboard every 60s (beacon only)
+    if sync_is_beacon {
+        let gami_sync = sync_gamification;
+        let beacon_db_path = data_dir.join("beacon.db");
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                if let Ok(conn) = rusqlite::Connection::open(&beacon_db_path) {
+                    let mut stmt = match conn.prepare(
+                        "SELECT node_id, node_name, item_count, chunks_bytes, storage_limit_gb FROM beacon_nodes"
+                    ) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    let rows: Vec<(String, String, i64, i64, f64)> = stmt
+                        .query_map([], |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, String>(1)?,
+                                r.get::<_, i64>(2)?,
+                                r.get::<_, i64>(3)?,
+                                r.get::<_, f64>(4)?,
+                            ))
+                        })
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    for (node_id, node_name, items, bytes, pledged) in &rows {
+                        let _ = gami_sync.sync_node_stats(node_id, node_name, *items, *bytes, *pledged);
+                    }
+                }
+            }
+        });
+    }
+
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!(
         "🌍 EarthGrid Core v{} ({}) listening on {}",
