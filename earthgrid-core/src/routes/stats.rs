@@ -91,9 +91,19 @@ pub(crate) async fn stats_ingest_history(
 // Coverage + extra stats handlers
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn coverage_spatial(State(state): State<AppState>) -> impl IntoResponse {
-    // If running as beacon, serve aggregated coverage from all nodes
-    if state.is_beacon {
+#[derive(Deserialize)]
+pub struct CoverageQuery {
+    pub source: Option<String>,
+}
+
+pub(crate) async fn coverage_spatial(
+    State(state): State<AppState>,
+    Query(q): Query<CoverageQuery>,
+) -> impl IntoResponse {
+    let force_local = q.source.as_deref() == Some("local");
+
+    // If running as beacon (and not forced local), serve aggregated coverage from all nodes
+    if state.is_beacon && !force_local {
         let beacon_db_path = state.data_dir.join("beacon.db");
         if beacon_db_path.exists() {
             if let Ok(reg) = crate::beacon::BeaconRegistry::new(&beacon_db_path) {

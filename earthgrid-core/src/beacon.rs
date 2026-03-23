@@ -567,6 +567,16 @@ Ok(affected)
         }))
     }
 
+    /// Count tiles stored for a node.
+    pub fn node_tile_count(&self, node_id: &str) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM beacon_node_tiles WHERE node_id = ?1",
+            params![node_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     /// Remove tiles for a node (called when node is pruned).
     pub fn remove_node_tiles(&self, node_id: &str) -> Result<usize> {
         let affected = self.conn.execute(
@@ -717,10 +727,12 @@ async fn heartbeat_node(
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
 
-    // Check if catalog_version changed → need coverage refresh
-    let old_version = {
+    // Check if catalog_version changed or tiles are missing → need coverage refresh
+    let (old_version, has_tiles) = {
         let reg = state.registry.lock().await;
-        reg.get_catalog_version(&req.node_id)
+        let cv = reg.get_catalog_version(&req.node_id);
+        let tiles = reg.node_tile_count(&req.node_id).unwrap_or(0);
+        (cv, tiles > 0)
     };
     let new_version = req.catalog_version;
     let version_changed = match (old_version, new_version) {
@@ -728,12 +740,13 @@ async fn heartbeat_node(
         (None, Some(_)) => true, // first time seeing this node's version
         _ => false,
     };
+    let needs_coverage = version_changed || !has_tiles;
 
     let registry = state.registry.lock().await;
     match registry.heartbeat(&req) {
         Ok(Some(node)) => {
-            // Spawn async coverage fetch if version changed
-            if version_changed {
+            // Spawn async coverage fetch if version changed or no tiles yet
+            if needs_coverage {
                 let node_url = node.url.clone();
                 let node_id = node.node_id.clone();
                 let reg_clone = state.registry.clone();
@@ -801,7 +814,7 @@ async fn fetch_and_store_coverage(
     node_id: &str,
     node_url: &str,
 ) {
-    let url = format!("{}/coverage/spatial", node_url.trim_end_matches('/'));
+    let url = format!("{}/coverage/spatial?source=local", node_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
