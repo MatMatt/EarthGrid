@@ -29,6 +29,15 @@ pub(crate) async fn node_info(State(state): State<AppState>) -> Json<serde_json:
         .into_iter()
         .map(|c| c.id)
         .collect();
+    let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+    let cfg: Option<serde_json::Value> = std::fs::read_to_string(&cfg_path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok());
+    let beacon_url = cfg.as_ref().and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()));
+    let auto_update = cfg.as_ref()
+        .and_then(|v| v["auto_update"].as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "no".to_string());
+
     Json(serde_json::json!({
         "version": state.version,
         "node_id": state.node_id,
@@ -45,6 +54,9 @@ pub(crate) async fn node_info(State(state): State<AppState>) -> Json<serde_json:
         "requests_total": stats.requests_total,
         "storage_limit_gb": state.storage_limit_gb,
         "openeo": true,
+        "beacon_url": beacon_url,
+        "auto_update": auto_update,
+        "is_beacon": state.is_beacon,
     }))
 }
 
