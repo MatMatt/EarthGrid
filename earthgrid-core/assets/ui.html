@@ -1038,14 +1038,16 @@ async function confirmFetch() {
     if (data.items_downloaded !== undefined) fetchLog('\u2705 Downloaded: ' + data.items_downloaded + ' items', 'success');
     if (data.items_skipped !== undefined && data.items_skipped > 0) fetchLog('\u23ed Skipped: ' + data.items_skipped + ' (already stored)', 'warn');
     if (data.bytes_downloaded !== undefined) {
-      const mb = (data.bytes_downloaded / 1048576).toFixed(1);
-      fetchLog('\ud83d\udce6 Total: ' + mb + ' MB downloaded');
+      const bytes = data.bytes_downloaded;
+      const size = bytes >= 1073741824 ? (bytes / 1073741824).toFixed(1) + ' GB' : (bytes / 1048576).toFixed(1) + ' MB';
+      fetchLog('\ud83d\udce6 Total: ' + size + ' downloaded');
     }
     if (data.errors && data.errors.length) {
       data.errors.forEach(e => fetchLog('\u274c ' + e, 'error'));
     }
-    const msg = data.message || JSON.stringify(data).substring(0,300);
-    fetchLog(msg, data.errors && data.errors.length ? 'warn' : 'success');
+    if (data.message) {
+      fetchLog(data.message, data.errors && data.errors.length ? 'warn' : 'success');
+    }
     showAlert('fetch-result', '\u2713 Fetch complete', 'success');
     document.getElementById('fetch-preview').style.display = 'none';
     setTimeout(() => loadItems(), 2000);
