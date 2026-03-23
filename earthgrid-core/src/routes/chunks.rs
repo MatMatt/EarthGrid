@@ -200,8 +200,12 @@ pub(crate) async fn resize_storage(
         Some(v) if v > 0.0 => v,
         _ => return err(StatusCode::BAD_REQUEST, "size_gb required and must be > 0").into_response(),
     };
-    // Update config.json if it exists
-    let config_path = state.data_dir.join("config.json");
+    // Update config.json — try ~/.earthgrid/config.json first, then data_dir
+    let config_path = {
+        let home_cfg = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+        if home_cfg.exists() { home_cfg } else { state.data_dir.join("config.json") }
+    };
+    let old_gb = state.storage_limit_gb;
     if config_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&config_path) {
             if let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -210,10 +214,12 @@ pub(crate) async fn resize_storage(
             }
         }
     }
-    state.audit.log("resize", &format!("size_gb={}", size_gb), "", true);
+    state.audit.log("resize", &format!("size_gb={} (was {})", size_gb, old_gb), "", true);
     (StatusCode::OK, Json(serde_json::json!({
         "status": "resized",
+        "old_gb": old_gb,
         "new_gb": size_gb,
+        "config_path": config_path.display().to_string(),
         "note": "Restart node for new limit to take effect on ChunkStore",
     }))).into_response()
 }
