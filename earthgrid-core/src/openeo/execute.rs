@@ -401,9 +401,15 @@ pub async fn execute_sync(
             }
             if raw.is_empty() {
                 Err("No chunk data found".to_string())
-            } else {
+            } else if is_tiff(&raw) {
                 let meta = meta_from_item(first);
                 Ok((raw, meta))
+            } else {
+                // Raw pixels: convert to f32 based on dtype
+                let meta = meta_from_item(first);
+                let dtype = meta.as_ref().map(|m| m.dtype.as_str()).unwrap_or("uint16");
+                let floats = processing::decode_to_f32(&raw, dtype);
+                Ok((floats, meta))
             }
         }
     }?;

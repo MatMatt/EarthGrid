@@ -262,16 +262,37 @@ pub fn gdal_clip_bbox(src_tiff: &[u8], west: f64, south: f64, east: f64, north: 
 
     fs::write(&src_path, src_tiff).map_err(|e| format!("write clip src: {e}"))?;
 
-    let status = Command::new("gdalwarp")
-        .arg("-q")
+    // Read source pixel size to preserve it during clip
+    let src_info = Command::new("gdalinfo")
+        .arg("-json")
+        .arg(&src_path)
+        .output()
+        .map_err(|e| format!("gdalinfo failed: {e}"))?;
+    let src_meta: serde_json::Value = serde_json::from_slice(&src_info.stdout)
+        .unwrap_or_default();
+    let gt = src_meta["geoTransform"].as_array();
+    let (px_x, px_y) = if let Some(gt) = gt {
+        let px = gt.get(1).and_then(|v| v.as_f64()).unwrap_or(10.0).abs();
+        let py = gt.get(5).and_then(|v| v.as_f64()).unwrap_or(-10.0).abs();
+        (px, py)
+    } else {
+        (10.0, 10.0)
+    };
+
+    let mut cmd = Command::new("gdalwarp");
+    cmd.arg("-q")
         .arg("-overwrite")
         .arg("-of").arg("GTiff")
         .arg("-te").arg(format!("{west}")).arg(format!("{south}")).arg(format!("{east}")).arg(format!("{north}"))
         .arg("-te_srs").arg("EPSG:4326")
+        .arg("-tr").arg(format!("{px_x}")).arg(format!("{px_y}"))
+        .arg("-tap")
+        .arg("-r").arg("bilinear")
         .arg("-co").arg("COMPRESS=LZW")
         .arg(&src_path)
-        .arg(&dst_path)
-        .status()
+        .arg(&dst_path);
+
+    let status = cmd.status()
         .map_err(|e| format!("failed to spawn gdalwarp for clip: {e}"))?;
 
     let _ = fs::remove_file(&src_path);

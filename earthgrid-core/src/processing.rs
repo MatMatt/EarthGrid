@@ -33,6 +33,12 @@ fn decode_pixels(data: &[u8], dtype: &str) -> Vec<f32> {
     }
 }
 
+/// Decode raw pixels (uint16/float32) to f32 LE bytes. Public API for openEO execute.
+pub fn decode_to_f32(data: &[u8], dtype: &str) -> Vec<u8> {
+    let floats = decode_pixels(data, dtype);
+    encode_f32(&floats)
+}
+
 /// Encode f32 pixel values to raw bytes (f32 LE).
 fn encode_f32(values: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(values.len() * 4);
