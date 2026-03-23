@@ -450,40 +450,136 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Update => {
-            // Find repo dir (go up from binary or use known path)
+            // Detect: dev mode (git repo + cargo) vs binary-only mode
             let repo_dir = find_repo_dir();
+            let has_repo = repo_dir.join("Cargo.toml").exists()
+                && repo_dir.join(".git").exists();
+
             println!("📦 Updating EarthGrid...");
-            println!("   Repo: {}", repo_dir.display());
 
-            // git pull
-            println!("\n1️⃣  git pull...");
-            let status = process::Command::new("git")
-                .args(["pull"])
-                .current_dir(&repo_dir)
-                .status()?;
-            if !status.success() {
-                anyhow::bail!("git pull failed");
-            }
+            if has_repo {
+                // === DEV MODE: git pull + cargo build ===
+                println!("   Mode: source (repo: {})", repo_dir.display());
 
-            // cargo build --release
-            println!("\n2️⃣  cargo build --release...");
-            let cargo = find_cargo();
-            let status = process::Command::new(&cargo)
-                .args(["build", "--release"])
-                .current_dir(&repo_dir)
-                .status()?;
-            if !status.success() {
-                anyhow::bail!("cargo build failed");
-            }
+                println!("\n1️⃣  git pull...");
+                let status = process::Command::new("git")
+                    .args(["pull"])
+                    .current_dir(&repo_dir)
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("git pull failed");
+                }
 
-            // cargo install
-            println!("\n3️⃣  cargo install...");
-            let status = process::Command::new(&cargo)
-                .args(["install", "--path", ".", "--force"])
-                .current_dir(&repo_dir)
-                .status()?;
-            if !status.success() {
-                anyhow::bail!("cargo install failed");
+                println!("\n2️⃣  cargo build --release...");
+                let cargo = find_cargo();
+                let status = process::Command::new(&cargo)
+                    .args(["build", "--release"])
+                    .current_dir(&repo_dir)
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("cargo build failed");
+                }
+
+                println!("\n3️⃣  cargo install...");
+                let status = process::Command::new(&cargo)
+                    .args(["install", "--path", ".", "--force"])
+                    .current_dir(&repo_dir)
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("cargo install failed");
+                }
+            } else {
+                // === BINARY MODE: download from GitHub releases ===
+                println!("   Mode: binary update (no source repo found)");
+                let current_version = env!("CARGO_PKG_VERSION");
+                println!("   Current: v{}", current_version);
+
+                // Detect platform
+                let asset_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+                    "earthgrid-macos-arm64.tar.gz"
+                } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+                    "earthgrid-linux-x86_64.tar.gz"
+                } else {
+                    anyhow::bail!("No pre-built binary for this platform. Use source build.");
+                };
+
+                println!("\n1️⃣  Checking latest release...");
+                let client = reqwest::blocking::Client::builder()
+                    .user_agent("earthgrid-updater")
+                    .build()?;
+                let release: serde_json::Value = client
+                    .get("https://api.github.com/repos/MatMatt/EarthGrid/releases/latest")
+                    .send()?
+                    .json()?;
+                let tag = release["tag_name"].as_str().unwrap_or("unknown");
+                let remote_version = tag.trim_start_matches('v');
+                println!("   Latest:  {}", tag);
+
+                if remote_version == current_version {
+                    println!("✅ Already up to date (v{})", current_version);
+                } else {
+                    // Find asset URL
+                    let assets = release["assets"].as_array()
+                        .ok_or_else(|| anyhow::anyhow!("No assets in release"))?;
+                    let asset_url = assets.iter()
+                        .find(|a| a["name"].as_str() == Some(asset_name))
+                        .and_then(|a| a["browser_download_url"].as_str())
+                        .ok_or_else(|| anyhow::anyhow!("Asset {} not found in release", asset_name))?;
+
+                    println!("\n2️⃣  Downloading {}...", asset_name);
+                    let bytes = client.get(asset_url).send()?.bytes()?;
+                    let tmp_dir = std::env::temp_dir().join("earthgrid-update");
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    std::fs::create_dir_all(&tmp_dir)?;
+                    let archive_path = tmp_dir.join(asset_name);
+                    std::fs::write(&archive_path, &bytes)?;
+
+                    println!("\n3️⃣  Extracting...");
+                    let status = process::Command::new("tar")
+                        .args(["xzf", &archive_path.to_string_lossy()])
+                        .current_dir(&tmp_dir)
+                        .status()?;
+                    if !status.success() {
+                        anyhow::bail!("Failed to extract archive");
+                    }
+
+                    // Find the binary in extracted files
+                    let bin_name = if cfg!(target_os = "windows") { "earthgrid.exe" } else { "earthgrid" };
+                    let new_binary = tmp_dir.join(bin_name);
+                    if !new_binary.exists() {
+                        // Maybe inside a subdirectory
+                        let entries: Vec<_> = std::fs::read_dir(&tmp_dir)?
+                            .filter_map(|e| e.ok())
+                            .collect();
+                        let found = entries.iter()
+                            .find(|e| e.file_name() == bin_name)
+                            .or_else(|| entries.iter().find(|e| {
+                                e.path().is_dir() && e.path().join(bin_name).exists()
+                            }));
+                        if found.is_none() {
+                            anyhow::bail!("Binary not found in archive");
+                        }
+                    }
+
+                    // Replace current binary
+                    let current_exe = std::env::current_exe()?;
+                    println!("   Replacing: {}", current_exe.display());
+                    let backup = current_exe.with_extension("old");
+                    let _ = std::fs::rename(&current_exe, &backup);
+                    if let Err(e) = std::fs::copy(&new_binary, &current_exe) {
+                        // Restore backup on failure
+                        let _ = std::fs::rename(&backup, &current_exe);
+                        anyhow::bail!("Failed to replace binary: {}", e);
+                    }
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(&current_exe, std::fs::Permissions::from_mode(0o755));
+                    }
+                    let _ = std::fs::remove_file(&backup);
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    println!("   ✅ Updated v{} → {}", current_version, tag);
+                }
             }
 
             // Restart: try systemd first, then stop/start
