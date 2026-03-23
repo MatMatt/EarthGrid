@@ -205,7 +205,7 @@ pub(crate) async fn resize_storage(
         let home_cfg = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
         if home_cfg.exists() { home_cfg } else { state.data_dir.join("config.json") }
     };
-    let old_gb = state.storage_limit_gb;
+    let old_gb = f64::from_bits(state.storage_limit_gb.load(std::sync::atomic::Ordering::Relaxed));
     if config_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&config_path) {
             if let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -214,6 +214,9 @@ pub(crate) async fn resize_storage(
             }
         }
     }
+    // Update in-memory limit
+    state.storage_limit_gb.store(size_gb.to_bits(), std::sync::atomic::Ordering::Relaxed);
+
     // Smart eviction: if new limit is below current usage, evict items
     let current_bytes = {
         let store = state.store.lock().await;

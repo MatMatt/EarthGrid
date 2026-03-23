@@ -53,7 +53,7 @@ pub struct AppState {
     pub user_auth: Option<Arc<UserAuth>>,
     /// Node identity keypair (optional, None if init fails).
     pub node_identity: Option<Arc<NodeIdentity>>,
-    pub storage_limit_gb: f64,
+    pub storage_limit_gb: Arc<std::sync::atomic::AtomicU64>,
     /// Data directory (for config updates like resize).
     pub data_dir: PathBuf,
     /// Counter for active fetch/ingest requests (replication yields when > 0).
@@ -344,7 +344,7 @@ pub async fn serve(
         node_name: node_name.clone(),
         user_auth: user_auth_opt,
         node_identity: node_identity_opt,
-        storage_limit_gb,
+        storage_limit_gb: Arc::new(std::sync::atomic::AtomicU64::new(storage_limit_gb.to_bits())),
         data_dir: data_dir.clone(),
         active_requests: Arc::new(AtomicUsize::new(0)),
         is_beacon: {

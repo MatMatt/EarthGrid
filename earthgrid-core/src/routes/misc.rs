@@ -52,7 +52,7 @@ pub(crate) async fn node_info(State(state): State<AppState>) -> Json<serde_json:
         "chunks_served": stats.chunks_served,
         "bytes_served": stats.bytes_served,
         "requests_total": stats.requests_total,
-        "storage_limit_gb": state.storage_limit_gb,
+        "storage_limit_gb": f64::from_bits(state.storage_limit_gb.load(std::sync::atomic::Ordering::Relaxed)),
         "openeo": true,
         "beacon_url": beacon_url,
         "auto_update": auto_update,
