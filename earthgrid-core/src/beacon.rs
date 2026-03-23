@@ -196,7 +196,21 @@ impl BeaconRegistry {
                 date_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (node_id, collection, tile_id)
             );
-            CREATE INDEX IF NOT EXISTS idx_bnt_node ON beacon_node_tiles(node_id);"
+            CREATE INDEX IF NOT EXISTS idx_bnt_node ON beacon_node_tiles(node_id);
+
+            CREATE TABLE IF NOT EXISTS beacon_node_stats (
+                node_id TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                total_items INTEGER NOT NULL DEFAULT 0,
+                total_chunks INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER NOT NULL DEFAULT 0,
+                bytes_ingested INTEGER NOT NULL DEFAULT 0,
+                bytes_served INTEGER NOT NULL DEFAULT 0,
+                chunks_served INTEGER NOT NULL DEFAULT 0,
+                requests_total INTEGER NOT NULL DEFAULT 0,
+                collections_json TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY (node_id)
+            );"
         )?;
 
         Ok(())
@@ -567,6 +581,104 @@ Ok(affected)
         }))
     }
 
+    /// Store stats fetched from a node.
+    pub fn store_node_stats(
+        &self,
+        node_id: &str,
+        stats: &serde_json::Value,
+        coverage: &serde_json::Value,
+    ) -> Result<()> {
+        let now = now_ts();
+        let total_items = coverage.get("total_items").and_then(|v| v.as_i64()).unwrap_or(0);
+        let total_chunks = stats.get("total_chunks").and_then(|v| v.as_i64()).unwrap_or(0);
+        let total_bytes = stats.get("total_bytes").and_then(|v| v.as_i64()).unwrap_or(0);
+        let bytes_ingested = stats.get("bytes_ingested").and_then(|v| v.as_i64()).unwrap_or(0);
+        let bytes_served = stats.get("bytes_served").and_then(|v| v.as_i64()).unwrap_or(0);
+        let chunks_served = stats.get("chunks_served").and_then(|v| v.as_i64()).unwrap_or(0);
+        let requests_total = stats.get("requests_total").and_then(|v| v.as_i64()).unwrap_or(0);
+        let collections_json = coverage.get("collections")
+            .map(|c| serde_json::to_string(c).unwrap_or_default())
+            .unwrap_or_else(|| "[]".to_string());
+
+        self.conn.execute(
+            "INSERT INTO beacon_node_stats
+                (node_id, updated_at, total_items, total_chunks, total_bytes,
+                 bytes_ingested, bytes_served, chunks_served, requests_total, collections_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(node_id) DO UPDATE SET
+                updated_at = excluded.updated_at,
+                total_items = excluded.total_items,
+                total_chunks = excluded.total_chunks,
+                total_bytes = excluded.total_bytes,
+                bytes_ingested = excluded.bytes_ingested,
+                bytes_served = excluded.bytes_served,
+                chunks_served = excluded.chunks_served,
+                requests_total = excluded.requests_total,
+                collections_json = excluded.collections_json",
+            params![
+                node_id, now, total_items, total_chunks, total_bytes,
+                bytes_ingested, bytes_served, chunks_served, requests_total, collections_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get consolidated grid stats from all nodes.
+    pub fn get_grid_node_stats(&self) -> Result<serde_json::Value> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.node_id, n.node_name, n.url, s.updated_at,
+                    s.total_items, s.total_chunks, s.total_bytes,
+                    s.bytes_ingested, s.bytes_served, s.chunks_served,
+                    s.requests_total, s.collections_json
+             FROM beacon_node_stats s
+             LEFT JOIN beacon_nodes n ON s.node_id = n.node_id
+             ORDER BY s.total_bytes DESC"
+        )?;
+        let mut nodes = Vec::new();
+        let rows = stmt.query_map([], |row| {
+            let collections_json: String = row.get(11)?;
+            let collections: serde_json::Value = serde_json::from_str(&collections_json)
+                .unwrap_or(serde_json::json!([]));
+            Ok(serde_json::json!({
+                "node_id": row.get::<_, String>(0)?,
+                "node_name": row.get::<_, String>(1).unwrap_or_default(),
+                "url": row.get::<_, String>(2).unwrap_or_default(),
+                "updated_at": row.get::<_, f64>(3)?,
+                "total_items": row.get::<_, i64>(4)?,
+                "total_chunks": row.get::<_, i64>(5)?,
+                "total_bytes": row.get::<_, i64>(6)?,
+                "total_gb": row.get::<_, i64>(6)? as f64 / 1_073_741_824.0,
+                "bytes_ingested": row.get::<_, i64>(7)?,
+                "bytes_served": row.get::<_, i64>(8)?,
+                "chunks_served": row.get::<_, i64>(9)?,
+                "requests_total": row.get::<_, i64>(10)?,
+                "collections": collections,
+            }))
+        })?;
+        for row in rows {
+            if let Ok(n) = row { nodes.push(n); }
+        }
+
+        // Totals
+        let total_items: i64 = nodes.iter().filter_map(|n| n["total_items"].as_i64()).sum();
+        let total_bytes: i64 = nodes.iter().filter_map(|n| n["total_bytes"].as_i64()).sum();
+        let total_served: i64 = nodes.iter().filter_map(|n| n["bytes_served"].as_i64()).sum();
+        let total_requests: i64 = nodes.iter().filter_map(|n| n["requests_total"].as_i64()).sum();
+
+        Ok(serde_json::json!({
+            "nodes": nodes,
+            "node_count": nodes.len(),
+            "totals": {
+                "items": total_items,
+                "bytes": total_bytes,
+                "gb": total_bytes as f64 / 1_073_741_824.0,
+                "bytes_served": total_served,
+                "gb_served": total_served as f64 / 1_073_741_824.0,
+                "requests": total_requests,
+            }
+        }))
+    }
+
     /// Count tiles stored for a node.
     pub fn node_tile_count(&self, node_id: &str) -> Result<usize> {
         let count: i64 = self.conn.query_row(
@@ -575,6 +687,15 @@ Ok(affected)
             |row| row.get(0),
         )?;
         Ok(count as usize)
+    }
+
+    /// Check if stats exist for a node.
+    pub fn has_node_stats(&self, node_id: &str) -> bool {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM beacon_node_stats WHERE node_id = ?1",
+            params![node_id],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) > 0
     }
 
     /// Remove tiles for a node (called when node is pruned).
@@ -727,12 +848,13 @@ async fn heartbeat_node(
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
 
-    // Check if catalog_version changed or tiles are missing → need coverage refresh
-    let (old_version, has_tiles) = {
+    // Check if catalog_version changed or data is missing → need sync
+    let (old_version, has_tiles, has_stats) = {
         let reg = state.registry.lock().await;
         let cv = reg.get_catalog_version(&req.node_id);
         let tiles = reg.node_tile_count(&req.node_id).unwrap_or(0);
-        (cv, tiles > 0)
+        let stats = reg.has_node_stats(&req.node_id);
+        (cv, tiles > 0, stats)
     };
     let new_version = req.catalog_version;
     let version_changed = match (old_version, new_version) {
@@ -740,7 +862,7 @@ async fn heartbeat_node(
         (None, Some(_)) => true, // first time seeing this node's version
         _ => false,
     };
-    let needs_coverage = version_changed || !has_tiles;
+    let needs_coverage = version_changed || !has_tiles || !has_stats;
 
     let registry = state.registry.lock().await;
     match registry.heartbeat(&req) {
@@ -808,38 +930,58 @@ async fn remove_node(
 // Async coverage fetch helper
 // ---------------------------------------------------------------------------
 
-/// Fetch /coverage/spatial from a node and store tiles in the beacon DB.
+/// Fetch /coverage/spatial and /stats from a node and store in the beacon DB.
 async fn fetch_and_store_coverage(
     registry: &Arc<Mutex<BeaconRegistry>>,
     node_id: &str,
     node_url: &str,
 ) {
-    let url = format!("{}/coverage/spatial?source=local", node_url.trim_end_matches('/'));
+    let base = node_url.trim_end_matches('/');
+    let nid = &node_id[..8.min(node_id.len())];
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap_or_default();
 
-    match client.get(&url).send().await {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(coverage) => {
-                        let reg = registry.lock().await;
-                        match reg.store_node_tiles(node_id, &coverage) {
-                            Ok(n) => println!("🗺️  Coverage sync: {} tiles stored for node {}", n, &node_id[..8.min(node_id.len())]),
-                            Err(e) => eprintln!("⚠️  Coverage store failed for {}: {}", &node_id[..8.min(node_id.len())], e),
-                        }
-                    }
-                    Err(e) => eprintln!("⚠️  Coverage parse failed for {}: {}", &node_id[..8.min(node_id.len())], e),
-                }
-            } else {
-                eprintln!("⚠️  Coverage fetch {} returned {}", &node_id[..8.min(node_id.len())], resp.status());
+    // Fetch spatial coverage
+    let coverage_url = format!("{}/coverage/spatial?source=local", base);
+    let coverage = match client.get(&coverage_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<serde_json::Value>().await {
+                Ok(c) => Some(c),
+                Err(e) => { eprintln!("⚠️  Coverage parse failed for {}: {}", nid, e); None }
             }
         }
-        Err(e) => {
-            // Node may be behind NAT or unreachable — this is normal for some nodes
-            eprintln!("⚠️  Coverage fetch failed for {}: {}", &node_id[..8.min(node_id.len())], e);
+        Ok(resp) => { eprintln!("⚠️  Coverage fetch {} returned {}", nid, resp.status()); None }
+        Err(e) => { eprintln!("⚠️  Coverage fetch failed for {}: {}", nid, e); None }
+    };
+
+    if let Some(ref cov) = coverage {
+        let reg = registry.lock().await;
+        match reg.store_node_tiles(node_id, cov) {
+            Ok(n) => println!("🗺️  Coverage sync: {} tiles for {}", n, nid),
+            Err(e) => eprintln!("⚠️  Coverage store failed for {}: {}", nid, e),
+        }
+    }
+
+    // Fetch stats + stats/coverage
+    let stats_url = format!("{}/stats", base);
+    let stats_cov_url = format!("{}/stats/coverage", base);
+
+    let stats = match client.get(&stats_url).send().await {
+        Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
+        _ => None,
+    };
+    let stats_coverage = match client.get(&stats_cov_url).send().await {
+        Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
+        _ => None,
+    };
+
+    if let (Some(ref s), Some(ref sc)) = (&stats, &stats_coverage) {
+        let reg = registry.lock().await;
+        match reg.store_node_stats(node_id, s, sc) {
+            Ok(()) => println!("📊 Stats sync: {} updated", nid),
+            Err(e) => eprintln!("⚠️  Stats store failed for {}: {}", nid, e),
         }
     }
 }
@@ -873,6 +1015,16 @@ async fn grid_metrics(
     }
 }
 
+async fn grid_node_stats(
+    State(state): State<BeaconState>,
+) -> impl IntoResponse {
+    let reg = state.registry.lock().await;
+    match reg.get_grid_node_stats() {
+        Ok(stats) => (StatusCode::OK, Json(stats)).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
 pub fn beacon_router(state: BeaconState) -> Router {
     Router::new()
         .route("/beacon/register", post(register_node))
@@ -881,6 +1033,7 @@ pub fn beacon_router(state: BeaconState) -> Router {
         .route("/beacon/nodes/{node_id}", get(get_node))
         .route("/beacon/nodes/{node_id}", delete(remove_node))
         .route("/beacon/metrics", get(grid_metrics))
+        .route("/beacon/grid-stats", get(grid_node_stats))
         .route("/beacon/ws", axum::routing::any(crate::beacon_federation::ws_handler))
         .with_state(state)
 }
