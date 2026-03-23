@@ -189,7 +189,7 @@ Priority-based bandwidth allocation, inspired by Unix `nice`.
 - SHA-256 verification on every chunk transfer
 - Corrupt chunks automatically re-fetched from peers or source
 
-## Current State (v0.3.0)
+## Current State (v0.6.1)
 
 Single Rust binary. Python prototype has been fully replaced.
 
