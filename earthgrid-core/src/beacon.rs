@@ -628,9 +628,18 @@ Ok(affected)
         for ((_, _), agg) in tile_map {
             let dates: Vec<&String> = agg.dates.iter().collect();
             let bands: Vec<&String> = agg.bands.iter().collect();
+            // Generate polygon from bbox for map visualization
+            let polygon = vec![
+                vec![agg.w, agg.n],
+                vec![agg.e, agg.n],
+                vec![agg.e, agg.s],
+                vec![agg.w, agg.s],
+                vec![agg.w, agg.n],
+            ];
             collections.entry(agg.collection).or_default().push(
                 serde_json::json!({
                     "bbox": [agg.w, agg.s, agg.e, agg.n],
+                    "polygon": polygon,
                     "tile_id": agg.tile_id,
                     "date_count": dates.len(),
                     "dates": dates,
