@@ -167,7 +167,7 @@ pub(crate) async fn list_nodes(State(state): State<AppState>) -> impl IntoRespon
 // openEO: /processes, /validate, /jobs/{id}
 // ---------------------------------------------------------------------------
 
-/// GET /processes — openEO process descriptions
+/// GET /processes — openEO process list for clients; `process_id` values match `openeo::execute_sync`.
 pub(crate) async fn openeo_processes() -> impl IntoResponse {
     let processes = serde_json::json!({
         "processes": [
@@ -193,6 +193,30 @@ pub(crate) async fn openeo_processes() -> impl IntoResponse {
                     {"name": "nir", "description": "NIR band name.", "schema": {"type": "string"}, "default": "B08"}
                 ],
                 "returns": {"description": "NDVI data cube.", "schema": {"type": "object"}}
+            },
+            {
+                "id": "aggregate_temporal_period",
+                "summary": "Temporal aggregation by calendar period",
+                "description": "Groups observations by period (e.g. month) and applies a reducer. EarthGrid: NDVI graphs only; multiband GeoTIFF output.",
+                "parameters": [
+                    {"name": "data", "description": "Input data cube.", "schema": {"type": "object"}},
+                    {"name": "period", "description": "Period label (e.g. month).", "schema": {"type": "string"}},
+                    {"name": "reducer", "description": "Reducer process graph.", "schema": {"type": "object"}},
+                    {"name": "dimension", "description": "Temporal dimension (optional).", "schema": {"type": ["string", "null"]}}
+                ],
+                "returns": {"description": "Aggregated data cube.", "schema": {"type": "object"}}
+            },
+            {
+                "id": "resample_spatial",
+                "summary": "Resample and warp spatial dimensions",
+                "description": "GDAL warp: target CRS and/or resolution. Requires gdalwarp on PATH.",
+                "parameters": [
+                    {"name": "data", "description": "Raster data cube.", "schema": {"type": "object"}},
+                    {"name": "resolution", "description": "Pixel size or [x,y].", "schema": {"type": "object"}},
+                    {"name": "projection", "description": "EPSG code or null.", "schema": {"type": "object"}},
+                    {"name": "method", "description": "Resampling method.", "schema": {"type": "string"}}
+                ],
+                "returns": {"description": "Resampled data cube.", "schema": {"type": "object"}}
             },
             {
                 "id": "save_result",

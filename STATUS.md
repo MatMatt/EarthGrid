@@ -5,13 +5,13 @@
 
 ## Architecture
 
-- **Language**: 100% Rust (no Python)
+- **Language**: Rust for the node (HTTP + P2P + storage). Clients may use Python/R **openEO** libraries against the HTTP API only.
 - **Framework**: axum (HTTP), libp2p (P2P networking)
 - **Storage**: SQLite (rusqlite) — content-addressed chunk store
 - **License**: EUPL-1.2
 - **Binary size**: ~100MB Docker image
-- **Tests**: 138 passing, 0 failures
-- **LOC**: ~17,500 (src/)
+- **Tests**: 148 passing + 1 ignored (`openeo::geoprocess` `gdalwarp` roundtrip when CLI absent)
+- **LOC**: ~18k+ (`earthgrid-core/src/`)
 
 ## Module Status
 
@@ -34,8 +34,8 @@
 | Beacon Federation | `beacon_federation.rs` | ✅ Done | Real-time beacon-to-beacon sync via WebSocket |
 | Beacon | `beacon.rs` | ✅ Done | Central registry for node discovery |
 | Fetcher | `fetcher.rs` | ✅ Done | STAC fetch from Element84/CDSE, distributed fetch |
-| openEO | `openeo.rs` | ✅ Done | openEO processing gateway, auto-fetch missing bands |
-| Processing | `processing.rs` | ✅ Done | NDVI, NDWI, NDSI, EVI, true_color, cloud_mask, band_math |
+| openEO | `openeo/` | ✅ Done | v1.2-style `/result`, `/processes`, `/validate`; `execute_sync`; `aggregate_temporal_period` (NDVI + multiband GTiff); `resample_spatial` via `gdalwarp`; `geoprocess` (labels/reducers); optional full router in `api.rs` |
+| Processing | `processing.rs` | ✅ Done | NDVI, NDWI, EVI, cloud_mask, band_math |
 | Replication | `replication.rs` | ✅ Done | Auto-sync from peers (every 5 min) |
 | Smart Replication | `smart_replication.rs` | ✅ Done | Intelligent replication decisions |
 | Stats | `stats.rs` | ✅ Done | Network and node statistics |
@@ -62,7 +62,7 @@
 | Processing | `process.rs` | openEO-style processing requests |
 | STAC | `stac.rs` | STAC API (items, collections, search) |
 | Stats | `stats.rs` | Network statistics |
-| Misc | `misc.rs` | Health, info, static files |
+| Misc | `misc.rs` | Health, info, openEO `/processes` `/validate` `/result`, static files |
 
 ## Network Status
 
@@ -86,18 +86,21 @@
 
 ## Recent Changes (v0.6.x)
 
+- openEO: `openeo/` module tree (`graph`, `execute`, `output`, `geoprocess`, `catalogue`, `api`); temporal aggregation + spatial resample; auto-fetch missing bands unchanged
+- README: Python/R openEO examples aligned with real data windows and client quirks (`fetch_metadata=False` for Python; `con` passed into R `processes` / `compute_result`)
 - Distributed fetch: beacon delegates items across nodes by free storage
 - Catalog change detection (`catalog_version` + `/catalog/changes` endpoint)
 - Coverage table redesign (Grid Level → Tiles → Files)
 - openEO auto-fetch: missing bands downloaded on demand
 - Beacon federation via WebSocket
-- 138 tests (up from 55)
+- Test count: 148 passing + 1 ignored (`gdalwarp` integration)
 
 ## Known Issues
 
 - Windows build fails (GDAL `gdal_i.lib` linking)
 - `admin_key` field in `GridNode` unused (suppressed with `#[allow(dead_code)]`)
-- Some Python→Rust route parity gaps (~12% remaining)
+- Collection documents for openEO/STAC are minimal (band dimension missing): Python client needs `fetch_metadata=False` for fluent `load_collection` until metadata is enriched
+- `resample_spatial` requires **`gdalwarp` on PATH** (not bundled with the Rust GDAL crate)
 
 ## Targets / Roadmap
 
