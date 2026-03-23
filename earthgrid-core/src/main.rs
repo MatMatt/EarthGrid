@@ -328,6 +328,15 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
+            // Check if port is already in use
+            match std::net::TcpListener::bind(format!("0.0.0.0:{}", port)) {
+                Ok(_listener) => { /* port free, listener drops immediately */ }
+                Err(_) => {
+                    eprintln!("❌ Port {} is already in use. Is EarthGrid already running?", port);
+                    return Ok(());
+                }
+            }
+
             // Spawn self as background process with 'serve'
             let exe = std::env::current_exe()?;
             let data_dir_str = cli.data_dir.to_string_lossy().to_string();
@@ -349,7 +358,7 @@ fn main() -> anyhow::Result<()> {
                 .create(true).append(true).open(&log_file)?;
             let log_err = log.try_clone()?;
 
-            let child = process::Command::new(&exe)
+            let mut child = process::Command::new(&exe)
                 .args(&args)
                 .stdin(process::Stdio::null())
                 .stdout(log)
@@ -360,6 +369,17 @@ fn main() -> anyhow::Result<()> {
             // Write PID
             fs::create_dir_all(earthgrid_home())?;
             fs::write(pid_file(), pid.to_string())?;
+
+            // Wait briefly and verify child is still alive
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = fs::remove_file(pid_file());
+                    eprintln!("❌ EarthGrid exited immediately ({}). Check {}", status, log_file.display());
+                    return Ok(());
+                }
+                _ => {} // Still running or can't check — OK
+            }
 
             println!("🚀 EarthGrid started (PID {})", pid);
             println!("   Port: {}", port);

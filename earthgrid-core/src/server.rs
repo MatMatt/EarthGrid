@@ -310,7 +310,7 @@ pub async fn serve(
 
     // Optional: node identity
     let node_identity_opt = {
-        let key_path = data_dir.join("node.key");
+        let key_path = data_dir.join(".node_key");
         match NodeIdentity::load_or_generate(&key_path) {
             Ok(ni) => Some(Arc::new(ni)),
             Err(e) => {
