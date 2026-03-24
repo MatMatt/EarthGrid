@@ -286,8 +286,7 @@ All data is stored as **Cloud-Optimized GeoTIFF (COG)** — one format everywher
 earthgrid setup                          # Interactive first-time setup
 earthgrid start                          # Start node as background daemon
 earthgrid stop                           # Stop the running daemon
-earthgrid status                         # Show if running + node stats
-earthgrid info                           # Show local storage info
+earthgrid status                         # Show node info, storage stats & daemon status
 earthgrid update                         # Auto-detect: source build or binary download
 earthgrid update --source                # Force source build (git pull + cargo build)
 earthgrid update --binary                # Force binary download from GitHub Releases

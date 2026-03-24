@@ -66,9 +66,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Show node info and statistics
-    Info,
-
     /// Verify integrity of an item's chunks
     Verify {
         /// Item ID to verify
@@ -156,7 +153,7 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Show daemon status and node stats
+    /// Show node info, storage stats, and daemon status
     Status,
 
     /// Pull latest code, rebuild, and restart
@@ -251,24 +248,6 @@ fn main() -> anyhow::Result<()> {
     let catalog_path = cli.data_dir.join("catalog.db");
 
     match cli.command {
-        Commands::Info => {
-            let store = ChunkStore::new(&store_path, 0.0)?;
-            let catalog = Catalog::new(&catalog_path)?;
-            let auth = AuthConfig::from_env();
-            let stats = store.stats();
-            println!("🌍 EarthGrid v{}", env!("CARGO_PKG_VERSION"));
-            println!("   Store:    {}", store_path.display());
-            println!("   Catalog:  {}", catalog_path.display());
-            println!("   Chunks:   {}", store.chunk_count());
-            println!("   Storage:  {:.2} GB", store.total_bytes() as f64 / 1e9);
-            println!("   Items:    {}", catalog.item_count(None)?);
-            println!("   Auth:     {}", if auth.is_enabled() { "enabled" } else { "open" });
-            println!("   Served:   {} chunks ({:.2} GB)",
-                stats.chunks_served,
-                stats.bytes_served as f64 / 1e9
-            );
-        }
-
         Commands::Verify { item_id } => {
             let store = ChunkStore::new(&store_path, 0.0)?;
             let catalog = Catalog::new(&catalog_path)?;
@@ -470,40 +449,50 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Status => {
+            // Always show local disk info
+            let store = ChunkStore::new(&store_path, 0.0)?;
+            let catalog = Catalog::new(&catalog_path)?;
+            let auth = AuthConfig::from_env();
+            let stats = store.stats();
+
+            println!("🌍 EarthGrid v{}", env!("CARGO_PKG_VERSION"));
+            println!("   Store:    {}", store_path.display());
+            println!("   Catalog:  {}", catalog_path.display());
+            println!("   Chunks:   {}", store.chunk_count());
+            println!("   Storage:  {:.2} GB", store.total_bytes() as f64 / 1e9);
+            println!("   Items:    {}", catalog.item_count(None)?);
+            println!("   Auth:     {}", if auth.is_enabled() { "enabled" } else { "open" });
+            println!("   Served:   {} chunks ({:.2} GB)",
+                stats.chunks_served,
+                stats.bytes_served as f64 / 1e9
+            );
+
+            // Daemon status
             let pid = read_pid();
             let running = pid.map(is_process_alive).unwrap_or(false);
 
             if let Some(p) = pid {
                 if running {
-                    println!("✅ EarthGrid is running (PID {})", p);
+                    println!("\n✅ Daemon running (PID {})", p);
+
+                    // Fetch live info from HTTP API
+                    let port = config_port();
+                    let url = format!("http://localhost:{}/node-info", port);
+                    match ureq::get(&url).call() {
+                        Ok(resp) => {
+                            let body: serde_json::Value = resp.into_body().read_json()?;
+                            println!("   Peers:     {}", body["peers"].as_u64().unwrap_or(0));
+                            println!("   API:       http://localhost:{}", port);
+                        }
+                        Err(e) => {
+                            println!("   API:       unreachable ({})", e);
+                        }
+                    }
                 } else {
-                    println!("⚠️  EarthGrid is NOT running (stale PID {})", p);
-                    return Ok(());
+                    println!("\n⚠️  Daemon not running (stale PID {})", p);
                 }
             } else {
-                println!("⚠️  EarthGrid is NOT running (no PID file)");
-                return Ok(());
-            }
-
-            // Fetch node info from API
-            let port = config_port();
-            let url = format!("http://localhost:{}/node-info", port);
-            match ureq::get(&url).call() {
-                Ok(resp) => {
-                    let body: serde_json::Value = resp.into_body().read_json()?;
-                    println!("\n📊 Node Info:");
-                    println!("   Node ID:   {}", body["node_id"].as_str().unwrap_or("?"));
-                    println!("   Version:   {}", body["version"].as_str().unwrap_or("?"));
-                    println!("   Items:     {}", body["item_count"].as_u64().unwrap_or(0));
-                    println!("   Chunks:    {}", body["chunks"].as_u64().unwrap_or(0));
-                    println!("   Storage:   {:.2} GB",
-                        body["storage_gb"].as_f64().unwrap_or(0.0));
-                    println!("   Peers:     {}", body["peers"].as_u64().unwrap_or(0));
-                    println!("   API:       http://localhost:{}", port);
-                }
-                Err(e) => {
-                    println!("   (Could not reach API: {})", e);
-                }
+                println!("\n⚠️  Daemon not running");
             }
         }
 
