@@ -348,6 +348,39 @@ impl BeaconRegistry {
     }
 
     /// Update heartbeat fields for an existing node.
+    /// Return URLs of all known beacon nodes (nodes with also_beacon or the self-beacon).
+    /// Used to propagate beacon discovery to regular nodes.
+    pub fn known_beacon_urls(&self) -> Vec<String> {
+        // Return all unique node URLs that are beacons
+        // For now, return the beacon's own URL + any federated peer beacon URLs
+        let mut urls = Vec::new();
+        // Add self (this beacon's external URL) from env or config
+        if let Ok(public) = std::env::var("EARTHGRID_PUBLIC_URL") {
+            urls.push(public);
+        }
+        // Add federation peer URLs
+        if let Ok(peers) = std::env::var("EARTHGRID_BEACON_PEERS") {
+            for p in peers.split(',') {
+                let p = p.trim().to_string();
+                if !p.is_empty() && !urls.contains(&p) {
+                    urls.push(p);
+                }
+            }
+        }
+        // Also scan beacon_nodes for nodes that might be beacons themselves
+        // (they register with can_source=true and have beacon-like URLs)
+        if let Ok(nodes) = self.list(true) {
+            for node in &nodes {
+                if !node.url.is_empty() && !urls.contains(&node.url) {
+                    // We include all alive node URLs — the receiving node
+                    // can try them as potential beacons
+                    urls.push(node.url.clone());
+                }
+            }
+        }
+        urls
+    }
+
     pub fn heartbeat(&self, req: &HeartbeatRequest) -> Result<Option<BeaconNode>> {
         // Opportunistic cleanup: prune stale nodes (>1h) and dedup on each heartbeat
         let _ = self.prune_stale(3600.0);
@@ -970,7 +1003,11 @@ async fn heartbeat_node(
                     fetch_and_store_coverage(&reg_clone, &node_id, &node_url).await;
                 });
             }
-            (StatusCode::OK, Json(serde_json::to_value(node).unwrap())).into_response()
+            // Include known beacons in response so nodes can discover new beacons
+            let known_beacons = registry.known_beacon_urls();
+            let mut resp = serde_json::to_value(&node).unwrap();
+            resp["known_beacons"] = serde_json::json!(known_beacons);
+            (StatusCode::OK, Json(resp)).into_response()
         }
         Ok(None) => err(StatusCode::NOT_FOUND, "Node not registered").into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),

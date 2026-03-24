@@ -626,18 +626,39 @@ pub async fn serve(
                 .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
         });
 
-        let target_url = if beacon_enabled {
-            Some(format!("http://127.0.0.1:{}/beacon/heartbeat", hb_port))
-        } else {
-            beacon_url_env.map(|u| format!("{}/beacon/heartbeat", u.trim_end_matches('/')))
-        };
+        // Build initial beacon list: bootstrap + cached
+        let mut initial_beacons: Vec<String> = Vec::new();
+        if beacon_enabled {
+            initial_beacons.push(format!("http://127.0.0.1:{}", hb_port));
+        }
+        if let Some(ref bu) = beacon_url_env {
+            if !initial_beacons.contains(bu) {
+                initial_beacons.push(bu.clone());
+            }
+        }
+        // Load cached beacons from disk
+        let beacon_cache_path = dirs::home_dir()
+            .unwrap_or_default()
+            .join(".earthgrid/known_beacons.json");
+        if let Ok(cached) = std::fs::read_to_string(&beacon_cache_path) {
+            if let Ok(list) = serde_json::from_str::<Vec<String>>(&cached) {
+                for b in list {
+                    if !initial_beacons.contains(&b) {
+                        initial_beacons.push(b);
+                    }
+                }
+            }
+        }
 
-        if let Some(url) = target_url {
+        if !initial_beacons.is_empty() {
+            let beacon_cache_path_clone = beacon_cache_path.clone();
             tokio::spawn(async move {
                 let client = reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(10))
                     .build()
                     .unwrap_or_default();
+                // Track all known beacons (grows over time via discovery)
+                let mut all_beacons: Vec<String> = initial_beacons;
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
@@ -653,7 +674,6 @@ pub async fn serve(
                         let cat = hb_catalog.lock().await;
                         cat.list_collections().unwrap_or_default().into_iter().map(|c| c.id).collect()
                     };
-
                     let catalog_version = {
                         let cat = hb_catalog.lock().await;
                         cat.catalog_version().unwrap_or(0)
@@ -673,45 +693,85 @@ pub async fn serve(
                         "catalog_version": catalog_version,
                     });
 
-                    // First attempt: heartbeat (fast path for already-registered nodes)
-                    match client.post(&url).json(&body).send().await {
-                        Ok(r) => {
-                            let status = r.status();
-                            let _ = r.bytes().await; // consume body
-                            if status == reqwest::StatusCode::NOT_FOUND {
-                                // Not registered yet, register first
-                                let register_url = url.replace("/beacon/heartbeat", "/beacon/register");
-                                let register_body = serde_json::json!({
-                                    "node_id": hb_node_id,
-                                    "node_name": hb_node_name,
-                                    "url": std::env::var("EARTHGRID_PUBLIC_URL").unwrap_or_else(|_| format!("http://127.0.0.1:{}", hb_port)),
-                                    "can_source": true,
-                                    "item_count": item_count,
-                                    "chunk_count": chunk_count,
-                                    "chunks_bytes": chunks_bytes,
-                                    "collections": collections,
-                                    "storage_limit_gb": hb_storage_limit_gb,
-                                    "catalog_version": catalog_version,
-                                });
-                                if let Ok(rr) = client.post(&register_url).json(&register_body).send().await {
-                                    let _ = rr.bytes().await;
+                    let mut any_success = false;
+                    let mut discovered_beacons: Vec<String> = Vec::new();
+
+                    // Send heartbeat to ALL known beacons
+                    for beacon_base in &all_beacons {
+                        let hb_url = format!("{}/beacon/heartbeat", beacon_base.trim_end_matches('/'));
+                        match client.post(&hb_url).json(&body).send().await {
+                            Ok(r) => {
+                                let status = r.status();
+                                if status == reqwest::StatusCode::NOT_FOUND {
+                                    // Not registered — register first
+                                    let reg_url = hb_url.replace("/beacon/heartbeat", "/beacon/register");
+                                    if let Ok(rr) = client.post(&reg_url).json(&body).send().await {
+                                        // Try to extract known_beacons from register response too
+                                        if let Ok(resp_body) = rr.json::<serde_json::Value>().await {
+                                            if let Some(kb) = resp_body.get("known_beacons").and_then(|v| v.as_array()) {
+                                                for b in kb {
+                                                    if let Some(s) = b.as_str() {
+                                                        if !discovered_beacons.contains(&s.to_string()) {
+                                                            discovered_beacons.push(s.to_string());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    any_success = true;
+                                } else if status.is_success() {
+                                    // Extract known_beacons from heartbeat response
+                                    if let Ok(resp_body) = r.json::<serde_json::Value>().await {
+                                        if let Some(kb) = resp_body.get("known_beacons").and_then(|v| v.as_array()) {
+                                            for b in kb {
+                                                if let Some(s) = b.as_str() {
+                                                    if !discovered_beacons.contains(&s.to_string()) {
+                                                        discovered_beacons.push(s.to_string());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    any_success = true;
+                                } else {
+                                    let _ = r.bytes().await;
                                 }
                             }
+                            Err(_) => {} // beacon unreachable, try next
                         }
-                        Err(_) => {} // beacon unreachable, retry next tick
                     }
 
-                    // Update gamification DB
-                    let _ = hb_gamification.ensure_node_registered(
-                        &hb_node_id, &hb_node_name, "", "", "",
-                    );
-                    let _ = hb_gamification.record_heartbeat(
-                        &hb_node_id, 0, 0.0, 5000.0,
-                    );
-                    // Sync actual storage stats into gamification DB
-                    let _ = hb_gamification.update_storage_stats(
-                        &hb_node_id, item_count as i64, chunks_bytes as i64,
-                    );
+                    // Merge discovered beacons into our list
+                    let mut changed = false;
+                    for db in &discovered_beacons {
+                        if !all_beacons.contains(db) {
+                            tracing::info!("Discovered new beacon: {}", db);
+                            all_beacons.push(db.clone());
+                            changed = true;
+                        }
+                    }
+
+                    // Persist beacon cache to disk if changed
+                    if changed {
+                        if let Ok(json) = serde_json::to_string_pretty(&all_beacons) {
+                            let _ = std::fs::write(&beacon_cache_path_clone, json);
+                            tracing::info!("Updated beacon cache: {} beacons", all_beacons.len());
+                        }
+                    }
+
+                    if any_success {
+                        // Update gamification DB
+                        let _ = hb_gamification.ensure_node_registered(
+                            &hb_node_id, &hb_node_name, "", "", "",
+                        );
+                        let _ = hb_gamification.record_heartbeat(
+                            &hb_node_id, 0, 0.0, 5000.0,
+                        );
+                        let _ = hb_gamification.update_storage_stats(
+                            &hb_node_id, item_count as i64, chunks_bytes as i64,
+                        );
+                    }
                 }
             });
         }
