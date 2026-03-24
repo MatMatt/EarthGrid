@@ -151,8 +151,12 @@ enum Commands {
     /// Pull latest code, rebuild, and restart
     Update {
         /// Force source build (git pull + cargo build) even if no repo is auto-detected
-        #[arg(long)]
+        #[arg(long, conflicts_with = "binary")]
         source: bool,
+
+        /// Force binary update from GitHub Releases (skip source build even if repo exists)
+        #[arg(long, conflicts_with = "source")]
+        binary: bool,
     },
 
     /// Fetch satellite data via the running node
@@ -453,11 +457,11 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Update { source } => {
+        Commands::Update { source, binary } => {
             // Detect: dev mode (git repo + cargo) vs binary-only mode
             let repo_dir = find_repo_dir();
-            let has_repo = source || (repo_dir.join("Cargo.toml").exists()
-                && has_git_dir(&repo_dir));
+            let has_repo = !binary && (source || (repo_dir.join("Cargo.toml").exists()
+                && has_git_dir(&repo_dir)));
 
             println!("📦 Updating EarthGrid...");
 
