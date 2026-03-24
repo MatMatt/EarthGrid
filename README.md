@@ -116,7 +116,7 @@ docker run -d \
   ghcr.io/matmatt/earthgrid-core:latest serve
 ```
 
-### Build from source
+### Alternative: Build from source
 
 ```bash
 # Install Rust (if not installed)
