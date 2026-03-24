@@ -38,53 +38,50 @@ EarthGrid stores **only official data** from sources like Copernicus (Sentinel) 
 
 ## Installation
 
-Choose one of the options below. All require GDAL (except Docker, which bundles it).
+Pick one method — they all get you to the same result:
 
-### Prerequisites
+| Method | GDAL required? | Best for |
+| ------ | -------------- | -------- |
+| [**Binary**](#option-1-pre-built-binary) | Yes (install first) | Most users |
+| [**.deb package**](#option-2-debianubuntu-deb-package) | Auto-installed | Debian/Ubuntu |
+| [**Docker**](#option-3-docker) | No (bundled) | Quick test, no setup |
+| [**From source**](#option-4-build-from-source) | Yes (install first) | Contributors, custom builds |
 
-GDAL is required **before** installing EarthGrid:
+---
 
-| Requirement | Version | Why                                    |
-| ----------- | ------- | -------------------------------------- |
-| **GDAL**    | ≥ 3.4   | Raster I/O (required on all platforms) |
+### Option 1: Pre-built binary
+
+**Step 1 — Install GDAL:**
 
 ```bash
-# Debian / Ubuntu
-sudo apt install libgdal-dev
-
 # macOS
 brew install gdal
 
-# Windows — choose one of:
-# Option 1: OSGeo4W (recommended, simple installer)
-#   https://trac.osgeo.org/osgeo4w/
-#   Download: https://download.osgeo.org/osgeo4w/v2/osgeo4w-setup.exe
+# Debian / Ubuntu
+sudo apt install libgdal-dev
+```
+
+<details>
+<summary>Windows GDAL options</summary>
+
+```bash
+# Option A: OSGeo4W (recommended)
+#   https://download.osgeo.org/osgeo4w/v2/osgeo4w-setup.exe
 #   Install GDAL, then set:
 #     set GDAL_HOME=C:\OSGeo4W
 #     set GDAL_LIB_DIR=C:\OSGeo4W\lib
-#
-# Option 2: vcpkg (Microsoft package manager)
-#   https://vcpkg.io
+
+# Option B: vcpkg
 #   vcpkg install gdal:x64-windows
-#   set GDAL_HOME=C:\vcpkg\installed\x64-windows
-#   set GDAL_LIB_DIR=C:\vcpkg\installed\x64-windows\lib
-#
-# Option 3: conda-forge
+
+# Option C: conda-forge
 #   conda install -c conda-forge gdal
-#   (GDAL_HOME auto-set by conda environment)
 ```
+</details>
 
-### Download pre-built binaries
+**Step 2 — Download and install:**
 
-1. Go to [**Releases**](https://github.com/MatMatt/EarthGrid/releases) and download the binary for your platform:
-
-| Platform         | Binary                         | Tray App                            |
-| ---------------- | ------------------------------ | ----------------------------------- |
-| 🐧 Linux x86_64   | `earthgrid-linux-x86_64`       | `earthgrid-tray-linux-x86_64`       |
-| 🍎 macOS arm64    | `earthgrid-macos-arm64`        | `earthgrid-tray-macos-arm64`        |
-| 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | `earthgrid-tray-windows-x86_64.exe` |
-
-2. Install the downloaded binary:
+Go to [**Releases**](https://github.com/MatMatt/EarthGrid/releases) and download the binary for your platform:
 
 ```bash
 # Linux
@@ -96,17 +93,22 @@ chmod +x earthgrid-macos-arm64
 sudo mv earthgrid-macos-arm64 /usr/local/bin/earthgrid
 ```
 
-### Alternative: Debian/Ubuntu (.deb package)
+---
+
+### Option 2: Debian/Ubuntu (.deb package)
+
+GDAL is installed automatically as a dependency.
 
 ```bash
-# Downloads and installs earthgrid-core + GDAL dependency
 sudo dpkg -i earthgrid-core_*_amd64.deb
 sudo apt-get install -f  # resolve dependencies if needed
 ```
 
-### Alternative: Docker
+---
 
-No prerequisites needed — GDAL is included in the image.
+### Option 3: Docker
+
+No prerequisites — GDAL is included in the image.
 
 ```bash
 docker pull ghcr.io/matmatt/earthgrid-core:latest
@@ -118,7 +120,11 @@ docker run -d \
   ghcr.io/matmatt/earthgrid-core:latest serve
 ```
 
-### Alternative: Build from source
+---
+
+### Option 4: Build from source
+
+Requires GDAL (see [Option 1](#option-1-pre-built-binary)) and Rust.
 
 ```bash
 # Install Rust (if not installed)
