@@ -38,6 +38,8 @@ EarthGrid stores **only official data** from sources like Copernicus (Sentinel) 
 
 ## Installation
 
+Choose one of the options below. All require GDAL (except Docker, which bundles it).
+
 ### Prerequisites
 
 GDAL is required **before** installing EarthGrid:
