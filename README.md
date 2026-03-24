@@ -74,7 +74,7 @@ brew install gdal
 
 ### Download pre-built binaries
 
-Download the latest release for your platform from [**Releases**](https://github.com/MatMatt/EarthGrid/releases):
+1. Go to [**Releases**](https://github.com/MatMatt/EarthGrid/releases) and download the binary for your platform:
 
 | Platform         | Binary                         | Tray App                            |
 | ---------------- | ------------------------------ | ----------------------------------- |
@@ -82,10 +82,16 @@ Download the latest release for your platform from [**Releases**](https://github
 | 🍎 macOS arm64    | `earthgrid-macos-arm64`        | `earthgrid-tray-macos-arm64`        |
 | 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | `earthgrid-tray-windows-x86_64.exe` |
 
+2. Install the downloaded binary:
+
 ```bash
-# Linux / macOS (binary)
-chmod +x earthgrid-*
+# Linux
+chmod +x earthgrid-linux-x86_64
 sudo mv earthgrid-linux-x86_64 /usr/local/bin/earthgrid
+
+# macOS
+chmod +x earthgrid-macos-arm64
+sudo mv earthgrid-macos-arm64 /usr/local/bin/earthgrid
 ```
 
 #### Debian/Ubuntu (.deb package)
