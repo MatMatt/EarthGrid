@@ -468,13 +468,14 @@ fn main() -> anyhow::Result<()> {
                 // Find git root (may be parent of repo_dir)
                 let git_dir = {
                     let mut d = repo_dir.clone();
-                    loop {
+                    let result = loop {
                         if d.join(".git").exists() { break d; }
                         match d.parent() {
                             Some(p) => d = p.to_path_buf(),
-                            None => { d = repo_dir.clone(); break; }
+                            None => break repo_dir.clone(),
                         }
-                    }
+                    };
+                    result
                 };
 
                 println!("\n1️⃣  git pull...");
