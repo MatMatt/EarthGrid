@@ -14,7 +14,7 @@ use tracing::{info, warn};
 
 use crate::catalog::Catalog;
 use crate::chunk_store::ChunkStore;
-use crate::config::Config;
+use crate::config::Settings;
 use crate::eviction;
 use crate::ingest;
 
@@ -524,7 +524,7 @@ pub async fn fetch_and_ingest(
         {
             let st = store.lock().await;
             let current_bytes = st.total_bytes() as f64;
-            let config = Config::load_or_default();
+            let config = Settings::load_or_default().unwrap_or_default();
             let limit_bytes = config.storage_limit_gb * 1_073_741_824.0;
             if current_bytes >= limit_bytes {
                 drop(st);
@@ -532,7 +532,7 @@ pub async fn fetch_and_ingest(
                 let evict_result = {
                     let cat = catalog.lock().await;
                     let mut st = store.lock().await;
-                    let beacon_db = Config::config_dir().join("beacon.db");
+                    let beacon_db = Settings::config_dir().join("beacon.db");
                     let beacon_path = if beacon_db.exists() { Some(beacon_db.as_path()) } else { None };
                     eviction::evict(&*cat, &mut *st, config.storage_limit_gb, beacon_path)
                 };
