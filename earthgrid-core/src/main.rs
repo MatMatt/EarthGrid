@@ -149,7 +149,11 @@ enum Commands {
     Status,
 
     /// Pull latest code, rebuild, and restart
-    Update,
+    Update {
+        /// Force source build (git pull + cargo build) even if no repo is auto-detected
+        #[arg(long)]
+        source: bool,
+    },
 
     /// Fetch satellite data via the running node
     Fetch {
@@ -449,11 +453,11 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Update => {
+        Commands::Update { source } => {
             // Detect: dev mode (git repo + cargo) vs binary-only mode
             let repo_dir = find_repo_dir();
-            let has_repo = repo_dir.join("Cargo.toml").exists()
-                && repo_dir.join(".git").exists();
+            let has_repo = source || (repo_dir.join("Cargo.toml").exists()
+                && has_git_dir(&repo_dir));
 
             println!("📦 Updating EarthGrid...");
 
@@ -461,10 +465,22 @@ fn main() -> anyhow::Result<()> {
                 // === DEV MODE: git pull + cargo build ===
                 println!("   Mode: source (repo: {})", repo_dir.display());
 
+                // Find git root (may be parent of repo_dir)
+                let git_dir = {
+                    let mut d = repo_dir.clone();
+                    loop {
+                        if d.join(".git").exists() { break d; }
+                        match d.parent() {
+                            Some(p) => d = p.to_path_buf(),
+                            None => { d = repo_dir.clone(); break; }
+                        }
+                    }
+                };
+
                 println!("\n1️⃣  git pull...");
                 let status = process::Command::new("git")
                     .args(["pull"])
-                    .current_dir(&repo_dir)
+                    .current_dir(&git_dir)
                     .status()?;
                 if !status.success() {
                     anyhow::bail!("git pull failed");
@@ -901,11 +917,32 @@ fn find_cargo() -> String {
     "cargo".to_string()
 }
 
+/// Check if dir or any parent (up to 3 levels) contains .git
+fn has_git_dir(dir: &PathBuf) -> bool {
+    let mut d = dir.clone();
+    for _ in 0..4 {
+        if d.join(".git").exists() {
+            return true;
+        }
+        match d.parent() {
+            Some(p) => d = p.to_path_buf(),
+            None => break,
+        }
+    }
+    false
+}
+
 fn find_repo_dir() -> PathBuf {
-    // Try known location first
-    let known = PathBuf::from("/home/matteo/EarthGrid/earthgrid-core");
-    if known.join("Cargo.toml").exists() {
-        return known;
+    // Try known locations
+    for known in &[
+        dirs::home_dir().map(|h| h.join("EarthGrid/earthgrid-core")),
+        dirs::home_dir().map(|h| h.join("earthgrid-core")),
+    ] {
+        if let Some(p) = known {
+            if p.join("Cargo.toml").exists() {
+                return p.clone();
+            }
+        }
     }
     // Walk up from binary
     if let Ok(exe) = std::env::current_exe() {
