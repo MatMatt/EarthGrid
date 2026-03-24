@@ -844,7 +844,46 @@ fn main() -> anyhow::Result<()> {
             fs::create_dir_all(earthgrid_home())?;
             fs::write(&cfg_path, serde_json::to_string_pretty(&config)?)?;
             println!("✅ Storage limit updated to {:.1} GB", size);
-            println!("   Restart EarthGrid to apply: earthgrid stop && earthgrid start");
+
+            // Auto-evict if current storage exceeds new limit
+            let data_dir = cli.data_dir.clone();
+            let store_path = data_dir.join("store");
+            let catalog_path = data_dir.join("catalog.db");
+
+            if store_path.exists() {
+                let mut store = ChunkStore::new(&store_path, size)?;
+                let current_gb = store.total_bytes() as f64 / 1_073_741_824.0;
+
+                if current_gb > size {
+                    println!("\n📊 Current storage: {:.1} GB — exceeds new limit", current_gb);
+                    println!("🗑️  Running eviction to free {:.1} GB...", current_gb - size);
+
+                    let catalog = Catalog::new(&catalog_path)?;
+                    let beacon_db = earthgrid_core::config::Settings::config_dir().join("beacon.db");
+                    let beacon_path = if beacon_db.exists() { Some(beacon_db.as_path()) } else { None };
+
+                    match earthgrid_core::eviction::evict(&catalog, &mut store, size, beacon_path) {
+                        Ok(result) => {
+                            println!("   Items deleted: {}", result.items_deleted);
+                            println!("   Space freed:   {:.1} GB", result.bytes_freed as f64 / 1_073_741_824.0);
+                            if result.items_kept > 0 {
+                                println!("   Items kept:    {} (last replica — not safe to delete)", result.items_kept);
+                            }
+                            let new_gb = store.total_bytes() as f64 / 1_073_741_824.0;
+                            println!("   New storage:   {:.1} GB", new_gb);
+                            if new_gb > size {
+                                println!("   ⚠️  Still over limit — {} items are last replicas and cannot be evicted", result.items_kept);
+                                println!("   Use `earthgrid evict --force` to delete anyway (data may be lost!)");
+                            }
+                        }
+                        Err(e) => eprintln!("   ❌ Eviction failed: {}", e),
+                    }
+                } else {
+                    println!("   Storage ({:.1} GB) is within new limit ✅", current_gb);
+                }
+            }
+
+            println!("\n   Restart EarthGrid to apply: earthgrid stop && earthgrid start");
         }
     }
 
