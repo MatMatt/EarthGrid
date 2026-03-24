@@ -288,7 +288,9 @@ earthgrid start                          # Start node as background daemon
 earthgrid stop                           # Stop the running daemon
 earthgrid status                         # Show if running + node stats
 earthgrid info                           # Show local storage info
-earthgrid update                         # Git pull + cargo build + restart
+earthgrid update                         # Auto-detect: source build or binary download
+earthgrid update --source                # Force source build (git pull + cargo build)
+earthgrid update --binary                # Force binary download from GitHub Releases
 earthgrid resize --size 100              # Change storage limit to 100 GB
 earthgrid serve                          # Start HTTP server (foreground)
 ```
