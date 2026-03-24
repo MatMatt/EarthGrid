@@ -11,6 +11,16 @@ use serde::{Deserialize, Serialize};
 /// Maximum number of peers to track.
 pub const MAX_PEERS: usize = 50;
 
+/// Minimal peer info for disk cache.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedPeer {
+    url: String,
+    #[serde(default)]
+    node_id: String,
+    #[serde(default)]
+    node_name: String,
+}
+
 // ---------------------------------------------------------------------------
 // Peer
 // ---------------------------------------------------------------------------
@@ -143,6 +153,32 @@ impl PeerRegistry {
 
     pub fn count(&self) -> usize {
         self.peers.len()
+    }
+
+    /// Load peers from a JSON cache file (called on startup).
+    pub fn load_cache(path: &std::path::Path) -> Vec<String> {
+        if let Ok(data) = std::fs::read_to_string(path) {
+            if let Ok(entries) = serde_json::from_str::<Vec<CachedPeer>>(&data) {
+                return entries.into_iter().map(|e| e.url).collect();
+            }
+            // Fallback: try plain string array
+            if let Ok(urls) = serde_json::from_str::<Vec<String>>(&data) {
+                return urls;
+            }
+        }
+        Vec::new()
+    }
+
+    /// Save current peers to a JSON cache file.
+    pub fn save_cache(&self, path: &std::path::Path) {
+        let entries: Vec<CachedPeer> = self.peers.values().map(|p| CachedPeer {
+            url: p.url.clone(),
+            node_id: p.node_id.clone(),
+            node_name: p.node_name.clone(),
+        }).collect();
+        if let Ok(json) = serde_json::to_string_pretty(&entries) {
+            let _ = std::fs::write(path, json);
+        }
     }
 
     /// Get all peer URLs (for heartbeat iteration).

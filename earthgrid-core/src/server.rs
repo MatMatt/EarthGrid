@@ -296,6 +296,16 @@ pub async fn serve(
             }
         }
     }
+    // Load cached peers from disk (persistent peer discovery)
+    let peer_cache_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".earthgrid/known_peers.json");
+    for url in PeerRegistry::load_cache(&peer_cache_path) {
+        peer_registry.add_if_new(&url);
+    }
+    if peer_registry.count() > 0 {
+        println!("📡 Loaded {} peers (env + cache)", peer_registry.count());
+    }
 
     // Optional: user auth DB
     let user_auth_opt = {
@@ -553,8 +563,17 @@ pub async fn serve(
                     if resp.status().is_success() {
                         if let Ok(gossip) = resp.json::<GossipPeerList>().await {
                             let mut reg = hb_peers.lock().await;
+                            let before = reg.count();
                             for entry in &gossip.peers {
                                 reg.add_if_new(&entry.url);
+                            }
+                            // Save to disk if new peers discovered
+                            if reg.count() > before {
+                                let cache_path = dirs::home_dir()
+                                    .unwrap_or_default()
+                                    .join(".earthgrid/known_peers.json");
+                                reg.save_cache(&cache_path);
+                                tracing::info!("Peer cache updated: {} peers", reg.count());
                             }
                         }
                     }
