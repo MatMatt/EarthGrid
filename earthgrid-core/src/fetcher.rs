@@ -60,11 +60,16 @@ pub struct StacSearchResult {
 }
 
 /// Aggregated result of a fetch+ingest run.
+/// `items_*` counts refer to scenes (STAC items), not individual bands.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FetchResult {
+    /// Number of scenes found in STAC search
     pub items_searched: usize,
+    /// Number of scenes successfully downloaded (at least 1 band)
     pub items_downloaded: usize,
+    /// Number of scenes skipped (already in catalog)
     pub items_skipped: usize,
+    /// Total bytes downloaded across all bands
     pub bytes_downloaded: u64,
     pub errors: Vec<String>,
 }
@@ -506,8 +511,6 @@ pub async fn fetch_and_ingest(
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
 
     // Collect download tasks
-    let mut tasks = Vec::new();
-
     for item in &items {
         // Check if item already in catalog (dedup by STAC item ID)
         let already_present = {
@@ -576,6 +579,14 @@ pub async fn fetch_and_ingest(
             continue;
         }
 
+        // Download bands for this scene in parallel, then check storage before next scene
+        let mut scene_tasks = Vec::new();
+        let band_count = bands_to_download.len();
+        info!("📥 Scene {}/{}: {} ({} bands)",
+            result.items_downloaded + result.items_skipped + 1,
+            items_searched,
+            item.id, band_count);
+
         for (band, url) in bands_to_download {
             let store = store.clone();
             let catalog = catalog.clone();
@@ -585,7 +596,7 @@ pub async fn fetch_and_ingest(
             let item = item.clone();
             let collection = collection.to_string();
 
-            tasks.push(tokio::spawn(async move {
+            scene_tasks.push(tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.ok()?;
                 match ingest_item_band(
                     store,
@@ -607,23 +618,31 @@ pub async fn fetch_and_ingest(
                 }
             }));
         }
-    }
 
-    // Await all tasks
-    let task_results = join_all(tasks).await;
-    for task_result in task_results {
-        match task_result {
-            Ok(Some(bytes)) => {
-                result.items_downloaded += 1;
-                result.bytes_downloaded += bytes;
+        // Wait for this scene's bands to finish before moving to next
+        let scene_results = join_all(scene_tasks).await;
+        let mut scene_bytes: u64 = 0;
+        let mut scene_bands_ok = 0;
+        for task_result in scene_results {
+            match task_result {
+                Ok(Some(bytes)) => {
+                    scene_bands_ok += 1;
+                    scene_bytes += bytes;
+                }
+                Ok(None) => {
+                    result.errors.push("Download/ingest failed (see logs)".to_string());
+                }
+                Err(e) => {
+                    result.errors.push(format!("Task join error: {e}"));
+                }
             }
-            Ok(None) => {
-                // Error already logged + warned
-                result.errors.push("Download/ingest failed (see logs)".to_string());
-            }
-            Err(e) => {
-                result.errors.push(format!("Task join error: {e}"));
-            }
+        }
+        if scene_bands_ok > 0 {
+            result.items_downloaded += 1;
+            result.bytes_downloaded += scene_bytes;
+            info!("   ✅ {} — {}/{} bands, {:.1} MB",
+                item.id, scene_bands_ok, band_count,
+                scene_bytes as f64 / 1_048_576.0);
         }
     }
 
