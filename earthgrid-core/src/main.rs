@@ -415,8 +415,8 @@ fn main() -> anyhow::Result<()> {
             let beacon_db = earthgrid_core::config::Settings::config_dir().join("beacon.db");
             let beacon_path = if beacon_db.exists() { Some(beacon_db.as_path()) } else { None };
 
-            let mut store = ChunkStore::open(&store_path)?;
-            let catalog = Catalog::open(&catalog_path)?;
+            let mut store = ChunkStore::new(&store_path, target_gb)?;
+            let catalog = Catalog::new(&catalog_path)?;
 
             let current_gb = store.total_bytes() as f64 / 1_073_741_824.0;
             println!("📊 Current storage: {:.1} GB / {:.0} GB limit", current_gb, target_gb);
