@@ -38,47 +38,9 @@ EarthGrid stores **only official data** from sources like Copernicus (Sentinel) 
 
 ## Installation
 
-### Download pre-built binaries
-
-Download the latest release for your platform from [**Releases**](https://github.com/MatMatt/EarthGrid/releases):
-
-| Platform         | Binary                         | Tray App                            |
-| ---------------- | ------------------------------ | ----------------------------------- |
-| 🐧 Linux x86_64   | `earthgrid-linux-x86_64`       | `earthgrid-tray-linux-x86_64`       |
-| 🍎 macOS arm64    | `earthgrid-macos-arm64`        | `earthgrid-tray-macos-arm64`        |
-| 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | `earthgrid-tray-windows-x86_64.exe` |
-
-```bash
-# Linux / macOS (binary)
-chmod +x earthgrid-*
-sudo mv earthgrid-linux-x86_64 /usr/local/bin/earthgrid
-
-# ⚠️ GDAL is required on all platforms (see Prerequisites below)
-# macOS: brew install gdal
-# Linux: sudo apt install libgdal-dev
-```
-
-#### Debian/Ubuntu (.deb package)
-
-```bash
-# Downloads and installs earthgrid-core + GDAL dependency
-sudo dpkg -i earthgrid-core_*_amd64.deb
-sudo apt-get install -f  # resolve dependencies if needed
-```
-
-#### Docker
-
-```bash
-docker pull ghcr.io/matmatt/earthgrid-core:latest
-
-docker run -d \
-  --name earthgrid \
-  -p 8400:8400 \
-  -v earthgrid-data:/data \
-  ghcr.io/matmatt/earthgrid-core:latest serve
-```
-
 ### Prerequisites
+
+GDAL is required **before** installing EarthGrid:
 
 | Requirement | Version | Why                                    |
 | ----------- | ------- | -------------------------------------- |
@@ -108,6 +70,42 @@ brew install gdal
 # Option 3: conda-forge
 #   conda install -c conda-forge gdal
 #   (GDAL_HOME auto-set by conda environment)
+```
+
+### Download pre-built binaries
+
+Download the latest release for your platform from [**Releases**](https://github.com/MatMatt/EarthGrid/releases):
+
+| Platform         | Binary                         | Tray App                            |
+| ---------------- | ------------------------------ | ----------------------------------- |
+| 🐧 Linux x86_64   | `earthgrid-linux-x86_64`       | `earthgrid-tray-linux-x86_64`       |
+| 🍎 macOS arm64    | `earthgrid-macos-arm64`        | `earthgrid-tray-macos-arm64`        |
+| 🪟 Windows x86_64 | `earthgrid-windows-x86_64.exe` | `earthgrid-tray-windows-x86_64.exe` |
+
+```bash
+# Linux / macOS (binary)
+chmod +x earthgrid-*
+sudo mv earthgrid-linux-x86_64 /usr/local/bin/earthgrid
+```
+
+#### Debian/Ubuntu (.deb package)
+
+```bash
+# Downloads and installs earthgrid-core + GDAL dependency
+sudo dpkg -i earthgrid-core_*_amd64.deb
+sudo apt-get install -f  # resolve dependencies if needed
+```
+
+#### Docker
+
+```bash
+docker pull ghcr.io/matmatt/earthgrid-core:latest
+
+docker run -d \
+  --name earthgrid \
+  -p 8400:8400 \
+  -v earthgrid-data:/data \
+  ghcr.io/matmatt/earthgrid-core:latest serve
 ```
 
 ### Build from source
