@@ -94,7 +94,7 @@ chmod +x earthgrid-macos-arm64
 sudo mv earthgrid-macos-arm64 /usr/local/bin/earthgrid
 ```
 
-#### Debian/Ubuntu (.deb package)
+### Alternative: Debian/Ubuntu (.deb package)
 
 ```bash
 # Downloads and installs earthgrid-core + GDAL dependency
@@ -102,7 +102,9 @@ sudo dpkg -i earthgrid-core_*_amd64.deb
 sudo apt-get install -f  # resolve dependencies if needed
 ```
 
-#### Docker
+### Alternative: Docker
+
+No prerequisites needed — GDAL is included in the image.
 
 ```bash
 docker pull ghcr.io/matmatt/earthgrid-core:latest
