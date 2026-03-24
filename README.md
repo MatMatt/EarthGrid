@@ -306,56 +306,19 @@ earthgrid list --collection sentinel-2-l2a --limit 20
 earthgrid verify <item_id>               # Verify chunk integrity of an item
 ```
 
-### Docker
+### Docker management
 
 ```bash
-docker pull ghcr.io/matmatt/earthgrid-core:latest
-docker run -d -p 8400:8400 -v earthgrid-data:/data ghcr.io/matmatt/earthgrid-core:latest serve
+earthgrid docker update                  # Pull + rebuild + restart container
+earthgrid docker logs                    # Show container logs
 ```
 
-### Docker Compose (dev + prod volume path)
+For initial Docker setup, see [Installation → Option 3](#option-3-docker).
 
-The compose file supports both local development and production storage paths:
-
-```bash
-# Dev (default, in docker/.env): EARTHGRID_HOST_DATA_DIR=./data
-cd docker
-docker compose up -d --build
-```
-
-```bash
-# Prod host path (example)
-cd docker
-EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid docker compose up -d --build
-```
-
-Or set it once in `docker/.env`:
+To customize the host data directory, set `EARTHGRID_HOST_DATA_DIR` in `docker/.env`:
 
 ```bash
 EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid
-```
-
-### Run locally (no Docker)
-
-From source:
-
-```bash
-cd earthgrid-core
-cargo run -- --data-dir ~/.earthgrid-data serve --host 0.0.0.0 --port 8400
-```
-
-Health check:
-
-```bash
-curl http://localhost:8400/health
-```
-
-Optional environment variables:
-
-```bash
-export EARTHGRID_NODE_NAME=node-local
-export EARTHGRID_STORE_PATH=$HOME/.earthgrid-data/store
-export EARTHGRID_CATALOG_PATH=$HOME/.earthgrid-data/catalog.db
 ```
 
 ---
