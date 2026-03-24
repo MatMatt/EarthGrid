@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub node_id: String,
     pub node_name: String,
