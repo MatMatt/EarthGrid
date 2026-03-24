@@ -145,6 +145,17 @@ enum Commands {
     /// Stop the running daemon
     Stop,
 
+    /// Run storage eviction to free space (deletes replicated/cold items)
+    Evict {
+        /// Target storage size in GB (default: use configured storage_limit_gb)
+        #[arg(long)]
+        target: Option<f64>,
+
+        /// Dry run — show what would be evicted without deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Show daemon status and node stats
     Status,
 
@@ -393,6 +404,45 @@ fn main() -> anyhow::Result<()> {
             println!("   Port: {}", port);
             println!("   Log:  {}", log_file.display());
             println!("   PID:  {}", pid_file().display());
+        }
+
+        Commands::Evict { target, dry_run } => {
+            let config = crate::config::Settings::load_or_default()?;
+            let target_gb = target.unwrap_or(config.storage_limit_gb);
+            let data_dir = cli.data_dir.clone();
+            let store_path = data_dir.join("store");
+            let catalog_path = data_dir.join("catalog.db");
+            let beacon_db = crate::config::Settings::config_dir().join("beacon.db");
+            let beacon_path = if beacon_db.exists() { Some(beacon_db.as_path()) } else { None };
+
+            let mut store = crate::chunk_store::ChunkStore::open(&store_path)?;
+            let catalog = crate::catalog::Catalog::open(&catalog_path)?;
+
+            let current_gb = store.total_bytes() as f64 / 1_073_741_824.0;
+            println!("📊 Current storage: {:.1} GB / {:.0} GB limit", current_gb, target_gb);
+
+            if current_gb <= target_gb {
+                println!("✅ Storage within limit, nothing to evict");
+            } else {
+                println!("🗑️  Need to free {:.1} GB", current_gb - target_gb);
+                if dry_run {
+                    println!("   (dry run — no files will be deleted)");
+                    // TODO: show candidates without deleting
+                    println!("   Dry run not yet implemented, run without --dry-run to evict");
+                } else {
+                    match crate::eviction::evict(&catalog, &mut store, target_gb, beacon_path) {
+                        Ok(result) => {
+                            println!("✅ Eviction complete:");
+                            println!("   Items deleted: {}", result.items_deleted);
+                            println!("   Space freed:   {:.1} GB", result.bytes_freed as f64 / 1_073_741_824.0);
+                            println!("   Items kept:    {} (last replica — not safe to delete)", result.items_kept);
+                            let new_gb = store.total_bytes() as f64 / 1_073_741_824.0;
+                            println!("   New storage:   {:.1} GB", new_gb);
+                        }
+                        Err(e) => eprintln!("❌ Eviction failed: {}", e),
+                    }
+                }
+            }
         }
 
         Commands::Stop => {
