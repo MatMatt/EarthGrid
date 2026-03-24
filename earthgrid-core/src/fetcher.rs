@@ -14,6 +14,8 @@ use tracing::{info, warn};
 
 use crate::catalog::Catalog;
 use crate::chunk_store::ChunkStore;
+use crate::config::Config;
+use crate::eviction;
 use crate::ingest;
 
 const ELEMENT84_BASE: &str = "https://earth-search.aws.element84.com/v1";
@@ -516,6 +518,41 @@ pub async fn fetch_and_ingest(
             info!("Skipping {} — already in catalog", item.id);
             result.items_skipped += 1;
             continue;
+        }
+
+        // Check storage limit before downloading
+        {
+            let st = store.lock().await;
+            let current_bytes = st.total_bytes() as f64;
+            let config = Config::load_or_default();
+            let limit_bytes = config.storage_limit_gb * 1_073_741_824.0;
+            if current_bytes >= limit_bytes {
+                drop(st);
+                // Try eviction first
+                let evict_result = {
+                    let cat = catalog.lock().await;
+                    let mut st = store.lock().await;
+                    let beacon_db = Config::config_dir().join("beacon.db");
+                    let beacon_path = if beacon_db.exists() { Some(beacon_db.as_path()) } else { None };
+                    eviction::evict(&*cat, &mut *st, config.storage_limit_gb, beacon_path)
+                };
+                match evict_result {
+                    Ok(ref r) if r.bytes_freed > 0 => {
+                        info!("Eviction freed {:.1} MB", r.bytes_freed as f64 / 1_048_576.0);
+                    }
+                    _ => {
+                        // Still full after eviction — stop fetching
+                        warn!("Storage full ({:.1} GB / {:.1} GB limit), stopping fetch",
+                            current_bytes / 1_073_741_824.0, config.storage_limit_gb);
+                        result.errors.push(format!(
+                            "Storage limit reached ({:.1} GB). {} items not fetched.",
+                            config.storage_limit_gb,
+                            items_searched - result.items_downloaded - result.items_skipped
+                        ));
+                        break;
+                    }
+                }
+            }
         }
 
         // Determine which bands to download
