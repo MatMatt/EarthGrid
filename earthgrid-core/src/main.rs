@@ -407,16 +407,16 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Evict { target, dry_run } => {
-            let config = crate::config::Settings::load_or_default()?;
+            let config = earthgrid_core::config::Settings::load_or_default()?;
             let target_gb = target.unwrap_or(config.storage_limit_gb);
             let data_dir = cli.data_dir.clone();
             let store_path = data_dir.join("store");
             let catalog_path = data_dir.join("catalog.db");
-            let beacon_db = crate::config::Settings::config_dir().join("beacon.db");
+            let beacon_db = earthgrid_core::config::Settings::config_dir().join("beacon.db");
             let beacon_path = if beacon_db.exists() { Some(beacon_db.as_path()) } else { None };
 
-            let mut store = crate::chunk_store::ChunkStore::open(&store_path)?;
-            let catalog = crate::catalog::Catalog::open(&catalog_path)?;
+            let mut store = ChunkStore::open(&store_path)?;
+            let catalog = Catalog::open(&catalog_path)?;
 
             let current_gb = store.total_bytes() as f64 / 1_073_741_824.0;
             println!("📊 Current storage: {:.1} GB / {:.0} GB limit", current_gb, target_gb);
@@ -430,7 +430,7 @@ fn main() -> anyhow::Result<()> {
                     // TODO: show candidates without deleting
                     println!("   Dry run not yet implemented, run without --dry-run to evict");
                 } else {
-                    match crate::eviction::evict(&catalog, &mut store, target_gb, beacon_path) {
+                    match earthgrid_core::eviction::evict(&catalog, &mut store, target_gb, beacon_path) {
                         Ok(result) => {
                             println!("✅ Eviction complete:");
                             println!("   Items deleted: {}", result.items_deleted);
