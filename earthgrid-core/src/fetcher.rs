@@ -488,6 +488,30 @@ pub async fn fetch_and_ingest(
         }
     }
 
+    // --- Grid-wide dedup: skip items already on any node ---
+    let beacon_url = std::env::var("EARTHGRID_BEACON_URL").ok().or_else(|| {
+        let cfg_path = Settings::config_dir().join("config.json");
+        std::fs::read_to_string(&cfg_path).ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
+    });
+    if let Some(ref bu) = beacon_url {
+        match beacon_inventory(bu, bbox, collection, start_date, end_date).await {
+            Ok(grid_ids) => {
+                let before = items.len();
+                // Check by STAC item ID (scene-level, not band-level)
+                items.retain(|item| !grid_ids.contains(&item.id));
+                let skipped = before - items.len();
+                if skipped > 0 {
+                    info!("Grid dedup: skipped {}/{} items already on other nodes", skipped, before);
+                }
+            }
+            Err(e) => {
+                warn!("Beacon inventory check failed (continuing without dedup): {}", e);
+            }
+        }
+    }
+
     let items_searched = items.len();
 
     let mut result = FetchResult {

@@ -302,8 +302,75 @@ pub(crate) async fn fetch_handler(
             &admin_key,
         )
         .await
+    } else if !local_only {
+        // Non-beacon: try to delegate to beacon for distributed fetch
+        let beacon_url = std::env::var("EARTHGRID_BEACON_URL").ok().or_else(|| {
+            let cfg_path = crate::config::Settings::config_dir().join("config.json");
+            std::fs::read_to_string(&cfg_path).ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
+        });
+        if let Some(ref bu) = beacon_url {
+            // Forward the fetch request to the beacon
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(600))
+                .build()
+                .unwrap_or_default();
+            let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
+            let bands_str = bands.join(",");
+            let mut url = format!(
+                "{}/fetch?bbox={}&start_date={}&end_date={}&cloud_cover={}&bands={}&limit={}&collection={}",
+                bu.trim_end_matches('/'), bbox_str, start_date, end_date, cloud_cover, bands_str, limit, collection
+            );
+            if let Some(ref tile) = tile_filter {
+                url.push_str(&format!("&tile={}", tile));
+            }
+            tracing::info!("Forwarding fetch to beacon: {}", bu);
+            match client.post(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<serde_json::Value>().await {
+                        Ok(data) => fetcher::FetchResult {
+                            items_searched: data.get("items_searched").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                            items_downloaded: data.get("items_downloaded").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                            items_skipped: data.get("items_skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                            bytes_downloaded: data.get("bytes_downloaded").and_then(|v| v.as_u64()).unwrap_or(0),
+                            errors: data.get("errors").and_then(|v| v.as_array())
+                                .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+                                .unwrap_or_default(),
+                        },
+                        Err(e) => {
+                            tracing::warn!("Beacon response parse error, falling back to local: {}", e);
+                            fetcher::fetch_and_ingest(
+                                state.store.clone(), state.catalog.clone(),
+                                bbox, start_date, end_date, cloud_cover, &bands, limit, collection, tile_filter.as_deref(),
+                            ).await
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    tracing::warn!("Beacon returned {}, falling back to local fetch", resp.status());
+                    fetcher::fetch_and_ingest(
+                        state.store.clone(), state.catalog.clone(),
+                        bbox, start_date, end_date, cloud_cover, &bands, limit, collection, tile_filter.as_deref(),
+                    ).await
+                }
+                Err(e) => {
+                    tracing::warn!("Cannot reach beacon ({}), falling back to local fetch", e);
+                    fetcher::fetch_and_ingest(
+                        state.store.clone(), state.catalog.clone(),
+                        bbox, start_date, end_date, cloud_cover, &bands, limit, collection, tile_filter.as_deref(),
+                    ).await
+                }
+            }
+        } else {
+            // No beacon configured: ingest locally
+            fetcher::fetch_and_ingest(
+                state.store.clone(), state.catalog.clone(),
+                bbox, start_date, end_date, cloud_cover, &bands, limit, collection, tile_filter.as_deref(),
+            ).await
+        }
     } else {
-        // Non-beacon or local_only: ingest locally
+        // local_only: ingest locally
         fetcher::fetch_and_ingest(
             state.store.clone(),
             state.catalog.clone(),
