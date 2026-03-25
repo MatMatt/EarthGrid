@@ -373,7 +373,7 @@ impl Catalog {
     ) -> Result<Vec<StacItem>> {
         let (where_clause, params_vec) = Self::build_search_where(collection, bbox, datetime);
         let sql = format!(
-            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at FROM items{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at FROM items{} ORDER BY json_extract(properties_json, '$.datetime') DESC, created_at DESC LIMIT {} OFFSET {}",
             where_clause, limit, offset
         );
 
