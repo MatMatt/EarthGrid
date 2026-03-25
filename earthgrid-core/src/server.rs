@@ -256,6 +256,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/federation/users", get(crate::routes::federation::federation_list_users).post(crate::routes::federation::federation_import_users))
         // HTML Node UI (session-authenticated, can be disabled via EARTHGRID_UI_ENABLED=false)
         .route("/ui", get(crate::routes::misc::ui_dispatch))
+        .route("/ui/", get(crate::routes::misc::ui_dispatch))
         .route("/ui/login", get(crate::routes::misc::login_dispatch).post(crate::routes::misc::login_post_dispatch))
         .route("/ui/logout", post(crate::routes::misc::logout_dispatch))
         .route("/ui/me", get(crate::routes::misc::session_me_dispatch))
