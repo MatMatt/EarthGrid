@@ -171,7 +171,6 @@ pub fn router(state: AppState) -> Router {
         .route("/chunks", get(crate::routes::chunks::list_chunks))
         .route("/chunks/{sha}", get(crate::routes::chunks::get_chunk))
         // Write
-        .route("/ingest", post(crate::routes::ingest_routes::ingest))
         // Integrity
         .route("/verify/{item_id}", get(crate::routes::chunks::verify_item))
         // Admin
@@ -183,7 +182,6 @@ pub fn router(state: AppState) -> Router {
         .route("/federation/search", get(crate::routes::federation::federation_search))
         // Gossip + file ingest
         .route("/peers.json", get(crate::routes::federation::peers_json))
-        .route("/ingest/file", post(crate::routes::ingest_routes::ingest_file_endpoint))
         // Element84 STAC Fetcher
         .route("/fetch", post(crate::routes::ingest_routes::fetch_handler))
         .route("/fetch/preview", get(crate::routes::ingest_routes::fetch_preview))
