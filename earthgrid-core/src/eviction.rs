@@ -68,7 +68,7 @@ pub fn evict(
 
     // Sort: highest eviction score first
     candidates.sort_by(|a, b| {
-        eviction_score(b).partial_cmp(&eviction_score(a)).unwrap_or(std::cmp::Ordering::Equal)
+        eviction_score(b).total_cmp(&eviction_score(a))
     });
 
     let mut freed: i64 = 0;
