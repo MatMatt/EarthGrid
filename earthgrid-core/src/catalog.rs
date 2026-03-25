@@ -83,6 +83,8 @@ pub struct MgrsTile {
     pub north: f64,
     pub date_count: i64,
     pub item_count: i64,
+    pub dates: Vec<String>,
+    pub bands: Vec<String>,
 }
 
 impl Catalog {
@@ -462,7 +464,8 @@ impl Catalog {
                     MAX(bbox_east) as e,
                     MAX(bbox_north) as n,
                     COUNT(DISTINCT SUBSTR(id, INSTR(SUBSTR(id, INSTR(id, '_') + 1), '_') + INSTR(id, '_') + 1, 8)) as date_count,
-                    COUNT(*) as item_count
+                    COUNT(*) as item_count,
+                    GROUP_CONCAT(DISTINCT SUBSTR(id, INSTR(SUBSTR(id, INSTR(id, '_') + 1), '_') + INSTR(id, '_') + 1, 8)) as dates_csv
              FROM items
              WHERE bbox_west IS NOT NULL
              GROUP BY collection, tile_id"
@@ -477,6 +480,14 @@ impl Catalog {
                 north: row.get(5)?,
                 date_count: row.get(6)?,
                 item_count: row.get(7)?,
+                dates: {
+                    let csv: String = row.get::<_, String>(8).unwrap_or_default();
+                    let mut d: Vec<String> = csv.split(',').filter(|s| !s.is_empty() && s.len() == 8).map(|s| s.to_string()).collect();
+                    d.sort();
+                    d.dedup();
+                    d
+                },
+                bands: Vec::new(), // populated separately
             })
         })?;
         let tiles: Vec<MgrsTile> = rows.filter_map(|r| r.ok()).collect();

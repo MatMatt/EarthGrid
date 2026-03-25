@@ -141,6 +141,8 @@ pub(crate) async fn coverage_spatial(
                 "tile_id": t.tile_id,
                 "date_count": t.date_count,
                 "item_count": t.item_count,
+                "dates": t.dates,
+                "bands": t.bands,
             })
         );
     }

@@ -618,7 +618,7 @@ Ok(affected)
                         self.conn.execute(
                             "INSERT OR REPLACE INTO beacon_node_tiles
                                 (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count, item_count, dates_json, bands_json)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                             params![node_id, collection, tile_id, w, s, e, n, date_count, item_count, dates_json, bands_json],
                         )?;
                         count += 1;
@@ -742,7 +742,7 @@ Ok(affected)
             "INSERT INTO beacon_node_stats
                 (node_id, updated_at, total_items, total_chunks, total_bytes,
                  bytes_ingested, bytes_served, chunks_served, requests_total, collections_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(node_id) DO UPDATE SET
                 updated_at = excluded.updated_at,
                 total_items = excluded.total_items,
