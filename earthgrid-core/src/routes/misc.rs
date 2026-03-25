@@ -532,3 +532,106 @@ pub(crate) async fn session_me(
         Json(serde_json::json!({"authenticated": false})),
     ).into_response()
 }
+
+
+// ---------------------------------------------------------------------------
+// UI dispatch: ui_enabled toggle + login rate-limit
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
+use std::time::Instant;
+
+/// Global login attempt tracker: IP → Vec<Instant>
+/// Max 5 attempts per minute per IP.
+static LOGIN_ATTEMPTS: std::sync::LazyLock<StdMutex<HashMap<String, Vec<Instant>>>> =
+    std::sync::LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+const LOGIN_MAX_PER_MINUTE: usize = 5;
+
+fn check_login_rate(ip: &str) -> bool {
+    let now = Instant::now();
+    let cutoff = now - std::time::Duration::from_secs(60);
+    let mut attempts = LOGIN_ATTEMPTS.lock().unwrap();
+    let times = attempts.entry(ip.to_string()).or_default();
+    times.retain(|&t| t > cutoff);
+    if times.len() >= LOGIN_MAX_PER_MINUTE {
+        return false; // rate limited
+    }
+    times.push(now);
+    true
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> String {
+    if let Some(fwd) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first) = fwd.split(',').next() {
+            return first.trim().to_string();
+        }
+    }
+    "unknown".to_string()
+}
+
+fn ui_disabled_response() -> axum::response::Response {
+    (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Web UI is disabled on this node"}))).into_response()
+}
+
+/// GET /ui
+pub(crate) async fn ui_dispatch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !state.ui_enabled {
+        return ui_disabled_response();
+    }
+    dashboard_auth(State(state), headers).await.into_response()
+}
+
+/// GET /ui/login
+pub(crate) async fn login_dispatch(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if !state.ui_enabled {
+        return ui_disabled_response();
+    }
+    login_page().await.into_response()
+}
+
+/// POST /ui/login (with rate limiting)
+pub(crate) async fn login_post_dispatch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if !state.ui_enabled {
+        return ui_disabled_response();
+    }
+    let ip = extract_client_ip(&headers);
+    if !check_login_rate(&ip) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error": "Too many login attempts. Try again in 60 seconds."})),
+        ).into_response();
+    }
+    login_handler(State(state), body).await.into_response()
+}
+
+/// POST /ui/logout
+pub(crate) async fn logout_dispatch(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if !state.ui_enabled {
+        return ui_disabled_response();
+    }
+    logout_handler().await.into_response()
+}
+
+/// GET /ui/me
+pub(crate) async fn session_me_dispatch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !state.ui_enabled {
+        return ui_disabled_response();
+    }
+    session_me(headers).await.into_response()
+}

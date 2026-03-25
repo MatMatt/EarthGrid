@@ -60,6 +60,8 @@ pub struct AppState {
     pub active_requests: Arc<AtomicUsize>,
     /// Whether this node runs as beacon (shows grid-wide landing page).
     pub is_beacon: bool,
+    /// Whether the web UI is enabled (default: true).
+    pub ui_enabled: bool,
 }
 
 
@@ -227,11 +229,11 @@ pub fn router(state: AppState) -> Router {
         // Federation: key exchange + user sync
         .route("/federation/exchange-key", post(crate::routes::federation::federation_exchange_key))
         .route("/federation/users", get(crate::routes::federation::federation_list_users).post(crate::routes::federation::federation_import_users))
-        // HTML dashboard + UI (session-authenticated)
-        .route("/ui", get(crate::routes::misc::dashboard_auth))
-        .route("/ui/login", get(crate::routes::misc::login_page).post(crate::routes::misc::login_handler))
-        .route("/ui/logout", post(crate::routes::misc::logout_handler))
-        .route("/ui/me", get(crate::routes::misc::session_me))
+        // HTML Node UI (session-authenticated, can be disabled via EARTHGRID_UI_ENABLED=false)
+        .route("/ui", get(crate::routes::misc::ui_dispatch))
+        .route("/ui/login", get(crate::routes::misc::login_dispatch).post(crate::routes::misc::login_post_dispatch))
+        .route("/ui/logout", post(crate::routes::misc::logout_dispatch))
+        .route("/ui/me", get(crate::routes::misc::session_me_dispatch))
         // openEO compatibility aliases (without /stac/ prefix)
         .route("/collections", get(crate::routes::stac::list_collections))
         .route("/collections/{id}", get(crate::routes::stac::get_collection))
@@ -410,6 +412,20 @@ pub async fn serve(
                     .unwrap_or(false)
             };
             from_env || from_cfg
+        },
+        ui_enabled: {
+            let from_env = std::env::var("EARTHGRID_UI_ENABLED")
+                .map(|v| v.to_lowercase() != "false" && v != "0")
+                .unwrap_or(true);
+            let from_cfg = {
+                let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+                std::fs::read_to_string(&cfg_path)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|v| v["ui_enabled"].as_bool())
+                    .unwrap_or(true)
+            };
+            from_env && from_cfg
         },
     };
 
