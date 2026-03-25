@@ -228,7 +228,6 @@ pub fn router(state: AppState) -> Router {
         .route("/federation/exchange-key", post(crate::routes::federation::federation_exchange_key))
         .route("/federation/users", get(crate::routes::federation::federation_list_users).post(crate::routes::federation::federation_import_users))
         // HTML dashboard + UI (session-authenticated)
-        .route("/dashboard", get(crate::routes::misc::dashboard_auth))
         .route("/ui", get(crate::routes::misc::dashboard_auth))
         .route("/ui/login", get(crate::routes::misc::login_page).post(crate::routes::misc::login_handler))
         .route("/ui/logout", post(crate::routes::misc::logout_handler))
