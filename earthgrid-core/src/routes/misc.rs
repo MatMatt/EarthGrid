@@ -144,13 +144,6 @@ pub(crate) async fn download_item(
 // ---------------------------------------------------------------------------
 // HTML: Dashboard + UI
 // ---------------------------------------------------------------------------
-
-/// GET / (HTML) — Info page about the grid (like GH Pages but with live API)
-pub(crate) async fn landing_html() -> impl IntoResponse {
-    Html(include_str!("../../assets/beacon.html")).into_response()
-}
-
-
 // dashboard() replaced by dashboard_auth() with session authentication
 
 

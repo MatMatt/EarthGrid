@@ -115,35 +115,6 @@ pub(crate) async fn replicate(
 
 
 // ---------------------------------------------------------------------------
-// Base64 decode helper
-// ---------------------------------------------------------------------------
-
-pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
-    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut table = [255u8; 256];
-    for (i, &c) in alphabet.iter().enumerate() {
-        table[c as usize] = i as u8;
-    }
-    let clean: Vec<u8> = s.bytes()
-        .filter(|&c| c != b'=' && c != b'\n' && c != b'\r' && c != b' ')
-        .collect();
-    let mapped: Vec<u8> = clean.iter()
-        .map(|&c| table[c as usize])
-        .collect();
-    if mapped.iter().any(|&v| v == 255) { return Err(()); }
-
-    let mut out = Vec::with_capacity((mapped.len() * 3) / 4);
-    let mut i = 0;
-    while i + 3 < mapped.len() {
-        out.push((mapped[i] << 2) | (mapped[i+1] >> 4));
-        out.push(((mapped[i+1] & 0x0f) << 4) | (mapped[i+2] >> 2));
-        out.push(((mapped[i+2] & 0x03) << 6) | mapped[i+3]);
-        i += 4;
-    }
-    Ok(out)
-}
-
-
 // ---------------------------------------------------------------------------
 // Replicate/items — list items available for replication
 // ---------------------------------------------------------------------------

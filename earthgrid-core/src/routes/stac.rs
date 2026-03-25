@@ -35,63 +35,6 @@ pub struct SearchBody {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
-
-
-/// GET / — Content-negotiated landing: HTML for browsers, JSON for API clients
-pub(crate) async fn stac_landing(
-    State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
-) -> axum::response::Response {
-    // Only beacon nodes serve the HTML info page; regular nodes always return STAC JSON
-    let accept = headers.get("accept").and_then(|v| v.to_str().ok()).unwrap_or("");
-    if state.is_beacon && accept.contains("text/html") && !accept.starts_with("application/json") {
-        return crate::routes::misc::landing_html().await.into_response();
-    }
-    stac_landing_json(State(state)).await.into_response()
-}
-
-
-/// JSON STAC Landing
-pub(crate) async fn stac_landing_json(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "api_version": "1.2.0",
-        "backend_version": state.version,
-        "type": "Catalog",
-        "id": state.node_id,
-        "title": state.node_name,
-        "description": "EarthGrid STAC Catalog",
-        "stac_version": "1.0.0",
-        "conformsTo": [
-            "https://api.stacspec.org/v1.0.0/core",
-            "https://api.stacspec.org/v1.0.0/item-search",
-            "https://api.stacspec.org/v1.0.0/item-search#fields",
-            "https://api.stacspec.org/v1.0.0/item-search#sort",
-            "https://api.stacspec.org/v1.0.0/item-search#context",
-            "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/core",
-            "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30",
-            "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson",
-        ],
-        "endpoints": [
-            {"path": "/collections",                        "methods": ["GET"]},
-            {"path": "/collections/{collection_id}",        "methods": ["GET"]},
-            {"path": "/collections/{collection_id}/items",  "methods": ["GET"]},
-            {"path": "/processes",                          "methods": ["GET"]},
-            {"path": "/result",                             "methods": ["POST"]},
-            {"path": "/file_formats",                       "methods": ["GET"]},
-            {"path": "/validate",                           "methods": ["POST"]},
-        ],
-        "links": [
-            {"rel": "self",        "href": "/",                "type": "application/json"},
-            {"rel": "root",        "href": "/",                "type": "application/json"},
-            {"rel": "conformance", "href": "/conformance",     "type": "application/json"},
-            {"rel": "data",        "href": "/collections",     "type": "application/json"},
-            {"rel": "search",      "href": "/stac/search",     "type": "application/geo+json", "method": "GET"},
-            {"rel": "search",      "href": "/stac/search",     "type": "application/geo+json", "method": "POST"},
-        ]
-    }))
-}
-
-
 /// GET /conformance — OGC conformance classes
 pub(crate) async fn stac_conformance() -> Json<serde_json::Value> {
     Json(serde_json::json!({
