@@ -299,6 +299,7 @@ pub async fn serve(
     // Node identity from env, file, config.json, or generate+persist
     let earthgrid_home = dirs::home_dir().unwrap_or_default().join(".earthgrid");
     let id_path = earthgrid_home.join(".node_id");
+    let data_dir_id_path = data_dir.join(".node_id");
     let node_id = env::var("EARTHGRID_NODE_ID")
         .ok()
         .or_else(|| {
@@ -306,23 +307,39 @@ pub async fn serve(
             std::fs::read_to_string(&id_path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
         })
         .or_else(|| {
-            // Fallback: read node_id from config.json
-            let cfg = earthgrid_home.join("config.json");
-            if let Ok(c) = std::fs::read_to_string(&cfg) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&c) {
-                    return v["node_id"].as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());
+            // Fallback: read from data_dir/.node_id
+            std::fs::read_to_string(&data_dir_id_path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        })
+        .or_else(|| {
+            // Fallback: read node_id from config.json (home or data_dir parent)
+            let paths = [
+                earthgrid_home.join("config.json"),
+                data_dir.join("config.json"),
+            ];
+            for cfg in &paths {
+                if let Ok(c) = std::fs::read_to_string(cfg) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&c) {
+                        if let Some(id) = v["node_id"].as_str().map(|s| s.to_string()).filter(|s| !s.is_empty()) {
+                            return Some(id);
+                        }
+                    }
                 }
             }
             None
         })
         .unwrap_or_else(|| {
-            // Generate new ID and persist it
+            // Generate new ID and persist to BOTH locations
             let new_id = uuid::Uuid::new_v4().to_string();
             let _ = std::fs::create_dir_all(&earthgrid_home);
             let _ = std::fs::write(&id_path, &new_id);
+            let _ = std::fs::write(&data_dir_id_path, &new_id);
             println!("📝 Generated new node ID: {} (saved to {})", new_id, id_path.display());
             new_id
         });
+    // Ensure data_dir also has the node_id for consistency
+    if !data_dir_id_path.exists() || std::fs::read_to_string(&data_dir_id_path).ok().map(|s| s.trim().to_string()) != Some(node_id.clone()) {
+        let _ = std::fs::write(&data_dir_id_path, &node_id);
+    }
     let node_name = env::var("EARTHGRID_NODE_NAME")
         .ok()
         .or_else(|| {
@@ -340,6 +357,18 @@ pub async fn serve(
                         if let Some(n) = v["node_name"].as_str() {
                             return Some(n.to_string());
                         }
+                    }
+                }
+            }
+            None
+        })
+        .or_else(|| {
+            // Last resort: read from data_dir/config.json
+            let cfg = data_dir.join("config.json");
+            if let Ok(c) = std::fs::read_to_string(&cfg) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&c) {
+                    if let Some(n) = v["node_name"].as_str().filter(|s| !s.is_empty()) {
+                        return Some(n.to_string());
                     }
                 }
             }
