@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod session;
 pub mod bandwidth;
 pub mod beacon;
 pub mod beacon_federation;

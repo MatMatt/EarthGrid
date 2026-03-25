@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 
-use crate::server::{AppState, api_key, err, LimitQuery};
+use crate::server::{AppState, err, check_admin_or_session, LimitQuery};
 use axum::response::Html;
 
 
@@ -66,8 +66,7 @@ pub(crate) async fn audit_log(
     headers: HeaderMap,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_admin(key) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     let limit = q.limit.unwrap_or(50).min(500);
@@ -152,9 +151,7 @@ pub(crate) async fn landing_html() -> impl IntoResponse {
 }
 
 
-pub(crate) async fn dashboard() -> impl IntoResponse {
-    Html(include_str!("../../assets/ui.html")).into_response()
-}
+// dashboard() replaced by dashboard_auth() with session authentication
 
 
 
@@ -415,3 +412,123 @@ pub(crate) async fn openeo_result(
     }
 }
 
+
+
+// ---------------------------------------------------------------------------
+// Session-based UI authentication
+// ---------------------------------------------------------------------------
+
+/// GET /ui, GET /dashboard — serve UI if session valid, else redirect to login.
+pub(crate) async fn dashboard_auth(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let secret = crate::session::session_secret();
+
+    // Check if user_auth is configured; if not, redirect to login with hint
+    if state.user_auth.is_none() {
+        return axum::response::Redirect::temporary("/ui/login?no_users").into_response();
+    }
+
+    // Extract and validate session cookie
+    if let Some(cookie_header) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
+        if let Some(token) = crate::session::extract_cookie(cookie_header) {
+            if crate::session::validate_token(&token, &secret).is_some() {
+                return Html(include_str!("../../assets/ui.html")).into_response();
+            }
+        }
+    }
+
+    axum::response::Redirect::temporary("/ui/login").into_response()
+}
+
+/// GET /ui/login — serve login page.
+pub(crate) async fn login_page() -> impl IntoResponse {
+    Html(include_str!("../../assets/login.html")).into_response()
+}
+
+/// POST /ui/login — validate credentials, set session cookie.
+pub(crate) async fn login_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let username = body.get("username").and_then(|v| v.as_str()).unwrap_or("");
+    let api_key = body.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+
+    if username.is_empty() || api_key.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Username and API key required"})),
+        ).into_response();
+    }
+
+    let user_auth = match &state.user_auth {
+        Some(ua) => ua,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "No user database configured"})),
+            ).into_response();
+        }
+    };
+
+    // Validate API key
+    match user_auth.validate_key(api_key) {
+        Ok(Some(user)) if user.username == username => {
+            let secret = crate::session::session_secret();
+            let token = crate::session::create_token(&user.username, &user.role, &secret);
+            let cookie = crate::session::set_cookie(&token);
+
+            (
+                StatusCode::OK,
+                [(axum::http::header::SET_COOKIE, cookie)],
+                Json(serde_json::json!({
+                    "ok": true,
+                    "username": user.username,
+                    "role": user.role,
+                })),
+            ).into_response()
+        }
+        _ => {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid username or API key"})),
+            ).into_response()
+        }
+    }
+}
+
+/// POST /ui/logout — clear session cookie.
+pub(crate) async fn logout_handler() -> impl IntoResponse {
+    let cookie = crate::session::clear_cookie();
+    (
+        StatusCode::OK,
+        [(axum::http::header::SET_COOKIE, cookie)],
+        Json(serde_json::json!({"ok": true})),
+    )
+}
+
+/// GET /ui/me — return current session user info (for UI role-based rendering).
+pub(crate) async fn session_me(
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let secret = crate::session::session_secret();
+    if let Some(cookie_header) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
+        if let Some(token) = crate::session::extract_cookie(cookie_header) {
+            if let Some((username, role)) = crate::session::validate_token(&token, &secret) {
+                return (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "username": username,
+                        "role": role,
+                        "authenticated": true,
+                    })),
+                ).into_response();
+            }
+        }
+    }
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"authenticated": false})),
+    ).into_response()
+}

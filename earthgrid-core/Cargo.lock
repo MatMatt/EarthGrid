@@ -946,6 +946,7 @@ dependencies = [
  "gdal",
  "gtk",
  "hex",
+ "hmac",
  "image",
  "libp2p",
  "open",

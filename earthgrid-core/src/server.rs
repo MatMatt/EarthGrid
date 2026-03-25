@@ -78,6 +78,44 @@ pub(crate) fn api_key(headers: &HeaderMap) -> Option<&str> {
     headers.get("x-api-key").and_then(|v| v.to_str().ok())
 }
 
+/// Extract user role from session cookie. Returns (username, role) if valid.
+pub(crate) fn session_user(headers: &HeaderMap) -> Option<(String, String)> {
+    let cookie_header = headers.get("cookie")?.to_str().ok()?;
+    let token = crate::session::extract_cookie(cookie_header)?;
+    let secret = crate::session::session_secret();
+    crate::session::validate_token(&token, &secret)
+}
+
+/// Check admin access: first try API key, then fall back to session cookie.
+pub(crate) fn check_admin_or_session(auth: &crate::auth::AuthConfig, headers: &HeaderMap) -> Result<(), crate::error::EarthGridError> {
+    // Try API key first
+    if let Some(key) = api_key(headers) {
+        return auth.check_admin(Some(key));
+    }
+    // Fall back to session cookie
+    if let Some((_username, role)) = session_user(headers) {
+        if role == "admin" {
+            return Ok(());
+        }
+    }
+    Err(crate::error::EarthGridError::AuthRequired)
+}
+
+/// Check write access: first try API key, then fall back to session cookie.
+pub(crate) fn check_write_or_session(auth: &crate::auth::AuthConfig, headers: &HeaderMap) -> Result<(), crate::error::EarthGridError> {
+    // Try API key first
+    if let Some(key) = api_key(headers) {
+        return auth.check_write(Some(key));
+    }
+    // Fall back to session cookie
+    if let Some((_username, role)) = session_user(headers) {
+        if role == "admin" || role == "user" || role == "member" {
+            return Ok(());
+        }
+    }
+    Err(crate::error::EarthGridError::AuthRequired)
+}
+
 pub(crate) fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (status, Json(serde_json::json!({"error": msg})))
 }
@@ -189,9 +227,12 @@ pub fn router(state: AppState) -> Router {
         // Federation: key exchange + user sync
         .route("/federation/exchange-key", post(crate::routes::federation::federation_exchange_key))
         .route("/federation/users", get(crate::routes::federation::federation_list_users).post(crate::routes::federation::federation_import_users))
-        // HTML dashboard + UI
-        .route("/dashboard", get(crate::routes::misc::dashboard))
-        .route("/ui", get(crate::routes::misc::dashboard))
+        // HTML dashboard + UI (session-authenticated)
+        .route("/dashboard", get(crate::routes::misc::dashboard_auth))
+        .route("/ui", get(crate::routes::misc::dashboard_auth))
+        .route("/ui/login", get(crate::routes::misc::login_page).post(crate::routes::misc::login_handler))
+        .route("/ui/logout", post(crate::routes::misc::logout_handler))
+        .route("/ui/me", get(crate::routes::misc::session_me))
         // openEO compatibility aliases (without /stac/ prefix)
         .route("/collections", get(crate::routes::stac::list_collections))
         .route("/collections/{id}", get(crate::routes::stac::get_collection))

@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 
-use crate::server::{AppState, api_key, err, LimitQuery};
+use crate::server::{AppState, api_key, err, check_admin_or_session, check_write_or_session, LimitQuery};
 
 
 // ---------------------------------------------------------------------------
@@ -16,8 +16,7 @@ pub(crate) async fn admin_stats(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_admin(key) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
@@ -55,8 +54,7 @@ pub(crate) async fn admin_activity(
     headers: HeaderMap,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_write(key) {
+    if let Err(e) = check_write_or_session(&state.auth, &headers) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
@@ -101,8 +99,7 @@ pub(crate) async fn admin_delete_collection(
     headers: HeaderMap,
     Path(collection_id): Path<String>,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_admin(key) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     let catalog = state.catalog.lock().await;
@@ -155,8 +152,7 @@ pub(crate) async fn admin_list_users(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_admin(key) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     match &state.user_auth {
@@ -186,8 +182,7 @@ pub(crate) async fn admin_create_user(
     headers: HeaderMap,
     Json(body): Json<CreateUserBody>,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_admin(key) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     if body.username.is_empty() {
@@ -219,8 +214,7 @@ pub(crate) async fn admin_delete_user(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_admin(key) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     match &state.user_auth {
@@ -264,8 +258,7 @@ pub(crate) async fn delete_node(
     headers: HeaderMap,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_admin(key) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     // Remove from peer registry
