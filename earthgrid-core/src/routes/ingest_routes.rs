@@ -57,8 +57,10 @@ pub(crate) async fn fetch_preview(
         return err(StatusCode::BAD_REQUEST, "Missing bbox or tile parameter").into_response();
     };
 
-    let start_date = q.start_date.as_deref().unwrap_or("2020-01-01");
-    let end_date = q.end_date.as_deref().unwrap_or("2020-12-31");
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let one_month_ago = (chrono::Utc::now() - chrono::Duration::days(30)).format("%Y-%m-%d").to_string();
+    let start_date = q.start_date.as_deref().unwrap_or(&one_month_ago);
+    let end_date = q.end_date.as_deref().unwrap_or(&today);
     let cloud_cover = q.cloud_cover.unwrap_or(30.0);
     let limit = q.limit.unwrap_or(100);
     let collection = q.collection.as_deref().unwrap_or("sentinel-2-l2a");
@@ -150,8 +152,10 @@ pub(crate) async fn fetch_handler(
         return err(StatusCode::BAD_REQUEST, "Missing bbox or tile parameter").into_response();
     };
 
-    let start_date = q.start_date.as_deref().unwrap_or("2020-01-01");
-    let end_date = q.end_date.as_deref().unwrap_or("2020-12-31");
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let one_month_ago = (chrono::Utc::now() - chrono::Duration::days(30)).format("%Y-%m-%d").to_string();
+    let start_date = q.start_date.as_deref().unwrap_or(&one_month_ago);
+    let end_date = q.end_date.as_deref().unwrap_or(&today);
     let cloud_cover = q.cloud_cover.unwrap_or(30.0);
     let limit = q.limit.unwrap_or(100);
     let collection = q.collection.as_deref().unwrap_or("sentinel-2-l2a");
