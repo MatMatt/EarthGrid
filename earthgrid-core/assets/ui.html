@@ -1107,7 +1107,7 @@ async function loadNetwork() {
   setHtml('network-overview', '<div class="loading"><div class="spinner"></div> Loading…</div>');
   setHtml('nodes-list', '<div class="loading"><div class="spinner"></div> Loading nodes…</div>');
 
-  // Try beacon /nodes first, then fall back to /peers
+  // Try local beacon, then remote beacon (via node-info.beacon_url), then /peers
   try {
     let nodes = [];
     let fromBeacon = false;
@@ -1115,10 +1115,28 @@ async function loadNetwork() {
     try {
       const data = await apiFetch('/beacon/nodes');
       nodes = data.nodes || [];
-      fromBeacon = true;
-    } catch {
-      const data = await apiFetch('/peers');
-      nodes = data.peers || [];
+      if (nodes.length > 0) fromBeacon = true;
+    } catch {}
+
+    // If local beacon returned nothing, try remote beacon URL
+    if (!nodes.length && nodeInfo && nodeInfo.beacon_url) {
+      try {
+        const beaconBase = nodeInfo.beacon_url.replace(/\/$/, '');
+        const r = await fetch(beaconBase + '/beacon/nodes');
+        if (r.ok) {
+          const data = await r.json();
+          nodes = data.nodes || [];
+          if (nodes.length > 0) fromBeacon = true;
+        }
+      } catch {}
+    }
+
+    // Last fallback: local peers
+    if (!nodes.length) {
+      try {
+        const data = await apiFetch('/peers');
+        nodes = data.peers || [];
+      } catch {}
     }
 
     // Overview
