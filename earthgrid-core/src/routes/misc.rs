@@ -427,7 +427,7 @@ pub(crate) async fn dashboard_auth(
 
     // Check if user_auth is configured; if not, redirect to login with hint
     if state.user_auth.is_none() {
-        return axum::response::Redirect::temporary("/ui/login?no_users").into_response();
+        return axum::response::Redirect::temporary("ui/login?no_users").into_response();
     }
 
     // Localhost: skip auth (shell access = full access)
@@ -444,7 +444,7 @@ pub(crate) async fn dashboard_auth(
         }
     }
 
-    axum::response::Redirect::temporary("/ui/login").into_response()
+    axum::response::Redirect::temporary("ui/login").into_response()
 }
 
 /// GET /ui/login — serve login page.

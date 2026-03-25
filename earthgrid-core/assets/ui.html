@@ -471,6 +471,7 @@ const API_BASE = (() => {
   const base = lastSlash > 0 ? path.slice(0, lastSlash) : '';
   return base + '/api';
 })();
+const UI_BASE = API_BASE.replace(/\/api$/, '');
 
 // ============================================================
 // State
@@ -518,7 +519,7 @@ let currentRole = null;
 
 async function loadSession() {
   try {
-    const r = await fetch('/ui/me');
+    const r = await fetch(UI_BASE + '/ui/me');
     if (r.ok) {
       const data = await r.json();
       currentUser = data.username;
@@ -550,8 +551,8 @@ function applyRoleRestrictions() {
 }
 
 async function doLogout() {
-  await fetch('/ui/logout', { method: 'POST' });
-  window.location.href = '/ui/login';
+  await fetch(UI_BASE + '/ui/logout', { method: 'POST' });
+  window.location.href = UI_BASE + '/ui/login';
 }
 
 function getAdminKey() { return ''; }
@@ -559,7 +560,7 @@ function getAdminKey() { return ''; }
 async function apiFetch(path, opts={}) {
   const r = await fetch(API_BASE + path, opts);
   if (r.status === 401) {
-    window.location.href = '/ui/login';
+    window.location.href = UI_BASE + '/ui/login';
     throw new Error('Session expired');
   }
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
