@@ -202,7 +202,7 @@ fn build_replica_map(beacon_db_path: Option<&std::path::Path>) -> std::collectio
 /// Used by non-beacon nodes that don't have a local beacon.db.
 fn build_replica_map_from_beacon(beacon_url: &str) -> std::collections::HashMap<String, u32> {
     let mut map = std::collections::HashMap::new();
-    let url = format!("{}/beacon/nodes", beacon_url.trim_end_matches('/'));
+    let url = format!("{}/api/beacon/nodes", beacon_url.trim_end_matches('/'));
 
     // Blocking HTTP request (eviction runs in a background task)
     let client = reqwest::blocking::Client::builder()

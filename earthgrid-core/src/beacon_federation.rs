@@ -236,7 +236,7 @@ async fn connect_to_peer_loop(state: BeaconState, peer_url: String) {
         .trim_end_matches('/')
         .replace("http://", "ws://")
         .replace("https://", "wss://")
-        + "/beacon/ws";
+        + "/api/beacon/ws";
 
     let mut backoff = Duration::from_secs(1);
     let max_backoff = Duration::from_secs(60);

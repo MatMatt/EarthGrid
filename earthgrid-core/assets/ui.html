@@ -465,10 +465,11 @@ const API_BASE = (() => {
   const markers = ['/ui', '/dashboard'];
   for (const m of markers) {
     const idx = path.indexOf(m);
-    if (idx >= 0) return path.slice(0, idx);
+    if (idx >= 0) return path.slice(0, idx) + '/api';
   }
   const lastSlash = path.lastIndexOf('/');
-  return lastSlash > 0 ? path.slice(0, lastSlash) : '';
+  const base = lastSlash > 0 ? path.slice(0, lastSlash) : '';
+  return base + '/api';
 })();
 
 // ============================================================
@@ -1133,7 +1134,7 @@ async function loadNetwork() {
     if (!nodes.length && nodeInfo && nodeInfo.beacon_url) {
       try {
         const beaconBase = nodeInfo.beacon_url.replace(/\/$/, '');
-        const r = await fetch(beaconBase + '/beacon/nodes');
+        const r = await fetch(beaconBase + '/api/beacon/nodes');
         if (r.ok) {
           const data = await r.json();
           nodes = data.nodes || [];

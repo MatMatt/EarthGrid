@@ -478,7 +478,8 @@ if (document.readyState === 'loading') {
 // API base: same origin, detect path prefix from reverse proxy
 const EARTHGRID_API = (() => {
   const path = location.pathname.replace(/\/[^/]*$/, '');
-  return path === '/' ? '' : path.replace(/\/$/, '');
+  const base = path === '/' ? '' : path.replace(/\/$/, '');
+  return base + '/api';
 })();
 
 let currentBoard = 'nodes';

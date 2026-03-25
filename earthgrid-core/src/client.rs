@@ -205,7 +205,7 @@ impl Client {
             params.push(("offset".into(), offset.to_string()));
         }
 
-        let url = format!("{}/stac/search", self.base_url);
+        let url = format!("{}/api/stac/search", self.base_url);
         let req = self.with_auth(self.http.get(&url)).query(&params);
         let resp = req.send().await.map_err(|e| EarthGridError::Other(e.to_string()))?;
         if !resp.status().is_success() {

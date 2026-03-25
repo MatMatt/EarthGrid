@@ -84,7 +84,7 @@ pub(crate) async fn federation_sync(State(state): State<AppState>) -> impl IntoR
 
     for url in &peer_urls {
         // Try /node-info first, then fall back to /
-        let info_url = format!("{}/node-info", url);
+        let info_url = format!("{}/api/node-info", url);
         match client.get(&info_url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 if let Ok(info) = resp.json::<NodeInfo>().await {

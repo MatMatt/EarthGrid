@@ -212,7 +212,7 @@ impl Replicator {
 
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await;
-                let url = format!("{}/chunks/{}", peer_url, hash);
+                let url = format!("{}/api/chunks/{}", peer_url, hash);
                 match client.get(&url).send().await {
                     Ok(resp) if resp.status().is_success() => {
                         match resp.bytes().await {
@@ -253,7 +253,7 @@ impl Replicator {
     // -----------------------------------------------------------------------
 
     async fn fetch_collections(&self, peer_url: &str) -> anyhow::Result<Vec<String>> {
-        let url = format!("{}/stac/collections", peer_url);
+        let url = format!("{}/api/stac/collections", peer_url);
         let resp = self
             .client
             .get(&url)

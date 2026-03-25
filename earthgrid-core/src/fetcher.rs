@@ -691,7 +691,7 @@ pub async fn beacon_inventory(
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
-    let url = format!("{}/search", beacon_url.trim_end_matches('/'));
+    let url = format!("{}/api/stac/search", beacon_url.trim_end_matches('/'));
 
     let resp = client
         .get(&url)
@@ -757,7 +757,7 @@ async fn get_grid_nodes(beacon_url: &str) -> Vec<GridNode> {
         .build()
         .unwrap_or_default();
 
-    let url = format!("{}/beacon/nodes?alive_only=true", beacon_url.trim_end_matches('/'));
+    let url = format!("{}/api/beacon/nodes?alive_only=true", beacon_url.trim_end_matches('/'));
     let resp = match client.get(&url).send().await {
         Ok(r) if r.status().is_success() => r,
         _ => {
@@ -818,7 +818,7 @@ async fn delegate_fetch_to_node(
     let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
     let bands_str = bands.join(",");
     let url = format!(
-        "{}/fetch?bbox={}&start_date={}&end_date={}&cloud_cover={}&bands={}&limit={}&collection={}&local_only=true",
+        "{}/api/fetch?bbox={}&start_date={}&end_date={}&cloud_cover={}&bands={}&limit={}&collection={}&local_only=true",
         node.url.trim_end_matches('/'), bbox_str, start_date, end_date, cloud_cover, bands_str, limit, collection
     );
 

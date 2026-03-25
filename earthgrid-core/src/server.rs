@@ -152,114 +152,122 @@ pub struct LimitQuery {
 pub fn router(state: AppState) -> Router {
     Router::new()
         // Core
-        .route("/health", get(crate::routes::misc::health))
-        .route("/node-info", get(crate::routes::misc::node_info))
-        .route("/stats", get(crate::routes::stats::stats))
+        .route("/api/health", get(crate::routes::misc::health))
+        .route("/api/node-info", get(crate::routes::misc::node_info))
+        .route("/api/stats", get(crate::routes::stats::stats))
         // STAC Landing + Conformance
-        .route("/", get(crate::routes::stac::stac_landing))
+        .route("/", get(|| async {
+            axum::response::Redirect::permanent("/dashboard")
+        }))
         .route("/dashboard", get(|| async { axum::response::Html(include_str!("../assets/beacon.html")) }))
-        .route("/.well-known/openeo", get(crate::routes::stac::well_known_openeo))
+        // STAC spec backward-compat aliases (root level)
+        .route("/collections", get(crate::routes::stac::list_collections))
+        .route("/collections/{id}", get(crate::routes::stac::get_collection))
         .route("/conformance", get(crate::routes::stac::stac_conformance))
+        .route("/.well-known/openeo", get(crate::routes::stac::well_known_openeo))
+        .route("/health", get(crate::routes::misc::health))
+        .route("/api/.well-known/openeo", get(crate::routes::stac::well_known_openeo))
+        .route("/api/conformance", get(crate::routes::stac::stac_conformance))
         // STAC Collections + Items
-        .route("/stac/collections", get(crate::routes::stac::list_collections))
-        .route("/stac/collections/{id}", get(crate::routes::stac::get_collection))
-        .route("/stac/collections/{id}/items", get(crate::routes::stac::collection_items))
-        .route("/stac/collections/{id}/items/{item_id}", get(crate::routes::stac::get_collection_item))
+        .route("/api/stac/collections", get(crate::routes::stac::list_collections))
+        .route("/api/stac/collections/{id}", get(crate::routes::stac::get_collection))
+        .route("/api/stac/collections/{id}/items", get(crate::routes::stac::collection_items))
+        .route("/api/stac/collections/{id}/items/{item_id}", get(crate::routes::stac::get_collection_item))
         // STAC Search (GET + POST)
-        .route("/stac/search", get(crate::routes::stac::stac_search).post(crate::routes::stac::stac_search_post))
+        .route("/api/stac/search", get(crate::routes::stac::stac_search).post(crate::routes::stac::stac_search_post))
         // Chunks
-        .route("/chunks", get(crate::routes::chunks::list_chunks))
-        .route("/chunks/{sha}", get(crate::routes::chunks::get_chunk))
+        .route("/api/chunks", get(crate::routes::chunks::list_chunks))
+        .route("/api/chunks/{sha}", get(crate::routes::chunks::get_chunk))
         // Write
         // Integrity
-        .route("/verify/{item_id}", get(crate::routes::chunks::verify_item))
+        .route("/api/verify/{item_id}", get(crate::routes::chunks::verify_item))
         // Admin
-        .route("/audit", get(crate::routes::misc::audit_log))
+        .route("/api/audit", get(crate::routes::misc::audit_log))
         // Federation (Phase 2)
-        .route("/peers", get(crate::routes::federation::list_peers))
-        .route("/peers", post(crate::routes::federation::register_peer))
-        .route("/federation/sync", post(crate::routes::federation::federation_sync))
-        .route("/federation/search", get(crate::routes::federation::federation_search))
+        .route("/api/peers", get(crate::routes::federation::list_peers))
+        .route("/api/peers", post(crate::routes::federation::register_peer))
+        .route("/api/federation/sync", post(crate::routes::federation::federation_sync))
+        .route("/api/federation/search", get(crate::routes::federation::federation_search))
         // Gossip + file ingest
-        .route("/peers.json", get(crate::routes::federation::peers_json))
+        .route("/api/peers.json", get(crate::routes::federation::peers_json))
         // Element84 STAC Fetcher
-        .route("/fetch", post(crate::routes::ingest_routes::fetch_handler))
-        .route("/fetch/preview", get(crate::routes::ingest_routes::fetch_preview))
-        .route("/catalog/changes", get(crate::routes::ingest_routes::catalog_changes))
+        .route("/api/fetch", post(crate::routes::ingest_routes::fetch_handler))
+        .route("/api/fetch/preview", get(crate::routes::ingest_routes::fetch_preview))
+        .route("/api/catalog/changes", get(crate::routes::ingest_routes::catalog_changes))
         // Stats
-        .route("/stats/downloads", get(crate::routes::stats::stats_downloads))
-        .route("/stats/hot-chunks", get(crate::routes::stats::stats_hot_chunks))
-        .route("/stats/replication-advice", get(crate::routes::stats::stats_replication_advice))
-        .route("/stats/ingest", get(crate::routes::stats::stats_ingest_history))
+        .route("/api/stats/downloads", get(crate::routes::stats::stats_downloads))
+        .route("/api/stats/hot-chunks", get(crate::routes::stats::stats_hot_chunks))
+        .route("/api/stats/replication-advice", get(crate::routes::stats::stats_replication_advice))
+        .route("/api/stats/ingest", get(crate::routes::stats::stats_ingest_history))
         // Replication
-        .route("/replicate", post(crate::routes::chunks::replicate))
+        .route("/api/replicate", post(crate::routes::chunks::replicate))
         // Gamification
-        .route("/gamification/leaderboard", get(crate::routes::gamification_routes::gamification_leaderboard))
-        .route("/gamification/node/{id}", get(crate::routes::gamification_routes::gamification_node_profile))
-        .route("/gamification/feed", get(crate::routes::gamification_routes::gamification_feed))
-        .route("/gamification/stats", get(crate::routes::gamification_routes::gamification_stats))
-        .route("/gamification/economy", get(crate::routes::gamification_routes::gamification_economy))
-        .route("/gamification/challenges", get(crate::routes::gamification_routes::gamification_challenges))
-        .route("/gamification/challenges/{id}", get(crate::routes::gamification_routes::gamification_challenge_results))
+        .route("/api/gamification/leaderboard", get(crate::routes::gamification_routes::gamification_leaderboard))
+        .route("/api/gamification/node/{id}", get(crate::routes::gamification_routes::gamification_node_profile))
+        .route("/api/gamification/feed", get(crate::routes::gamification_routes::gamification_feed))
+        .route("/api/gamification/stats", get(crate::routes::gamification_routes::gamification_stats))
+        .route("/api/gamification/economy", get(crate::routes::gamification_routes::gamification_economy))
+        .route("/api/gamification/challenges", get(crate::routes::gamification_routes::gamification_challenges))
+        .route("/api/gamification/challenges/{id}", get(crate::routes::gamification_routes::gamification_challenge_results))
         // Download (reconstruct + serve COG)
-        .route("/download/{collection_id}/{item_id}", get(crate::routes::misc::download_item))
+        .route("/api/download/{collection_id}/{item_id}", get(crate::routes::misc::download_item))
         // Processing
-        .route("/process", post(crate::routes::process::process_job))
-        .route("/process/operations", get(crate::routes::process::process_operations))
+        .route("/api/process", post(crate::routes::process::process_job))
+        .route("/api/process/operations", get(crate::routes::process::process_operations))
         // Sync
-        .route("/sync", post(crate::routes::federation::sync_from_peer))
-        .route("/sync-item", post(crate::routes::federation::sync_item))
+        .route("/api/sync", post(crate::routes::federation::sync_from_peer))
+        .route("/api/sync-item", post(crate::routes::federation::sync_item))
         // Admin
-        .route("/admin/stats", get(crate::routes::admin::admin_stats))
-        .route("/admin/activity", get(crate::routes::admin::admin_activity))
-        .route("/admin/node/name", axum::routing::patch(crate::routes::admin::patch_node_name))
+        .route("/api/admin/stats", get(crate::routes::admin::admin_stats))
+        .route("/api/admin/activity", get(crate::routes::admin::admin_activity))
+        .route("/api/admin/node/name", axum::routing::patch(crate::routes::admin::patch_node_name))
         // Coverage + extended stats
-        .route("/coverage/spatial", get(crate::routes::stats::coverage_spatial))
-        .route("/stats/coverage", get(crate::routes::stats::stats_coverage))
-        .route("/stats/requests", get(crate::routes::stats::stats_requests))
-        .route("/stats/bandwidth", get(crate::routes::stats::stats_bandwidth))
-        .route("/stats/replication", get(crate::routes::stats::stats_replication_status))
-        .route("/bandwidth", get(crate::routes::stats::bandwidth_handler))
+        .route("/api/coverage/spatial", get(crate::routes::stats::coverage_spatial))
+        .route("/api/stats/coverage", get(crate::routes::stats::stats_coverage))
+        .route("/api/stats/requests", get(crate::routes::stats::stats_requests))
+        .route("/api/stats/bandwidth", get(crate::routes::stats::stats_bandwidth))
+        .route("/api/stats/replication", get(crate::routes::stats::stats_replication_status))
+        .route("/api/bandwidth", get(crate::routes::stats::bandwidth_handler))
         // Nodes list + delete
-        .route("/nodes", get(crate::routes::misc::list_nodes))
-        .route("/nodes/{node_id}", delete(crate::routes::admin::delete_node))
+        .route("/api/nodes", get(crate::routes::misc::list_nodes))
+        .route("/api/nodes/{node_id}", delete(crate::routes::admin::delete_node))
         // Admin: collections
-        .route("/admin/collections/{collection_id}", delete(crate::routes::admin::admin_delete_collection))
+        .route("/api/admin/collections/{collection_id}", delete(crate::routes::admin::admin_delete_collection))
         // Admin: users
-        .route("/admin/users", get(crate::routes::admin::admin_list_users).post(crate::routes::admin::admin_create_user))
-        .route("/admin/users/{user_id}", delete(crate::routes::admin::admin_delete_user))
+        .route("/api/admin/users", get(crate::routes::admin::admin_list_users).post(crate::routes::admin::admin_create_user))
+        .route("/api/admin/users/{user_id}", delete(crate::routes::admin::admin_delete_user))
         // PATCH /node-name (alias)
-        .route("/node-name", patch(crate::routes::admin::patch_node_name_alias))
+        .route("/api/node-name", patch(crate::routes::admin::patch_node_name_alias))
         // Stats: access + uptake
-        .route("/stats/access", get(crate::routes::stats::stats_access))
-        .route("/stats.json", get(crate::routes::stats::stats_json_alias))
-        .route("/stats/uptake", get(crate::routes::stats::stats_uptake))
-        .route("/stats/uptake/csv", get(crate::routes::stats::stats_uptake_csv))
+        .route("/api/stats/access", get(crate::routes::stats::stats_access))
+        .route("/api/stats.json", get(crate::routes::stats::stats_json_alias))
+        .route("/api/stats/uptake", get(crate::routes::stats::stats_uptake))
+        .route("/api/stats/uptake/csv", get(crate::routes::stats::stats_uptake_csv))
         // Replication items list
-        .route("/replicate/items", get(crate::routes::chunks::replicate_items))
+        .route("/api/replicate/items", get(crate::routes::chunks::replicate_items))
         // Resize storage
-        .route("/resize", post(crate::routes::chunks::resize_storage))
+        .route("/api/resize", post(crate::routes::chunks::resize_storage))
         // Chunk map
-        .route("/chunk-map/{collection_id}/{item_id}", get(crate::routes::chunks::chunk_map))
+        .route("/api/chunk-map/{collection_id}/{item_id}", get(crate::routes::chunks::chunk_map))
         // Point extraction
-        .route("/point/{collection_id}/{item_id}", get(crate::routes::chunks::point_extract))
+        .route("/api/point/{collection_id}/{item_id}", get(crate::routes::chunks::point_extract))
         // Federation: key exchange + user sync
-        .route("/federation/exchange-key", post(crate::routes::federation::federation_exchange_key))
-        .route("/federation/users", get(crate::routes::federation::federation_list_users).post(crate::routes::federation::federation_import_users))
+        .route("/api/federation/exchange-key", post(crate::routes::federation::federation_exchange_key))
+        .route("/api/federation/users", get(crate::routes::federation::federation_list_users).post(crate::routes::federation::federation_import_users))
         // HTML Node UI (session-authenticated, can be disabled via EARTHGRID_UI_ENABLED=false)
         .route("/ui", get(crate::routes::misc::ui_dispatch))
         .route("/ui/login", get(crate::routes::misc::login_dispatch).post(crate::routes::misc::login_post_dispatch))
         .route("/ui/logout", post(crate::routes::misc::logout_dispatch))
         .route("/ui/me", get(crate::routes::misc::session_me_dispatch))
         // openEO compatibility aliases (without /stac/ prefix)
-        .route("/collections", get(crate::routes::stac::list_collections))
-        .route("/collections/{id}", get(crate::routes::stac::get_collection))
+        .route("/api/collections", get(crate::routes::stac::list_collections))
+        .route("/api/collections/{id}", get(crate::routes::stac::get_collection))
         // openEO processes + validate + jobs
-        .route("/processes", get(crate::routes::misc::openeo_processes))
-        .route("/file_formats", get(crate::routes::misc::openeo_file_formats))
-        .route("/result", post(crate::routes::misc::openeo_result))
-        .route("/validate", post(crate::routes::misc::openeo_validate))
-        .route("/jobs/{job_id}", get(crate::routes::misc::openeo_job_status))
+        .route("/api/processes", get(crate::routes::misc::openeo_processes))
+        .route("/api/file_formats", get(crate::routes::misc::openeo_file_formats))
+        .route("/api/result", post(crate::routes::misc::openeo_result))
+        .route("/api/validate", post(crate::routes::misc::openeo_validate))
+        .route("/api/jobs/{job_id}", get(crate::routes::misc::openeo_job_status))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -652,7 +660,7 @@ pub async fn serve(
 
             for url in &urls {
                 // 1. Sync node-info
-                let info_url = format!("{}/node-info", url);
+                let info_url = format!("{}/api/node-info", url);
                 match client.get(&info_url).send().await {
                     Ok(resp) if resp.status().is_success() => {
                         if let Ok(info) = resp.json::<NodeInfo>().await {
@@ -892,13 +900,13 @@ pub async fn serve(
 
                     // Send heartbeat to ALL known beacons
                     for beacon_base in &all_beacons {
-                        let hb_url = format!("{}/beacon/heartbeat", beacon_base.trim_end_matches('/'));
+                        let hb_url = format!("{}/api/beacon/heartbeat", beacon_base.trim_end_matches('/'));
                         match client.post(&hb_url).json(&body).send().await {
                             Ok(r) => {
                                 let status = r.status();
                                 if status == reqwest::StatusCode::NOT_FOUND {
                                     // Not registered — register first
-                                    let reg_url = hb_url.replace("/beacon/heartbeat", "/beacon/register");
+                                    let reg_url = hb_url.replace("/api/beacon/heartbeat", "/api/beacon/register");
                                     if let Ok(rr) = client.post(&reg_url).json(&body).send().await {
                                         // Try to extract known_beacons from register response too
                                         if let Ok(resp_body) = rr.json::<serde_json::Value>().await {

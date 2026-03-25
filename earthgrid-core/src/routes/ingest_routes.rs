@@ -319,7 +319,7 @@ pub(crate) async fn fetch_handler(
             let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
             let bands_str = bands.join(",");
             let mut url = format!(
-                "{}/fetch?bbox={}&start_date={}&end_date={}&cloud_cover={}&bands={}&limit={}&collection={}",
+                "{}/api/fetch?bbox={}&start_date={}&end_date={}&cloud_cover={}&bands={}&limit={}&collection={}",
                 bu.trim_end_matches('/'), bbox_str, start_date, end_date, cloud_cover, bands_str, limit, collection
             );
             if let Some(ref tile) = tile_filter {

@@ -1086,7 +1086,7 @@ async fn fetch_and_store_coverage(
         .unwrap_or_default();
 
     // Fetch spatial coverage
-    let coverage_url = format!("{}/coverage/spatial?source=local", base);
+    let coverage_url = format!("{}/api/coverage/spatial?source=local", base);
     let coverage = match client.get(&coverage_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             match resp.json::<serde_json::Value>().await {
@@ -1108,7 +1108,7 @@ async fn fetch_and_store_coverage(
 
     // Fetch stats + stats/coverage
     let stats_url = format!("{}/stats", base);
-    let stats_cov_url = format!("{}/stats/coverage", base);
+    let stats_cov_url = format!("{}/api/stats/coverage", base);
 
     let stats = match client.get(&stats_url).send().await {
         Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
@@ -1169,14 +1169,14 @@ async fn grid_node_stats(
 
 pub fn beacon_router(state: BeaconState) -> Router {
     Router::new()
-        .route("/beacon/register", post(register_node))
-        .route("/beacon/heartbeat", post(heartbeat_node))
-        .route("/beacon/nodes", get(list_nodes))
-        .route("/beacon/nodes/{node_id}", get(get_node))
-        .route("/beacon/nodes/{node_id}", delete(remove_node))
-        .route("/beacon/metrics", get(grid_metrics))
-        .route("/beacon/grid-stats", get(grid_node_stats))
-        .route("/beacon/ws", axum::routing::any(crate::beacon_federation::ws_handler))
+        .route("/api/beacon/register", post(register_node))
+        .route("/api/beacon/heartbeat", post(heartbeat_node))
+        .route("/api/beacon/nodes", get(list_nodes))
+        .route("/api/beacon/nodes/{node_id}", get(get_node))
+        .route("/api/beacon/nodes/{node_id}", delete(remove_node))
+        .route("/api/beacon/metrics", get(grid_metrics))
+        .route("/api/beacon/grid-stats", get(grid_node_stats))
+        .route("/api/beacon/ws", axum::routing::any(crate::beacon_federation::ws_handler))
         .with_state(state)
 }
 
