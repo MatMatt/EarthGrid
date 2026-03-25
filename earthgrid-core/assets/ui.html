@@ -911,9 +911,17 @@ function initFetchMap() {
   const el = document.getElementById('fetch-map');
   if (!el) return;
   _fetchMap = L.map(el).setView([47.5, 13.0], 6);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  const darkTile = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     attribution: '\u00a9 OSM \u00a9 CARTO', maxZoom: 19
-  }).addTo(_fetchMap);
+  });
+  const lightTile = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '\u00a9 OSM \u00a9 CARTO', maxZoom: 19
+  });
+  const osmTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '\u00a9 OSM', maxZoom: 19
+  });
+  darkTile.addTo(_fetchMap);
+  L.control.layers({'Dark': darkTile, 'Light': lightTile, 'OSM': osmTile}, null, {position: 'topright'}).addTo(_fetchMap);
 
   const drawnItems = new L.FeatureGroup();
   _fetchMap.addLayer(drawnItems);

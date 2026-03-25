@@ -156,10 +156,17 @@ function initCoverageMap() {
     attributionControl: false,
   }).setView([50, 12], 4);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 18,
-    subdomains: 'abcd',
-  }).addTo(covMap);
+  const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 18, subdomains: 'abcd',
+  });
+  const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 18, subdomains: 'abcd',
+  });
+  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+  });
+  darkLayer.addTo(covMap);
+  L.control.layers({'Dark': darkLayer, 'Light': lightLayer, 'OSM': osmLayer}, null, {position: 'topright'}).addTo(covMap);
 
   // Legend
   const legend = L.control({position:'bottomright'});
