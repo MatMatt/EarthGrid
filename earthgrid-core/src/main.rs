@@ -886,18 +886,9 @@ fn main() -> anyhow::Result<()> {
             println!("\n   Restart EarthGrid to apply: earthgrid stop && earthgrid start");
         }
         Commands::Admin { action } => {
-            let source_users_db = {
-                let cfg_path = config_file();
-                let cfg: serde_json::Value = fs::read_to_string(&cfg_path)
-                    .ok()
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or(serde_json::json!({}));
-                cfg["source_users_db"].as_str()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| cli.data_dir.join("source_users.db"))
-            };
+            let users_db = cli.data_dir.join("users.db");
 
-            let ua = earthgrid_core::user_auth::UserAuth::new(&source_users_db)?;
+            let ua = earthgrid_core::user_auth::UserAuth::new(&users_db)?;
 
             match action {
                 AdminAction::AddUser { username, role } => {
