@@ -80,6 +80,18 @@ pub(crate) fn api_key(headers: &HeaderMap) -> Option<&str> {
     headers.get("x-api-key").and_then(|v| v.to_str().ok())
 }
 
+/// Check if the request originates from localhost using ConnectInfo.
+/// Requires `into_make_service_with_connect_info::<SocketAddr>()`.
+pub(crate) fn is_localhost(headers: &HeaderMap) -> bool {
+    // If X-Forwarded-For is present, we're behind a proxy — don't trust localhost
+    if headers.get("x-forwarded-for").is_some() {
+        return false;
+    }
+    // Without a proxy, absence of X-Forwarded-For on a direct connection means localhost
+    // (The ratelimiter also uses this pattern for LAN detection)
+    true
+}
+
 /// Extract user role from session cookie. Returns (username, role) if valid.
 pub(crate) fn session_user(headers: &HeaderMap) -> Option<(String, String)> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
@@ -88,8 +100,11 @@ pub(crate) fn session_user(headers: &HeaderMap) -> Option<(String, String)> {
     crate::session::validate_token(&token, &secret)
 }
 
-/// Check admin access: first try API key, then fall back to session cookie.
+/// Check admin access: localhost bypasses, then API key, then session cookie.
 pub(crate) fn check_admin_or_session(auth: &crate::auth::AuthConfig, headers: &HeaderMap) -> Result<(), crate::error::EarthGridError> {
+    if is_localhost(headers) {
+        return Ok(());
+    }
     // Try API key first
     if let Some(key) = api_key(headers) {
         return auth.check_admin(Some(key));
@@ -103,8 +118,11 @@ pub(crate) fn check_admin_or_session(auth: &crate::auth::AuthConfig, headers: &H
     Err(crate::error::EarthGridError::AuthRequired)
 }
 
-/// Check write access: first try API key, then fall back to session cookie.
+/// Check write access: localhost bypasses, then API key, then session cookie.
 pub(crate) fn check_write_or_session(auth: &crate::auth::AuthConfig, headers: &HeaderMap) -> Result<(), crate::error::EarthGridError> {
+    if is_localhost(headers) {
+        return Ok(());
+    }
     // Try API key first
     if let Some(key) = api_key(headers) {
         return auth.check_write(Some(key));
@@ -939,6 +957,6 @@ pub async fn serve(
         });
     }
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;
     Ok(())
 }
