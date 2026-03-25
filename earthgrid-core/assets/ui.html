@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EarthGrid Node</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <style>
 :root {
   --bg: #0d1117;
@@ -182,6 +180,11 @@ code:hover { background: rgba(88,166,255,0.15); }
 code::after { content: '📋'; font-size: 10px; margin-left: 4px; opacity: 0.4; }
 code:hover::after { opacity: 0.8; }
 </style>
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 </head>
 <body>
 
@@ -225,7 +228,7 @@ code:hover::after { opacity: 0.8; }
       <div class="stat"><div class="stat-label">Node Name</div><div class="stat-value" id="s-name" style="font-size:16px;cursor:pointer" title="Click to rename" onclick="startNodeRename()">—</div><div class="stat-sub" id="s-id">—</div></div>
       <div class="stat"><div class="stat-label">Version</div><div class="stat-value" id="s-version" style="font-size:18px">—</div><div class="stat-sub" id="s-items">— items</div></div>
       <div class="stat"><div class="stat-label">Chunks</div><div class="stat-value" id="s-chunks">—</div><div class="stat-sub" id="s-chunks-bytes">—</div></div>
-      <div class="stat"><div class="stat-label">Coverage</div><div class="stat-value" id="s-area">—</div><div class="stat-sub">km²</div></div>
+      <div class="stat"><div class="stat-label">Storage Used</div><div class="stat-value" id="s-storage-pct">—</div><div class="stat-sub" id="s-storage-detail">—</div></div>
     </div>
 
     <div class="grid grid-2">
@@ -255,32 +258,41 @@ code:hover::after { opacity: 0.8; }
   <!-- DATA TAB -->
   <div class="tab-panel" id="panel-data">
     <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Fetch New Data</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>BBox (west,south,east,north)</label>
-          <input type="text" id="fetch-bbox" placeholder="e.g. 9.0,46.0,17.0,49.0" style="width:260px">
+      <div class="card-title">🛰 Fetch Satellite Data</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:320px">
+          <div id="fetch-map" style="height:340px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:8px"></div>
+          <div style="font-size:11px;color:var(--muted)">Draw a rectangle on the map or enter coordinates manually</div>
         </div>
-        <div class="form-group">
-          <label>Collection</label>
-          <input type="text" id="fetch-collection" placeholder="e.g. sentinel-2-l2a" style="width:180px">
+        <div style="min-width:280px;max-width:360px">
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Collection</label>
+            <select id="fetch-collection" style="width:100%"><option value="sentinel-2-l2a">sentinel-2-l2a</option></select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
+            <div class="form-group"><label>West</label><input type="number" id="fetch-west" step="0.01" placeholder="9.0" style="width:100%"></div>
+            <div class="form-group"><label>East</label><input type="number" id="fetch-east" step="0.01" placeholder="17.0" style="width:100%"></div>
+            <div class="form-group"><label>South</label><input type="number" id="fetch-south" step="0.01" placeholder="46.0" style="width:100%"></div>
+            <div class="form-group"><label>North</label><input type="number" id="fetch-north" step="0.01" placeholder="49.0" style="width:100%"></div>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>Date Range</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="date" id="fetch-start" style="flex:1">
+              <span style="color:var(--muted)">to</span>
+              <input type="date" id="fetch-end" style="flex:1">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:14px">
+            <div class="form-group" style="flex:1"><label>Cloud Cover %</label><input type="number" id="fetch-cloud" value="30" min="0" max="100"></div>
+            <div class="form-group" style="flex:1"><label>Limit</label><input type="number" id="fetch-limit" value="10" min="1" max="500"></div>
+          </div>
+          <button class="btn" onclick="previewFetch()" style="width:100%">🔍 Search</button>
         </div>
-        <div class="form-group">
-          <label>Start Date</label>
-          <input type="date" id="fetch-start" style="width:150px">
-        </div>
-        <div class="form-group">
-          <label>End Date</label>
-          <input type="date" id="fetch-end" style="width:150px">
-        </div>
-        <button class="btn" onclick="triggerFetch()">Fetch</button>
       </div>
-      <div id="fetch-result"></div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Coverage Map</div>
-      <div id="map" style="height:380px;border-radius:var(--radius);z-index:1"></div>
+      <div id="fetch-result" style="margin-top:8px"></div>
+      <div id="fetch-preview" style="display:none;margin-top:12px"></div>
+      <div id="fetch-log" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:12px;color:var(--muted)"></div>
     </div>
 
     <div class="card">
@@ -383,8 +395,8 @@ code:hover::after { opacity: 0.8; }
     </div>
 
     <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Daily Summary</div>
-      <div id="activity-daily">
+      <div class="card-title">Node Activity in Grid</div>
+      <div id="activity-grid">
         <div class="loading"><div class="spinner"></div> Loading…</div>
       </div>
     </div>
@@ -488,11 +500,7 @@ function fmt_num(n) {
 
 function fmt_date(s) {
   if (!s) return '—';
-  try {
-    // created_at is Unix seconds (float) — Date() expects milliseconds
-    const ms = (typeof s === 'number' && s < 1e12) ? s * 1000 : (typeof s === 'number' ? s : Date.parse(s));
-    return new Date(ms).toISOString().slice(0,16).replace('T',' ');
-  } catch { return s; }
+  try { return new Date(s).toISOString().slice(0,16).replace('T',' '); } catch { return s; }
 }
 
 function fmt_bbox(b) {
@@ -511,7 +519,7 @@ async function loadSession() {
       const data = await r.json();
       currentUser = data.username;
       currentRole = data.role;
-      document.getElementById('user-badge').textContent = '👤 ' + data.username + ' (' + data.role + ')';
+      document.getElementById('user-badge').textContent = '\u{1f464} ' + data.username + ' (' + data.role + ')';
       document.getElementById('user-badge').style.display = '';
       document.getElementById('logout-btn').style.display = '';
       applyRoleRestrictions();
@@ -532,7 +540,6 @@ function applyRoleRestrictions() {
       t.style.display = 'none';
     }
   });
-  // Hide admin-only action buttons
   if (currentRole !== 'admin') {
     document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
   }
@@ -543,7 +550,6 @@ async function doLogout() {
   window.location.href = '/ui/login';
 }
 
-// Legacy compat — admin key from session cookie (auto-sent)
 function getAdminKey() { return ''; }
 
 async function apiFetch(path, opts={}) {
@@ -578,8 +584,7 @@ function switchTab(tab) {
   const idx = tabs.indexOf(tab);
   document.querySelectorAll('.tab')[idx].classList.add('active');
   document.getElementById('panel-' + tab).classList.add('active');
-  // Leaflet needs invalidateSize when its container becomes visible
-  if (tab === 'data' && egMap) setTimeout(() => egMap.invalidateSize(), 100);
+  if (tab === 'data') setTimeout(initFetchMap, 100);
   loadSession();
 refreshCurrent();
 }
@@ -609,7 +614,7 @@ async function loadStatus() {
 
     // Header
     document.getElementById('header-node-name').textContent = info.node_name || info.name;
-    if (info.beacon || info.is_beacon) document.getElementById('header-beacon').style.display = '';
+    if (info.beacon) document.getElementById('header-beacon').style.display = '';
 
     // Stats grid
     document.getElementById('s-name').textContent = info.node_name || '—';
@@ -617,8 +622,8 @@ async function loadStatus() {
     document.getElementById('s-version').textContent = info.version || '—';
     document.getElementById('s-items').textContent = fmt_num(info.item_count) + ' items';
     document.getElementById('s-chunks').textContent = fmt_num(info.chunks);
-    document.getElementById('s-chunks-bytes').textContent = fmt_bytes(info.chunks_bytes || info.storage_bytes);
-    document.getElementById('s-area').textContent = info.total_area_km2 ? fmt_num(Math.round(info.total_area_km2)) : '—';
+    document.getElementById('s-chunks-bytes').textContent = fmt_bytes((info.storage_bytes || info.chunks_bytes || 0));
+    const pct = info.storage_limit_gb > 0 ? ((info.storage_gb / info.storage_limit_gb) * 100).toFixed(1) + '%' : '—'; document.getElementById('s-storage-pct').textContent = pct; document.getElementById('s-storage-detail').textContent = fmt_bytes(info.storage_bytes) + ' / ' + fmt_num(Math.round(info.storage_limit_gb)) + ' GB';
 
     // Beacon
     renderBeaconInfo(info);
@@ -638,26 +643,30 @@ async function loadStatus() {
 
 function renderBeaconInfo(info) {
   let html = '';
-  const isBeacon = info.beacon || info.is_beacon;
-  const hasBeacon = isBeacon || info.beacon_url;
-  if (isBeacon) {
+  if (info.is_beacon || info.beacon) {
     html = `
       <div class="status-row" style="margin-bottom:10px">
         <div class="dot green"></div>
         <span>This node is a Beacon</span>
         <span class="tag green" style="margin-left:auto">Beacon</span>
       </div>`;
-  } else {
-    // Try to infer beacon URL from peers or settings
+  } else if (info.beacon_url) {
     html = `
       <div class="status-row" style="margin-bottom:10px">
-        <div class="dot ${(info.peers > 0 || hasBeacon) ? 'green' : 'yellow'}"></div>
-        <span>${hasBeacon ? (info.beacon_url || 'Beacon configured') : 'No beacon configured'}</span>
+        <div class="dot green"></div>
+        <span>Beacon: <a href="${info.beacon_url}" target="_blank" style="color:var(--accent)">${info.beacon_url}</a></span>
+      </div>`;
+  } else {
+    html = `
+      <div class="status-row" style="margin-bottom:10px">
+        <div class="dot yellow"></div>
+        <span>No beacon configured</span>
       </div>`;
   }
   html += `<div class="kv"><span class="kv-key">Peers</span><span class="kv-val">${fmt_num(info.peers)}</span></div>`;
   html += `<div class="kv"><span class="kv-key">Redundancy Index</span><span class="kv-val">${info.redundancy_index ?? '—'}×</span></div>`;
   html += `<div class="kv"><span class="kv-key">OpenEO</span><span class="kv-val">${info.openeo ? '✓ Enabled' : 'Disabled'}</span></div>`;
+  html += `<div class="kv"><span class="kv-key">Auto-Update</span><span class="kv-val">${info.auto_update === 'yes' ? '✓ Yes' : 'No'}</span></div>`;
   if (info.bandwidth) {
     const bw = info.bandwidth;
     html += `<div class="kv"><span class="kv-key">Bandwidth</span><span class="kv-val">${bw.upload_mbps ?? '—'} / ${bw.download_mbps ?? '—'} Mbps</span></div>`;
@@ -666,7 +675,7 @@ function renderBeaconInfo(info) {
 }
 
 function renderStorageInfo(info) {
-  const used = info.chunks_bytes || info.storage_bytes || 0;
+  const used = (info.storage_bytes || info.chunks_bytes || 0) || 0;
   const limitGb = info.storage_limit_gb || 0;
   const limitBytes = limitGb * 1024**3;
   const pct = info.storage_used_pct || (limitBytes > 0 ? (used / limitBytes * 100) : 0);
@@ -794,7 +803,6 @@ let _currentPage = 0;
 let _searchTerm = '';
 
 async function loadData() {
-  initMap();
   await Promise.all([loadCollectionFilter(), loadItems()]);
 }
 
@@ -873,9 +881,6 @@ function renderItems() {
   html += '</tbody></table></div>';
   setHtml('items-table-wrap', html);
 
-  // Update map with all filtered items (not just current page)
-  updateMap(filtered);
-
   // Pagination
   const pag = document.getElementById('items-pagination');
   pag.style.display = totalPages > 1 ? 'flex' : 'none';
@@ -895,38 +900,203 @@ function itemsPage(dir) {
   renderItems();
 }
 
-async function triggerFetch() {
-  const bbox = document.getElementById('fetch-bbox').value.trim();
-  const col = document.getElementById('fetch-collection').value.trim();
-  const start = document.getElementById('fetch-start').value;
-  const end = document.getElementById('fetch-end').value;
+// ---- Leaflet BBox Picker ----
+let _fetchMap = null, _fetchRect = null;
 
-  if (!bbox && !col) {
-    showAlert('fetch-result', 'Please enter at least a bbox or collection', 'error');
-    return;
+function initFetchMap() {
+  if (_fetchMap) { _fetchMap.invalidateSize(); return; }
+  const el = document.getElementById('fetch-map');
+  if (!el) return;
+  _fetchMap = L.map(el).setView([47.5, 13.0], 6);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '\u00a9 OSM \u00a9 CARTO', maxZoom: 19
+  }).addTo(_fetchMap);
+
+  const drawnItems = new L.FeatureGroup();
+  _fetchMap.addLayer(drawnItems);
+  const drawCtrl = new L.Control.Draw({
+    draw: { polygon:false, circle:false, circlemarker:false, marker:false, polyline:false,
+      rectangle: { shapeOptions: { color:'#58a6ff', weight:2, fillOpacity:0.15 } }
+    },
+    edit: { featureGroup: drawnItems }
+  });
+  _fetchMap.addControl(drawCtrl);
+
+  _fetchMap.on(L.Draw.Event.CREATED, function(ev) {
+    drawnItems.clearLayers();
+    _fetchRect = ev.layer;
+    drawnItems.addLayer(_fetchRect);
+    const b = _fetchRect.getBounds();
+    document.getElementById('fetch-west').value  = b.getWest().toFixed(4);
+    document.getElementById('fetch-south').value = b.getSouth().toFixed(4);
+    document.getElementById('fetch-east').value  = b.getEast().toFixed(4);
+    document.getElementById('fetch-north').value = b.getNorth().toFixed(4);
+  });
+  _fetchMap.on(L.Draw.Event.EDITED, function(ev) {
+    ev.layers.eachLayer(function(layer) {
+      const b = layer.getBounds();
+      document.getElementById('fetch-west').value  = b.getWest().toFixed(4);
+      document.getElementById('fetch-south').value = b.getSouth().toFixed(4);
+      document.getElementById('fetch-east').value  = b.getEast().toFixed(4);
+      document.getElementById('fetch-north').value = b.getNorth().toFixed(4);
+    });
+  });
+
+  ['fetch-west','fetch-south','fetch-east','fetch-north'].forEach(id => {
+    document.getElementById(id).addEventListener('change', syncMapRect);
+  });
+}
+
+function syncMapRect() {
+  const w=parseFloat(document.getElementById('fetch-west').value),
+        s=parseFloat(document.getElementById('fetch-south').value),
+        e=parseFloat(document.getElementById('fetch-east').value),
+        n=parseFloat(document.getElementById('fetch-north').value);
+  if(isNaN(w)||isNaN(s)||isNaN(e)||isNaN(n)||!_fetchMap) return;
+  const bounds = L.latLngBounds([[s,w],[n,e]]);
+  if(_fetchRect) { _fetchRect.setBounds(bounds); }
+  else {
+    _fetchRect = L.rectangle(bounds,{color:'#58a6ff',weight:2,fillOpacity:0.15}).addTo(_fetchMap);
   }
+  _fetchMap.fitBounds(bounds.pad(0.3));
+}
 
-  // Build query for /stac/search to show what would be fetched
+function fetchLog(msg, type) {
+  const log = document.getElementById('fetch-log');
+  log.style.display = 'block';
+  const line = document.createElement('div');
+  line.style.marginBottom = '2px';
+  const ts = new Date().toLocaleTimeString();
+  const color = type === 'error' ? 'var(--red)' : type === 'success' ? 'var(--green)' : type === 'warn' ? 'var(--yellow)' : 'var(--muted)';
+  line.innerHTML = '<span style="color:var(--muted)">[' + ts + ']</span> <span style="color:' + color + '">' + msg + '</span>';
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function getFetchParams() {
+  const w = document.getElementById('fetch-west').value.trim();
+  const s = document.getElementById('fetch-south').value.trim();
+  const e = document.getElementById('fetch-east').value.trim();
+  const n = document.getElementById('fetch-north').value.trim();
+  const col   = document.getElementById('fetch-collection').value;
+  const start = document.getElementById('fetch-start').value;
+  const end   = document.getElementById('fetch-end').value;
+  const cloud = document.getElementById('fetch-cloud').value || '30';
+  const limit = document.getElementById('fetch-limit').value || '10';
+  const bbox = (w && s && e && n) ? [w,s,e,n].join(',') : '';
+  return { w, s, e, n, bbox, col, start, end, cloud, limit };
+}
+
+async function previewFetch() {
+  const p = getFetchParams();
+  if (!p.bbox) { showAlert('fetch-result','Draw a rectangle or enter BBox coordinates','error'); return; }
+
+  document.getElementById('fetch-log').innerHTML = '';
+  document.getElementById('fetch-preview').style.display = 'none';
+
   const params = new URLSearchParams();
-  if (col) params.set('collections', col);
-  if (bbox) params.set('bbox', bbox);
-  if (start && end) params.set('datetime', `${start}/${end}`);
-  params.set('limit', '100');
+  params.set('collection', p.col);
+  params.set('bbox', p.bbox);
+  if (p.start) params.set('start_date', p.start);
+  if (p.end) params.set('end_date', p.end);
+  params.set('cloud_cover', p.cloud);
+  params.set('limit', p.limit);
 
-  showAlert('fetch-result', '⏳ Searching catalog for matching items…', 'info');
+  const areaKm2 = Math.abs((p.e-p.w) * (p.n-p.s) * 111 * 111 * Math.cos((+p.s + +p.n)/2 * Math.PI/180));
+  fetchLog('\u2139 Searching <b>' + p.col + '</b> on Element84 STAC...');
+  fetchLog('\u2139 BBox: ' + p.bbox + ' (~' + Math.round(areaKm2).toLocaleString() + ' km\u00b2)');
+  if (p.start || p.end) fetchLog('\u2139 Date range: ' + (p.start||'*') + ' to ' + (p.end||'*'));
+  fetchLog('\u2139 Cloud cover \u2264 ' + p.cloud + '%, limit ' + p.limit + ' scenes');
+  showAlert('fetch-result', '\ud83d\udd0d Searching...', 'info');
 
   try {
-    const data = await apiFetch('/stac/search?' + params.toString());
-    const n = (data.features || []).length;
-    if (n === 0) {
-      showAlert('fetch-result', 'No items found matching your criteria.', 'info');
-    } else {
-      showAlert('fetch-result', `✓ Found ${n} items matching your criteria. Use the EarthGrid CLI to fetch data: <code>earthgrid fetch --bbox ${bbox} --collection ${col}</code>`, 'success');
+    const data = await apiFetch('/fetch/preview?' + params.toString());
+    fetchLog('\ud83d\udce1 Found <b>' + data.total_found + '</b> scenes on Element84', 'success');
+    fetchLog('\ud83d\uddfa Tiles: ' + (data.tiles||[]).join(', '));
+    fetchLog('\ud83d\udcc5 ' + data.unique_dates + ' unique dates' + (data.date_range ? ' (' + data.date_range.filter(Boolean).join(' \u2192 ') + ')' : ''));
+    fetchLog('\u2705 Already stored: <b>' + data.already_stored + '</b> | New: <b>' + data.new_items + '</b>');
+    if (data.new_items > 0) {
+      fetchLog('\ud83d\udce6 Est. download: ~' + data.est_download_mb + ' MB');
     }
-    // Reload items
-    loadItems();
-  } catch(e) {
-    showAlert('fetch-result', `Error: ${e.message}`, 'error');
+    if (data.errors && data.errors.length) {
+      data.errors.forEach(e => fetchLog('\u26a0 ' + e, 'warn'));
+    }
+
+    // Show preview panel with item list and confirm button
+    let html = '<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+    html += '<div style="font-size:13px"><b>' + data.total_found + '</b> scenes found &mdash; <span style="color:var(--green)">' + data.new_items + ' new</span>';
+    if (data.already_stored > 0) html += ', <span style="color:var(--muted)">' + data.already_stored + ' already stored</span>';
+    html += '</div>';
+    if (data.new_items > 0) {
+      html += '<button class="btn" onclick="confirmFetch()" style="white-space:nowrap">\ud83d\udce5 Fetch ' + data.new_items + ' new items</button>';
+    }
+    html += '</div>';
+
+    // Items table
+    if (data.items && data.items.length) {
+      html += '<div style="max-height:250px;overflow-y:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+      html += '<tr style="color:var(--muted);border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px">ID</th><th>Tile</th><th>Date</th><th>Cloud%</th><th>Bands</th><th>Status</th></tr>';
+      data.items.forEach(item => {
+        const statusColor = item.stored ? 'var(--green)' : 'var(--accent)';
+        const statusText = item.stored ? '\u2713 stored' : '\u2b07 new';
+        html += '<tr style="border-bottom:1px solid var(--border)">';
+        html += '<td style="padding:3px 4px;font-family:monospace;font-size:11px;color:var(--muted)">' + item.id + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center">' + item.tile + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center;font-size:11px">' + (item.datetime||'').split('T')[0] + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center">' + item.cloud_cover + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center">' + item.bands + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center;color:' + statusColor + '">' + statusText + '</td>';
+        html += '</tr>';
+      });
+      if (data.total_found > 50) html += '<tr><td colspan="6" style="padding:4px;color:var(--muted);text-align:center">... and ' + (data.total_found - 50) + ' more</td></tr>';
+      html += '</table></div>';
+    }
+    html += '</div>';
+    document.getElementById('fetch-preview').innerHTML = html;
+    document.getElementById('fetch-preview').style.display = 'block';
+    showAlert('fetch-result', '\ud83d\udd0d Preview ready \u2014 ' + data.new_items + ' new items to fetch', data.new_items > 0 ? 'success' : 'info');
+  } catch(err) {
+    fetchLog('\u274c ' + err.message, 'error');
+    showAlert('fetch-result', 'Error: ' + err.message, 'error');
+  }
+}
+
+async function confirmFetch() {
+  const p = getFetchParams();
+  const params = new URLSearchParams();
+  params.set('collection', p.col);
+  params.set('bbox', p.bbox);
+  if (p.start) params.set('start_date', p.start);
+  if (p.end) params.set('end_date', p.end);
+  params.set('cloud_cover', p.cloud);
+  params.set('limit', p.limit);
+
+  fetchLog('\ud83d\ude80 Starting download & ingest...', 'warn');
+  showAlert('fetch-result', '\u23f3 Downloading...', 'info');
+
+  try {
+    const data = await apiFetch('/fetch?' + params.toString(), {method:'POST'});
+    if (data.items_searched !== undefined) fetchLog('\ud83d\udce1 Searched: ' + data.items_searched + ' scenes');
+    if (data.items_downloaded !== undefined) fetchLog('\u2705 Downloaded: ' + data.items_downloaded + ' items', 'success');
+    if (data.items_skipped !== undefined && data.items_skipped > 0) fetchLog('\u23ed Skipped: ' + data.items_skipped + ' (already stored)', 'warn');
+    if (data.bytes_downloaded !== undefined) {
+      const bytes = data.bytes_downloaded;
+      const size = bytes >= 1073741824 ? (bytes / 1073741824).toFixed(1) + ' GB' : (bytes / 1048576).toFixed(1) + ' MB';
+      fetchLog('\ud83d\udce6 Total: ' + size + ' downloaded');
+    }
+    if (data.errors && data.errors.length) {
+      data.errors.forEach(e => fetchLog('\u274c ' + e, 'error'));
+    }
+    if (data.message) {
+      fetchLog(data.message, data.errors && data.errors.length ? 'warn' : 'success');
+    }
+    showAlert('fetch-result', '\u2713 Fetch complete', 'success');
+    document.getElementById('fetch-preview').style.display = 'none';
+    setTimeout(() => loadItems(), 2000);
+  } catch(err) {
+    fetchLog('\u274c ' + err.message, 'error');
+    showAlert('fetch-result', 'Error: ' + err.message, 'error');
   }
 }
 
@@ -943,7 +1113,7 @@ async function loadNetwork() {
     let fromBeacon = false;
 
     try {
-      const data = await apiFetch('/nodes');
+      const data = await apiFetch('/beacon/nodes');
       nodes = data.nodes || [];
       fromBeacon = true;
     } catch {
@@ -1260,12 +1430,54 @@ async function submitNodeRename() {
 async function loadActivity() {
   const days = parseInt(document.getElementById('activity-days').value) || 7;
   try {
-    const data = await apiFetch('/admin/activity?days=' + days);
-    renderOngoingJobs(data);
-    renderDailySummary(data.daily_summary || []);
-    renderRecentDownloads(data.recent_downloads || []);
+    // Load grid-relevant stats
+    const [statsData, ingestData, activityData] = await Promise.all([
+      apiFetch('/stats').catch(() => null),
+      apiFetch('/stats/ingest?period_days=' + days).catch(() => null),
+      apiFetch('/admin/activity?days=' + days).catch(() => null),
+    ]);
+
+    // Ongoing jobs
+    setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">😴</div>No active jobs</div>');
+
+    // Node Activity in Grid
+    let ghtml = '';
+    if (statsData) {
+      const upSecs = statsData.started ? Math.floor(Date.now()/1000 - statsData.started) : 0;
+      const upDays = Math.floor(upSecs / 86400);
+      const upHrs = Math.floor((upSecs % 86400) / 3600);
+      ghtml += '<div class="kv"><span class="kv-key">⏱️ Uptime</span><span class="kv-val">' + upDays + 'd ' + upHrs + 'h</span></div>';
+      ghtml += '<div class="kv"><span class="kv-key">📥 Data Ingested</span><span class="kv-val">' + fmt_bytes(statsData.bytes_ingested || 0) + '</span></div>';
+      ghtml += '<div class="kv"><span class="kv-key">📤 Data Served to Grid</span><span class="kv-val">' + fmt_bytes(statsData.bytes_served || 0) + ' (' + (statsData.chunks_served || 0) + ' chunks)</span></div>';
+      ghtml += '<div class="kv"><span class="kv-key">📦 Total Stored</span><span class="kv-val">' + fmt_bytes(statsData.total_bytes || 0) + ' (' + (statsData.total_chunks || 0).toLocaleString() + ' chunks)</span></div>';
+      ghtml += '<div class="kv"><span class="kv-key">🔄 Requests Handled</span><span class="kv-val">' + (statsData.requests_total || 0).toLocaleString() + '</span></div>';
+    }
+    // Daily ingest trend
+    if (ingestData && ingestData.daily && ingestData.daily.length) {
+      ghtml += '<div style="margin-top:12px;font-weight:600;color:var(--text);font-size:13px">📊 Ingest History (' + days + 'd)</div>';
+      ghtml += '<div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>Date</th><th>Items</th><th>Size</th></tr></thead><tbody>';
+      for (const d of ingestData.daily.reverse()) {
+        ghtml += '<tr><td>' + d.date + '</td><td>' + d.items + '</td><td>' + d.gb.toFixed(1) + ' GB</td></tr>';
+      }
+      ghtml += '</tbody></table></div>';
+    }
+    setHtml('activity-grid', ghtml || '<div class="empty"><div class="empty-icon">📭</div>No stats available</div>');
+
+    // Recent Downloads from audit log
+    const entries = (activityData && (activityData.activity || activityData.entries)) || [];
+    const fetchEntries = entries.filter(e => e.action && (e.action.includes('fetch') || e.action.includes('ingest') || e.action.includes('resize') || e.action.includes('evict'))).reverse().slice(0, 30);
+    if (fetchEntries.length) {
+      let rhtml = '<div class="table-wrap"><table><thead><tr><th>Time</th><th>Status</th><th>Action</th><th>Details</th></tr></thead><tbody>';
+      for (const e of fetchEntries) {
+        rhtml += '<tr><td style="white-space:nowrap">' + fmt_date(e.ts) + '</td><td>' + (e.ok ? '<span class="tag green">OK</span>' : '<span class="tag red">Fail</span>') + '</td><td style="color:var(--accent)">' + (e.action||'') + '</td><td style="color:var(--muted)">' + (e.detail||'').substring(0,80) + '</td></tr>';
+      }
+      rhtml += '</tbody></table></div>';
+      setHtml('activity-downloads', rhtml);
+    } else {
+      setHtml('activity-downloads', '<div class="empty"><div class="empty-icon">📭</div>No recent downloads</div>');
+    }
   } catch(e) {
-    setHtml('activity-ongoing', '<div class="empty"><div class="empty-icon">⚠️</div>' + e.message + '</div>');
+    setHtml('activity-grid', '<div class="empty"><div class="empty-icon">⚠️</div>' + e.message + '</div>');
   }
 }
 
@@ -1340,47 +1552,6 @@ function renderRecentDownloads(downloads) {
   }
   html += '</tbody></table></div>';
   setHtml('activity-downloads', html);
-}
-
-// ============================================================
-// LEAFLET MAP
-// ============================================================
-let egMap = null;
-let egMapLayer = null;
-
-function initMap() {
-  if (egMap) return;
-  const el = document.getElementById('map');
-  if (!el) return;
-  egMap = L.map('map', { attributionControl: true }).setView([30, 0], 2);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 18,
-    attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://osm.org/copyright">OSM</a>'
-  }).addTo(egMap);
-  egMapLayer = L.featureGroup().addTo(egMap);
-}
-
-function updateMap(items) {
-  if (!egMap) initMap();
-  if (!egMap || !egMapLayer) return;
-  egMapLayer.clearLayers();
-  const colors = {};
-  const palette = ['#58a6ff','#3fb950','#d29922','#f85149','#db6d28','#bc8cff','#f778ba','#79c0ff','#56d364','#e3b341'];
-  let ci = 0;
-  for (const item of items) {
-    if (!item.bbox || item.bbox.length < 4) continue;
-    const col = item.collection || 'unknown';
-    if (!colors[col]) colors[col] = palette[ci++ % palette.length];
-    const [w, s, e, n] = item.bbox;
-    const rect = L.rectangle([[s, w], [n, e]], {
-      color: colors[col], weight: 1, opacity: 0.7, fillOpacity: 0.15
-    });
-    rect.bindPopup(`<b>${item.id}</b><br>${col}<br>${fmt_bbox(item.bbox)}`);
-    egMapLayer.addLayer(rect);
-  }
-  if (egMapLayer.getLayers().length > 0) {
-    egMap.fitBounds(egMapLayer.getBounds().pad(0.1));
-  }
 }
 
 // --- Copy to clipboard for <code> elements ---
