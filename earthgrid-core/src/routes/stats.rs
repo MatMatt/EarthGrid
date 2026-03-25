@@ -140,6 +140,7 @@ pub(crate) async fn coverage_spatial(
                 "bbox": [t.west, t.south, t.east, t.north],
                 "tile_id": t.tile_id,
                 "date_count": t.date_count,
+                "item_count": t.item_count,
             })
         );
     }

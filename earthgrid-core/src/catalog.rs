@@ -82,6 +82,7 @@ pub struct MgrsTile {
     pub east: f64,
     pub north: f64,
     pub date_count: i64,
+    pub item_count: i64,
 }
 
 impl Catalog {
@@ -460,7 +461,8 @@ impl Catalog {
                     MIN(bbox_south) as s,
                     MAX(bbox_east) as e,
                     MAX(bbox_north) as n,
-                    COUNT(DISTINCT SUBSTR(id, INSTR(SUBSTR(id, INSTR(id, '_') + 1), '_') + INSTR(id, '_') + 1, 8)) as date_count
+                    COUNT(DISTINCT SUBSTR(id, INSTR(SUBSTR(id, INSTR(id, '_') + 1), '_') + INSTR(id, '_') + 1, 8)) as date_count,
+                    COUNT(*) as item_count
              FROM items
              WHERE bbox_west IS NOT NULL
              GROUP BY collection, tile_id"
@@ -474,6 +476,7 @@ impl Catalog {
                 east: row.get(4)?,
                 north: row.get(5)?,
                 date_count: row.get(6)?,
+                item_count: row.get(7)?,
             })
         })?;
         let tiles: Vec<MgrsTile> = rows.filter_map(|r| r.ok()).collect();

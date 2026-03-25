@@ -129,6 +129,7 @@ struct TileRow {
     dates_json: String,
     bands_json: String,
     _node_id: String,
+    item_count: i64,
 }
 
 struct TileAgg {
@@ -138,6 +139,7 @@ struct TileAgg {
     dates: std::collections::BTreeSet<String>,
     bands: std::collections::BTreeSet<String>,
     node_count: i64,
+    item_count: i64,
 }
 
 /// In-memory cache backed by SQLite.
@@ -208,6 +210,9 @@ impl BeaconRegistry {
         let _ = self.conn.execute_batch(
             "ALTER TABLE beacon_node_tiles ADD COLUMN bands_json TEXT NOT NULL DEFAULT '[]';",
         );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_tiles ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0;",
+        );
 
         // Spatial coverage tiles aggregated from all nodes
         self.conn.execute_batch(
@@ -220,6 +225,7 @@ impl BeaconRegistry {
                 bbox_east REAL,
                 bbox_north REAL,
                 date_count INTEGER NOT NULL DEFAULT 0,
+                item_count INTEGER NOT NULL DEFAULT 0,
                 dates_json TEXT NOT NULL DEFAULT '[]',
                 bands_json TEXT NOT NULL DEFAULT '[]',
                 PRIMARY KEY (node_id, collection, tile_id)
@@ -602,6 +608,7 @@ Ok(affected)
                             (0.0, 0.0, 0.0, 0.0)
                         };
                         let date_count = cell.get("date_count").and_then(|d| d.as_i64()).unwrap_or(0);
+                        let item_count = cell.get("item_count").and_then(|d| d.as_i64()).unwrap_or(0);
                         let dates_json = cell.get("dates")
                             .map(|d| serde_json::to_string(d).unwrap_or_else(|_| "[]".to_string()))
                             .unwrap_or_else(|| "[]".to_string());
@@ -610,9 +617,9 @@ Ok(affected)
                             .unwrap_or_else(|| "[]".to_string());
                         self.conn.execute(
                             "INSERT OR REPLACE INTO beacon_node_tiles
-                                (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count, dates_json, bands_json)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                            params![node_id, collection, tile_id, w, s, e, n, date_count, dates_json, bands_json],
+                                (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count, item_count, dates_json, bands_json)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                            params![node_id, collection, tile_id, w, s, e, n, date_count, item_count, dates_json, bands_json],
                         )?;
                         count += 1;
                     }
@@ -627,7 +634,7 @@ Ok(affected)
     pub fn get_aggregated_coverage(&self) -> Result<serde_json::Value> {
         let mut stmt = self.conn.prepare(
             "SELECT collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north,
-                    dates_json, bands_json, node_id
+                    dates_json, bands_json, node_id, item_count
              FROM beacon_node_tiles
              ORDER BY collection, tile_id"
         )?;
@@ -647,6 +654,7 @@ Ok(affected)
                 dates_json: row.get(6)?,
                 bands_json: row.get(7)?,
                 _node_id: row.get(8)?,
+                item_count: row.get::<_, i64>(9).unwrap_or(0),
             })
         })?;
 
@@ -660,6 +668,7 @@ Ok(affected)
                     dates: std::collections::BTreeSet::new(),
                     bands: std::collections::BTreeSet::new(),
                     node_count: 0,
+                    item_count: 0,
                 });
                 // Merge dates (union)
                 if let Ok(dates) = serde_json::from_str::<Vec<String>>(&r.dates_json) {
@@ -669,6 +678,7 @@ Ok(affected)
                 if let Ok(bands) = serde_json::from_str::<Vec<String>>(&r.bands_json) {
                     for b in bands { agg.bands.insert(b); }
                 }
+                agg.item_count += r.item_count;
                 agg.node_count += 1;
             }
         }
@@ -692,6 +702,7 @@ Ok(affected)
                     "polygon": polygon,
                     "tile_id": agg.tile_id,
                     "date_count": dates.len(),
+                    "item_count": agg.item_count,
                     "dates": dates,
                     "bands": bands,
                     "node_count": agg.node_count,
@@ -731,7 +742,7 @@ Ok(affected)
             "INSERT INTO beacon_node_stats
                 (node_id, updated_at, total_items, total_chunks, total_bytes,
                  bytes_ingested, bytes_served, chunks_served, requests_total, collections_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(node_id) DO UPDATE SET
                 updated_at = excluded.updated_at,
                 total_items = excluded.total_items,
