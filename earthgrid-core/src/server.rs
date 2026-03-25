@@ -157,7 +157,7 @@ pub fn router(state: AppState) -> Router {
         .route("/stats", get(crate::routes::stats::stats))
         // STAC Landing + Conformance
         .route("/", get(crate::routes::stac::stac_landing))
-        .route("/dashboard", get(crate::routes::misc::landing_html))
+        .route("/dashboard", get(|| async { axum::response::Html(include_str!("../assets/beacon.html")) }))
         .route("/.well-known/openeo", get(crate::routes::stac::well_known_openeo))
         .route("/conformance", get(crate::routes::stac::stac_conformance))
         // STAC Collections + Items
