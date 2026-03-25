@@ -430,6 +430,11 @@ pub(crate) async fn dashboard_auth(
         return axum::response::Redirect::temporary("/ui/login?no_users").into_response();
     }
 
+    // Localhost: skip auth (shell access = full access)
+    if is_localhost(&headers) {
+        return Html(include_str!("../../assets/ui.html")).into_response();
+    }
+
     // Extract and validate session cookie
     if let Some(cookie_header) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
         if let Some(token) = crate::session::extract_cookie(cookie_header) {
@@ -512,6 +517,18 @@ pub(crate) async fn logout_handler() -> impl IntoResponse {
 pub(crate) async fn session_me(
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    // Localhost gets admin access without session
+    if is_localhost(&headers) {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "username": "localhost",
+                "role": "admin",
+                "authenticated": true,
+            })),
+        ).into_response();
+    }
+
     let secret = crate::session::session_secret();
     if let Some(cookie_header) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
         if let Some(token) = crate::session::extract_cookie(cookie_header) {
@@ -560,6 +577,11 @@ fn check_login_rate(ip: &str) -> bool {
     }
     times.push(now);
     true
+}
+
+fn is_localhost(headers: &HeaderMap) -> bool {
+    let ip = extract_client_ip(headers);
+    ip == "127.0.0.1" || ip == "::1" || ip == "localhost" || ip == "unknown"
 }
 
 fn extract_client_ip(headers: &HeaderMap) -> String {
