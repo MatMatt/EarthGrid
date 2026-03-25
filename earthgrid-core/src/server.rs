@@ -157,7 +157,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/stats", get(crate::routes::stats::stats))
         // STAC Landing + Conformance
         .route("/", get(|| async {
-            axum::response::Redirect::permanent("/dashboard")
+            axum::response::Html(r#"<!DOCTYPE html><html><head><script>window.location.replace(window.location.href.replace(/\/$/, '') + '/dashboard')</script></head><body>Redirecting to <a href="dashboard">dashboard</a>...</body></html>"#)
         }))
         .route("/dashboard", get(|| async { axum::response::Html(include_str!("../assets/beacon.html")) }))
         // STAC spec backward-compat aliases (root level)
