@@ -9,7 +9,6 @@ use clap::{Parser, Subcommand};
 use earthgrid_core::chunk_store::ChunkStore;
 use earthgrid_core::catalog::Catalog;
 use earthgrid_core::auth::AuthConfig;
-use earthgrid_core::ingest;
 use earthgrid_core::mgrs;
 
 /// Default earthgrid home directory
@@ -81,20 +80,6 @@ enum Commands {
         /// Max results
         #[arg(long, default_value = "50")]
         limit: usize,
-    },
-
-    /// Ingest a file into the store
-    Ingest {
-        /// Path to file to ingest
-        file: PathBuf,
-
-        /// Collection name
-        #[arg(long)]
-        collection: String,
-
-        /// Chunk size in bytes (default 4MB)
-        #[arg(long)]
-        chunk_size: Option<usize>,
     },
 
     /// Start the HTTP server (foreground)
@@ -299,19 +284,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Ingest { file, collection, chunk_size } => {
-            let mut store = ChunkStore::new(&store_path, 0.0)?;
-            let catalog = Catalog::new(&catalog_path)?;
-            let cs = chunk_size.unwrap_or(ingest::DEFAULT_CHUNK_SIZE);
 
-            println!("📥 Ingesting {} → collection '{}'", file.display(), collection);
-            let item = ingest::ingest_file(&file, &collection, cs, &mut store)?;
-            catalog.add_item(&item)?;
-
-            println!("✅ Ingested: {}", item.id);
-            println!("   Chunks: {}", item.chunk_hashes.len());
-            println!("   File size: {} bytes", item.properties["earthgrid:file_size"]);
-        }
 
         Commands::Serve { host, port, p2p_port, bootstrap_peers, no_p2p } => {
             run_serve(cli.data_dir, host, port, p2p_port, bootstrap_peers, no_p2p)?;
