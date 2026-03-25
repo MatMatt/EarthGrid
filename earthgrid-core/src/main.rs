@@ -52,6 +52,18 @@ fn config_port() -> u16 {
     8400
 }
 
+/// Load host from config file (fallback to localhost)
+fn config_host() -> String {
+    if let Ok(contents) = fs::read_to_string(config_file()) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&contents) {
+            if let Some(h) = val["host"].as_str() {
+                return h.to_string();
+            }
+        }
+    }
+    "localhost".to_string()
+}
+
 #[derive(Parser)]
 #[command(name = "earthgrid", version, about = "Distributed EO data storage")]
 struct Cli {
@@ -716,7 +728,8 @@ fn main() -> anyhow::Result<()> {
             if let Some(c) = collection { params.push(format!("collection={}", c)); }
             if let Some(b) = bands { params.push(format!("bands={}", b)); }
             if let Some(cc) = cloud_cover { params.push(format!("cloud_cover={}", cc)); }
-            let url = format!("http://localhost:{}/fetch?{}", port, params.join("&"));
+            let host = config_host();
+            let url = format!("http://{}:{}/api/fetch?{}", host, port, params.join("&"));
 
             println!("🛰️  Fetching from {}...", url);
             match ureq::post(&url).send("") {
