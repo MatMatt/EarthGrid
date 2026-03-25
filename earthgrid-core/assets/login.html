@@ -176,7 +176,7 @@ async function doLogin(e) {
   btn.textContent = 'Signing in…';
 
   try {
-    const resp = await fetch('/ui/login', {
+    const resp = await fetch('login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -185,7 +185,7 @@ async function doLogin(e) {
       }),
     });
     if (resp.ok) {
-      window.location.href = '/ui';
+      window.location.href = '.';
     } else {
       const data = await resp.json().catch(() => ({}));
       errEl.textContent = data.error || 'Invalid credentials';
