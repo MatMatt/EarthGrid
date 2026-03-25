@@ -41,6 +41,17 @@ pub fn evict(
     target_gb: f64,
     beacon_db_path: Option<&std::path::Path>,
 ) -> Result<EvictionResult> {
+    evict_with_beacon_url(catalog, store, target_gb, beacon_db_path, None)
+}
+
+/// Eviction with optional beacon URL fallback for non-beacon nodes.
+pub fn evict_with_beacon_url(
+    catalog: &Catalog,
+    store: &mut ChunkStore,
+    target_gb: f64,
+    beacon_db_path: Option<&std::path::Path>,
+    beacon_url: Option<&str>,
+) -> Result<EvictionResult> {
     let current_bytes = store.total_bytes() as i64;
     let target_bytes = (target_gb * 1_073_741_824.0) as i64;
 
@@ -61,7 +72,13 @@ pub fn evict(
     );
 
     // Build replica map from beacon DB (which items exist on other nodes)
-    let replica_map = build_replica_map(beacon_db_path);
+    let replica_map = if beacon_db_path.is_some() {
+        build_replica_map(beacon_db_path)
+    } else if let Some(url) = beacon_url {
+        build_replica_map_from_beacon(url)
+    } else {
+        std::collections::HashMap::new()
+    };
 
     // Get all items sorted by eviction priority
     let mut candidates = get_candidates(catalog, store, &replica_map)?;
@@ -178,6 +195,55 @@ fn build_replica_map(beacon_db_path: Option<&std::path::Path>) -> std::collectio
         }
     }
 
+    map
+}
+
+/// Build replica map by querying the beacon HTTP API.
+/// Used by non-beacon nodes that don't have a local beacon.db.
+fn build_replica_map_from_beacon(beacon_url: &str) -> std::collections::HashMap<String, u32> {
+    let mut map = std::collections::HashMap::new();
+    let url = format!("{}/beacon/nodes", beacon_url.trim_end_matches('/'));
+
+    // Blocking HTTP request (eviction runs in a background task)
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build();
+    let Ok(client) = client else { return map };
+
+    let resp = match client.get(&url).send() {
+        Ok(r) if r.status().is_success() => r,
+        _ => {
+            eprintln!("⚠️  Eviction: could not reach beacon at {}", url);
+            return map;
+        }
+    };
+
+    let body: serde_json::Value = match resp.json() {
+        Ok(v) => v,
+        Err(_) => return map,
+    };
+
+    // Count how many nodes have each collection
+    let mut collection_node_count: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    if let Some(nodes) = body.get("nodes").and_then(|n| n.as_array()) {
+        for node in nodes {
+            if let Some(colls) = node.get("collections").and_then(|c| c.as_array()) {
+                for c in colls {
+                    if let Some(name) = c.as_str() {
+                        *collection_node_count.entry(name.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    for (collection, count) in collection_node_count {
+        if count > 1 {
+            map.insert(collection, count - 1);
+        }
+    }
+
+    eprintln!("🔍 Eviction: beacon reports {} replicated collections", map.len());
     map
 }
 

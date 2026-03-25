@@ -715,6 +715,12 @@ pub async fn serve(
         let evict_storage_limit = evict_limit_c.clone();
         let evict_data_dir = evict_data_dir_c.clone();
         let evict_is_beacon = evict_is_beacon_c;
+        let evict_beacon_url: Option<String> = std::env::var("EARTHGRID_BEACON_URL").ok().or_else(|| {
+            let cfg_path = crate::config::Settings::config_dir().join("config.json");
+            std::fs::read_to_string(&cfg_path).ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
+        });
 
         tokio::spawn(async move {
             // Initial delay: let node start up
@@ -741,11 +747,12 @@ pub async fn serve(
                         };
                         let catalog = evict_catalog.lock().await;
                         let mut store = evict_store.lock().await;
-                        match crate::eviction::evict(
+                        match crate::eviction::evict_with_beacon_url(
                             &catalog,
                             &mut store,
                             limit_gb,
                             beacon_db.as_deref(),
+                            evict_beacon_url.as_deref(),
                         ) {
                             Ok(result) => {
                                 if result.items_deleted > 0 {
