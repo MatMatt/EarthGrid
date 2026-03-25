@@ -462,6 +462,13 @@ pub async fn serve(
     let sync_is_beacon = state.is_beacon;
     let sync_gamification = state.gamification.clone();
     let repl_peers = state.peers.clone();
+    // Clones for auto-eviction (must be before router() consumes state)
+    let evict_store_c = state.store.clone();
+    let evict_catalog_c = state.catalog.clone();
+    let evict_limit_c = state.storage_limit_gb.clone();
+    let evict_data_dir_c = data_dir.clone();
+    let evict_is_beacon_c = beacon_enabled;
+
     let mut app = router(state);
 
     // Mount beacon routes if enabled
@@ -697,6 +704,65 @@ pub async fn serve(
                 }
 
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            }
+        });
+    }
+
+    // Auto-eviction: check storage limit every 10 minutes
+    {
+        let evict_store = evict_store_c.clone();
+        let evict_catalog = evict_catalog_c.clone();
+        let evict_storage_limit = evict_limit_c.clone();
+        let evict_data_dir = evict_data_dir_c.clone();
+        let evict_is_beacon = evict_is_beacon_c;
+
+        tokio::spawn(async move {
+            // Initial delay: let node start up
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+
+            loop {
+                let limit_gb = f64::from_bits(evict_storage_limit.load(Ordering::Relaxed));
+                if limit_gb > 0.0 {
+                    let current_bytes = {
+                        let store = evict_store.lock().await;
+                        store.total_bytes() as f64
+                    };
+                    let limit_bytes = limit_gb * 1_073_741_824.0;
+
+                    if current_bytes > limit_bytes {
+                        eprintln!(
+                            "🗑️  Auto-eviction: {:.1} GB used > {:.0} GB limit — running eviction",
+                            current_bytes / 1_073_741_824.0, limit_gb
+                        );
+                        let beacon_db = if evict_is_beacon {
+                            Some(evict_data_dir.join("beacon.db"))
+                        } else {
+                            None
+                        };
+                        let catalog = evict_catalog.lock().await;
+                        let mut store = evict_store.lock().await;
+                        match crate::eviction::evict(
+                            &catalog,
+                            &mut store,
+                            limit_gb,
+                            beacon_db.as_deref(),
+                        ) {
+                            Ok(result) => {
+                                if result.items_deleted > 0 {
+                                    eprintln!(
+                                        "🗑️  Auto-eviction done: {} items deleted, {:.1} GB freed — {}",
+                                        result.items_deleted,
+                                        result.bytes_freed as f64 / 1_073_741_824.0,
+                                        result.reason
+                                    );
+                                }
+                            }
+                            Err(e) => eprintln!("⚠️  Auto-eviction error: {}", e),
+                        }
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
             }
         });
     }
