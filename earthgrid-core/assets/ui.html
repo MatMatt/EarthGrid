@@ -500,7 +500,10 @@ function fmt_num(n) {
 
 function fmt_date(s) {
   if (!s) return '—';
-  try { return new Date(s).toISOString().slice(0,16).replace('T',' '); } catch { return s; }
+  try {
+    const ms = (typeof s === 'number' && s < 1e12) ? s * 1000 : (typeof s === 'number' ? s : Date.parse(s));
+    return new Date(ms).toISOString().slice(0,16).replace('T',' ');
+  } catch { return s; }
 }
 
 function fmt_bbox(b) {
