@@ -214,6 +214,31 @@ enum Commands {
         #[arg(long)]
         size: f64,
     },
+
+    /// Manage users and API keys
+    Admin {
+        #[command(subcommand)]
+        action: AdminAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminAction {
+    /// Add a new user
+    AddUser {
+        /// Username
+        username: String,
+        /// Role: admin, user, or readonly
+        #[arg(long, default_value = "user")]
+        role: String,
+    },
+    /// List all users
+    ListUsers,
+    /// Delete a user
+    DeleteUser {
+        /// Username to delete
+        username: String,
+    },
 }
 
 /// Load environment variables from ~/.earthgrid/.env (simple key=value format).
@@ -860,9 +885,83 @@ fn main() -> anyhow::Result<()> {
 
             println!("\n   Restart EarthGrid to apply: earthgrid stop && earthgrid start");
         }
+        Commands::Admin { action } => {
+            let source_users_db = {
+                let cfg_path = config_file();
+                let cfg: serde_json::Value = fs::read_to_string(&cfg_path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or(serde_json::json!({}));
+                cfg["source_users_db"].as_str()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| cli.data_dir.join("source_users.db"))
+            };
+
+            let ua = earthgrid_core::user_auth::UserAuth::new(&source_users_db)?;
+
+            match action {
+                AdminAction::AddUser { username, role } => {
+                    match role.as_str() {
+                        "admin" | "user" | "readonly" => {}
+                        _ => {
+                            eprintln!("❌ Invalid role '{}'. Use: admin, user, or readonly", role);
+                            process::exit(1);
+                        }
+                    }
+                    match ua.add_user(&username, &role) {
+                        Ok(api_key) => {
+                            println!("✅ User created");
+                            println!("   Username: {}", username);
+                            println!("   Role:     {}", role);
+                            println!("   API Key:  {}", api_key);
+                        }
+                        Err(e) => eprintln!("❌ Failed: {}", e),
+                    }
+                }
+                AdminAction::ListUsers => {
+                    match ua.list_users() {
+                        Ok(users) => {
+                            if users.is_empty() {
+                                println!("No users found.");
+                            } else {
+                                println!("{:<20} {:<10} {:<20} {}", "USERNAME", "ROLE", "CREATED", "LAST USED");
+                                println!("{}", "-".repeat(70));
+                                for u in &users {
+                                    let created = chrono_ts(u.created_at);
+                                    let used = if u.last_used > 0.0 { chrono_ts(u.last_used) } else { "never".to_string() };
+                                    println!("{:<20} {:<10} {:<20} {}", u.username, u.role, created, used);
+                                }
+                                println!("\n{} users", users.len());
+                            }
+                        }
+                        Err(e) => eprintln!("❌ {}", e),
+                    }
+                }
+                AdminAction::DeleteUser { username } => {
+                    match ua.revoke_user(&username) {
+                        Ok(true) => println!("✅ User '{}' deleted", username),
+                        Ok(false) => println!("⚠️  User '{}' not found", username),
+                        Err(e) => eprintln!("❌ {}", e),
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
+}
+
+// Need std::path::Path for find_repo_dir
+use std::path::Path;
+
+
+fn chrono_ts(ts: f64) -> String {
+    let secs = ts as i64;
+    let dt = chrono::DateTime::from_timestamp(secs, 0);
+    match dt {
+        Some(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
+        None => format!("{:.0}", ts),
+    }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -1090,6 +1189,3 @@ fn uninstall_systemd_service() -> anyhow::Result<()> {
     println!("✅ EarthGrid service uninstalled.");
     Ok(())
 }
-
-// Need std::path::Path for find_repo_dir
-use std::path::Path;
