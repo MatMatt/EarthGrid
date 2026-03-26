@@ -116,6 +116,8 @@ pub struct LeaderboardEntry {
     pub sponsor_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -851,7 +853,7 @@ impl GamificationEngine {
                     "SELECT node_id, owner_user, score, items_ingested,
                             bytes_stored, bytes_served, streak_days, uptime_seconds,
                             max_peers, display_alias, anonymous, storage_pledged_gb,
-                            group_id, sponsor_name, sponsor_url, node_url
+                            group_id, sponsor_name, sponsor_url, node_url, last_seen
                      FROM node_scores
                      ORDER BY score DESC LIMIT ?1",
                 )?;
@@ -874,6 +876,7 @@ impl GamificationEngine {
                             r.get::<_, String>(13)?, // sponsor_name
                             r.get::<_, String>(14)?, // sponsor_url
                             r.get::<_, String>(15)?, // node_url
+                            r.get::<_, f64>(16)?,    // last_seen
                         ))
                     })?
                     .filter_map(|r| r.ok())
@@ -898,6 +901,7 @@ impl GamificationEngine {
                             sponsor_name: Some(r.13),
                             sponsor_url: Some(r.14),
                             node_url: Some(r.15),
+                            last_seen: Some(r.16),
                             // user/group fields
                             username: None, display_name: None, nodes: None,
                             group_id: None, group_name: None, members: None,
@@ -942,7 +946,7 @@ impl GamificationEngine {
                         group: None, group_id: None, group_name: None, members: None,
                         description: None, gb_pledged: None, streak: None,
                         peers: None, uptime_days: None, sponsor_name: None,
-                        sponsor_url: None, node_url: None,
+                        sponsor_url: None, node_url: None, last_seen: None,
                     })
                     .collect();
                 Ok(entries)
@@ -980,7 +984,7 @@ impl GamificationEngine {
                         username: None, display_name: None, nodes: None,
                         group: None, items: None, gb_stored: None, gb_served: None,
                         gb_pledged: None, streak: None, peers: None, uptime_days: None,
-                        sponsor_name: None, sponsor_url: None, node_url: None,
+                        sponsor_name: None, sponsor_url: None, node_url: None, last_seen: None,
                     })
                     .collect();
                 Ok(entries)

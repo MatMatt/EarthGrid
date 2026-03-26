@@ -519,9 +519,11 @@ function renderLeaderboard(data) {
     h += '<tr><td class="lb-rank' + rankClass(e.rank) + '">' + rankIcon(e.rank) + '</td>';
     if (currentBoard === 'nodes') {
       const name = e.node_name || e.node_id;
-      const nameHtml = e.node_url
+      const isAlive = e.last_seen && (Date.now()/1000 - e.last_seen) < 300;
+      const aliveDot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + (isAlive ? '#22c55e' : '#ef4444') + ';margin-right:6px;vertical-align:middle" title="' + (isAlive ? 'Online' : 'Offline') + '"></span>';
+      const nameHtml = aliveDot + (e.node_url
         ? '<a href="' + e.node_url + '" target="_blank" style="color:var(--accent);text-decoration:none" title="Open node dashboard">' + name + ' ↗</a>'
-        : name;
+        : name);
       const sponsorHtml = e.sponsor_name
         ? '<div style="font-size:0.65rem;color:var(--dim)">' +
           (e.sponsor_url ? '<a href="' + e.sponsor_url + '" target="_blank" style="color:var(--dim)">' : '') +
