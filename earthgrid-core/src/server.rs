@@ -1060,12 +1060,6 @@ pub async fn serve(
                                 // Build stats + coverage response for beacon sync
                                 let store = p2p_store.lock().await;
                                 let catalog = p2p_catalog.lock().await;
-                                let collections: Vec<String> = catalog
-                                    .list_collections()
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .map(|c| c.id)
-                                    .collect();
                                 let stats = serde_json::json!({
                                     "total_items": catalog.item_count(None).unwrap_or(0),
                                     "total_chunks": store.chunk_count(),
