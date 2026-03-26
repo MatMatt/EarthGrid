@@ -332,3 +332,170 @@ pub(crate) async fn catalog_changes(
         "count": count,
     }))
 }
+
+// ---------------------------------------------------------------------------
+// Fetch queue endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct QueueStatusQuery {
+    pub status: Option<String>,
+}
+
+/// POST /api/fetch/queue — enqueue a fetch job
+pub(crate) async fn fetch_queue_enqueue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<FetchQuery>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
+    // Resolve bbox
+    let tile_filter = q.tile.as_ref().map(|t| t.trim().to_uppercase());
+    let bbox_arr = if let Some(s) = q.bbox.as_deref() {
+        let parts: Vec<f64> = s.split(',')
+            .filter_map(|v| v.trim().parse().ok())
+            .collect();
+        if parts.len() < 4 {
+            return err(StatusCode::BAD_REQUEST, "bbox must be 'west,south,east,north'").into_response();
+        }
+        [parts[0], parts[1], parts[2], parts[3]]
+    } else if let Some(ref tile) = tile_filter {
+        match crate::mgrs::tile_to_bbox(tile) {
+            Ok(b) => b,
+            Err(e) => return err(StatusCode::BAD_REQUEST, &format!("Invalid tile '{}': {}", tile, e)).into_response(),
+        }
+    } else {
+        return err(StatusCode::BAD_REQUEST, "Missing bbox or tile parameter").into_response();
+    };
+
+    let bbox_str = format!("{},{},{},{}", bbox_arr[0], bbox_arr[1], bbox_arr[2], bbox_arr[3]);
+    let collection = q.collection.as_deref().unwrap_or("sentinel-2-l2a").to_string();
+
+    // Beacon coordination: if this is the beacon, pick the node with most free storage
+    let local_only = q.local_only.unwrap_or(false);
+    if state.is_beacon && !local_only {
+        // Try to forward to node with most free space
+        if let Some(target_url) = pick_best_node_url(&state).await {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .unwrap_or_default();
+
+            let mut params = vec![
+                ("collection", collection.clone()),
+                ("bbox", bbox_str.clone()),
+            ];
+            if let Some(ref sd) = q.start_date { params.push(("start_date", sd.clone())); }
+            if let Some(ref ed) = q.end_date { params.push(("end_date", ed.clone())); }
+            if let Some(cc) = q.cloud_cover { params.push(("cloud_cover", cc.to_string())); }
+            if let Some(l) = q.limit { params.push(("limit", l.to_string())); }
+            if let Some(ref b) = q.bands { params.push(("bands", b.clone())); }
+
+            let url = format!("{}/api/fetch/queue", target_url.trim_end_matches('/'));
+            match client.post(&url).query(&params).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(data) = resp.json::<serde_json::Value>().await {
+                        return (StatusCode::ACCEPTED, Json(data)).into_response();
+                    }
+                }
+                _ => {} // Fall through to local queue
+            }
+        }
+    }
+
+    let new_job = crate::fetch_queue::NewFetchJob {
+        collection,
+        bbox: bbox_str,
+        start_date: q.start_date.clone(),
+        end_date: q.end_date.clone(),
+        cloud_cover: q.cloud_cover,
+        bands: q.bands.clone(),
+        limit_count: q.limit.map(|l| l as i64),
+    };
+
+    match state.fetch_queue.enqueue(new_job) {
+        Ok(job_id) => (StatusCode::ACCEPTED, Json(serde_json::json!({
+            "job_id": job_id,
+            "status": "pending",
+            "message": "Job enqueued successfully",
+        }))).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+/// Pick the node URL with most free storage (storage_limit_gb - chunks_bytes)
+async fn pick_best_node_url(state: &AppState) -> Option<String> {
+    let beacon_db = state.data_dir.join("beacon.db");
+    if !beacon_db.exists() { return None; }
+    let conn = rusqlite::Connection::open(&beacon_db).ok()?;
+    let result: rusqlite::Result<(String, f64)> = conn.query_row(
+        "SELECT url, (storage_limit_gb * 1073741824 - chunks_bytes) as free_bytes
+         FROM beacon_nodes
+         WHERE url != '' AND storage_limit_gb > 0
+           AND last_seen > (unixepoch() - 300)
+         ORDER BY free_bytes DESC
+         LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+    result.ok().map(|(url, _)| url)
+}
+
+/// GET /api/fetch/queue — list jobs
+pub(crate) async fn fetch_queue_list(
+    State(state): State<AppState>,
+    Query(q): Query<QueueStatusQuery>,
+) -> impl IntoResponse {
+    let jobs = state.fetch_queue.list(q.status.as_deref()).unwrap_or_default();
+    (StatusCode::OK, Json(serde_json::json!({ "jobs": jobs, "count": jobs.len() }))).into_response()
+}
+
+/// GET /api/fetch/queue/{id} — get a single job
+pub(crate) async fn fetch_queue_get(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> impl IntoResponse {
+    match state.fetch_queue.get(id) {
+        Ok(Some(job)) => (StatusCode::OK, Json(serde_json::to_value(job).unwrap_or_default())).into_response(),
+        Ok(None) => err(StatusCode::NOT_FOUND, "Job not found").into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+/// DELETE /api/fetch/queue/{id} — cancel a job
+pub(crate) async fn fetch_queue_cancel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match state.fetch_queue.cancel(id) {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "cancelled": true }))).into_response(),
+        Ok(false) => err(StatusCode::NOT_FOUND, "Job not found or already completed").into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+/// POST /api/fetch/queue/{id}/retry — retry a failed job
+pub(crate) async fn fetch_queue_retry(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match state.fetch_queue.retry(id) {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "retried": true, "status": "pending" }))).into_response(),
+        Ok(false) => err(StatusCode::BAD_REQUEST, "Job not in failed or paused state").into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}

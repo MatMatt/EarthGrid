@@ -295,6 +295,14 @@ code:hover::after { opacity: 0.8; }
       <div id="fetch-log" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:12px;color:var(--muted)"></div>
     </div>
 
+    <div class="card" id="fetch-queue-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:0">📋 Fetch Queue</div>
+        <button class="btn" onclick="loadFetchQueue()" style="font-size:11px;padding:3px 10px">↻ Refresh</button>
+      </div>
+      <div id="fetch-queue-list"><div style="color:var(--muted);font-size:12px">No jobs yet.</div></div>
+    </div>
+
     <div class="card">
       <div class="card-title">STAC Items</div>
       <div class="form-row" style="margin-bottom:12px">
@@ -589,7 +597,7 @@ function switchTab(tab) {
   const idx = tabs.indexOf(tab);
   document.querySelectorAll('.tab')[idx].classList.add('active');
   document.getElementById('panel-' + tab).classList.add('active');
-  if (tab === 'data') setTimeout(initFetchMap, 100);
+  if (tab === 'data') { setTimeout(initFetchMap, 100); setTimeout(loadFetchQueue, 200); }
   loadSession();
 refreshCurrent();
 }
@@ -1085,11 +1093,18 @@ async function confirmFetch() {
   params.set('cloud_cover', p.cloud);
   params.set('limit', p.limit);
 
-  fetchLog('\ud83d\ude80 Starting download & ingest...', 'warn');
-  showAlert('fetch-result', '\u23f3 Downloading...', 'info');
+  fetchLog('\u2795 Enqueueing fetch job...', 'warn');
+  showAlert('fetch-result', '\u23f3 Enqueueing...', 'info');
 
   try {
-    const data = await apiFetch('/fetch?' + params.toString(), {method:'POST'});
+    const data = await apiFetch('/fetch/queue?' + params.toString(), {method:'POST'});
+    if (data.job_id !== undefined) {
+      fetchLog('\u2705 Job #' + data.job_id + ' enqueued \u2014 will start within 30s', 'success');
+      showAlert('fetch-result', '\u2705 Job #' + data.job_id + ' enqueued', 'success');
+      document.getElementById('fetch-preview').style.display = 'none';
+      setTimeout(() => loadFetchQueue(), 1000);
+      return;
+    }
     if (data.items_searched !== undefined) fetchLog('\ud83d\udce1 Searched: ' + data.items_searched + ' scenes');
     if (data.items_downloaded !== undefined) fetchLog('\u2705 Downloaded: ' + data.items_downloaded + ' items', 'success');
     if (data.items_skipped !== undefined && data.items_skipped > 0) fetchLog('\u23ed Skipped: ' + data.items_skipped + ' (already stored)', 'warn');
@@ -1111,6 +1126,96 @@ async function confirmFetch() {
     fetchLog('\u274c ' + err.message, 'error');
     showAlert('fetch-result', 'Error: ' + err.message, 'error');
   }
+}
+
+
+// ============================================================
+// FETCH QUEUE
+// ============================================================
+let _queueRefreshTimer = null;
+
+async function loadFetchQueue() {
+  try {
+    const data = await apiFetch('/fetch/queue');
+    const jobs = data.jobs || [];
+    const el = document.getElementById('fetch-queue-list');
+    if (!el) return;
+
+    if (jobs.length === 0) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:12px">No jobs yet.</div>';
+      clearInterval(_queueRefreshTimer);
+      _queueRefreshTimer = null;
+      return;
+    }
+
+    const statusColor = s => ({
+      pending: 'var(--yellow)', running: 'var(--accent)',
+      completed: 'var(--green)', failed: 'var(--red)', paused: 'var(--muted)'
+    }[s] || 'var(--muted)');
+
+    let html = '<div class="table-wrap"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+    html += '<tr style="color:var(--muted);border-bottom:1px solid var(--border)">'
+          + '<th style="text-align:left;padding:4px">ID</th>'
+          + '<th>Collection</th><th>BBox</th><th>Status</th><th>Progress</th><th>Actions</th></tr>';
+
+    for (const j of jobs) {
+      const pct = j.progress_total > 0 ? Math.round(j.progress_done / j.progress_total * 100) : 0;
+      const sc = statusColor(j.status);
+      html += '<tr style="border-bottom:1px solid #1f2937">';
+      html += '<td style="padding:3px 6px;font-weight:600">#' + j.id + '</td>';
+      html += '<td style="padding:3px 6px;font-family:monospace;font-size:11px">' + j.collection + '</td>';
+      html += '<td style="padding:3px 6px;font-size:11px;color:var(--muted)">' + j.bbox + '</td>';
+      html += '<td style="padding:3px 6px"><span style="color:' + sc + '">' + j.status + '</span></td>';
+      html += '<td style="padding:3px 6px;min-width:120px">';
+      if (j.status === 'running' || j.status === 'completed') {
+        html += '<div style="background:var(--bg);border-radius:3px;height:4px;overflow:hidden;margin-bottom:2px">'
+              + '<div style="background:' + sc + ';height:100%;width:' + Math.min(pct,100) + '%"></div></div>';
+        html += '<span style="font-size:10px;color:var(--muted)">' + j.progress_done + '/' + j.progress_total + '</span>';
+      } else if (j.error) {
+        html += '<span style="font-size:10px;color:var(--red)" title="' + j.error.replace(/"/g,"'") + '">' + j.error.substring(0,40) + (j.error.length > 40 ? '…' : '') + '</span>';
+      } else {
+        html += '<span style="font-size:10px;color:var(--muted)">—</span>';
+      }
+      html += '</td>';
+      html += '<td style="padding:3px 6px;white-space:nowrap">';
+      if (j.status === 'failed' || j.status === 'paused') {
+        html += '<button class="btn" style="font-size:10px;padding:2px 7px;margin-right:3px" onclick="queueRetry(' + j.id + ')">↩ Retry</button>';
+      }
+      if (j.status !== 'completed') {
+        html += '<button style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;font-size:10px;padding:2px 7px;cursor:pointer" onclick="queueCancel(' + j.id + ')">✕</button>';
+      }
+      html += '</td>';
+      html += '</tr>';
+    }
+    html += '</table></div>';
+    el.innerHTML = html;
+
+    // Auto-refresh if any running jobs
+    const hasRunning = jobs.some(j => j.status === 'pending' || j.status === 'running');
+    if (hasRunning && !_queueRefreshTimer) {
+      _queueRefreshTimer = setInterval(() => loadFetchQueue(), 5000);
+    } else if (!hasRunning && _queueRefreshTimer) {
+      clearInterval(_queueRefreshTimer);
+      _queueRefreshTimer = null;
+    }
+  } catch(e) {
+    const el = document.getElementById('fetch-queue-list');
+    if (el) el.innerHTML = '<div style="color:var(--muted);font-size:12px">Could not load queue.</div>';
+  }
+}
+
+async function queueRetry(id) {
+  try {
+    await apiFetch('/fetch/queue/' + id + '/retry', {method:'POST'});
+    loadFetchQueue();
+  } catch(e) { alert('Retry failed: ' + e.message); }
+}
+
+async function queueCancel(id) {
+  try {
+    await apiFetch('/fetch/queue/' + id, {method:'DELETE'});
+    loadFetchQueue();
+  } catch(e) { alert('Cancel failed: ' + e.message); }
 }
 
 // ============================================================

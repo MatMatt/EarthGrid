@@ -14,6 +14,7 @@ pub mod error;
 pub mod eviction;
 pub mod federation;
 pub mod fetcher;
+pub mod fetch_queue;
 pub mod gamification;
 pub mod ingest;
 pub mod mgrs;

@@ -29,6 +29,7 @@ use crate::{
     stats::StatsEngine,
     user_auth::UserAuth,
     node_identity::NodeIdentity,
+    fetch_queue::FetchQueue,
 };
 use std::path::PathBuf;
 
@@ -64,6 +65,8 @@ pub struct AppState {
     pub ui_enabled: bool,
     /// Cached S2 tile reference grid: tile_id -> polygon coordinates
     pub tile_grid: Arc<std::collections::HashMap<String, Vec<Vec<f64>>>>,
+    /// Persistent fetch job queue
+    pub fetch_queue: Arc<FetchQueue>,
 }
 
 
@@ -195,6 +198,10 @@ pub fn router(state: AppState) -> Router {
         // Element84 STAC Fetcher
         .route("/api/fetch", post(crate::routes::ingest_routes::fetch_handler))
         .route("/api/fetch/preview", get(crate::routes::ingest_routes::fetch_preview))
+        // Fetch queue
+        .route("/api/fetch/queue", post(crate::routes::ingest_routes::fetch_queue_enqueue).get(crate::routes::ingest_routes::fetch_queue_list))
+        .route("/api/fetch/queue/{id}", get(crate::routes::ingest_routes::fetch_queue_get).delete(crate::routes::ingest_routes::fetch_queue_cancel))
+        .route("/api/fetch/queue/{id}/retry", post(crate::routes::ingest_routes::fetch_queue_retry))
         .route("/api/catalog/changes", get(crate::routes::ingest_routes::catalog_changes))
         // Stats
         .route("/api/stats/downloads", get(crate::routes::stats::stats_downloads))
@@ -295,6 +302,7 @@ pub async fn serve(
     let audit_path = data_dir.join("audit.jsonl");
     let stats_db_path = data_dir.join("stats.db");
     let gamification_db_path = data_dir.join("gamification.db");
+    let fetch_queue_db_path = data_dir.join("fetch_queue.db");
 
     // Read storage_limit_gb from config BEFORE creating ChunkStore
     let storage_limit_gb_init = {
@@ -313,6 +321,23 @@ pub async fn serve(
     let gamification_engine = GamificationEngine::new(&gamification_db_path)?;
     // Seed challenges on startup (no-op if already seeded)
     let _ = gamification_engine.seed_challenges();
+
+    // Initialize persistent fetch queue
+    let fetch_queue = match FetchQueue::new(&fetch_queue_db_path) {
+        Ok(q) => {
+            // On startup: recover any stale running jobs (node crash recovery)
+            let recovered = q.release_stale(300.0).unwrap_or(0);
+            if recovered > 0 {
+                println!("🔄 Fetch queue: recovered {} stale job(s) to pending", recovered);
+            }
+            Arc::new(q)
+        }
+        Err(e) => {
+            eprintln!("⚠️  FetchQueue init failed: {}", e);
+            // Fallback: in-memory DB that won't persist but won't crash the server
+            Arc::new(FetchQueue::new(std::path::Path::new(":memory:")).expect("in-memory FetchQueue"))
+        }
+    };
 
     // Node identity from env, file, config.json, or generate+persist
     let earthgrid_home = dirs::home_dir().unwrap_or_default().join(".earthgrid");
@@ -501,6 +526,7 @@ pub async fn serve(
             };
             from_env && from_cfg
         },
+        fetch_queue: fetch_queue.clone(),
     };
 
     // Conditionally build beacon router (EARTHGRID_BEACON=true or also_beacon in config)
@@ -1164,6 +1190,145 @@ pub async fn serve(
                     }
                     NetworkEvent::PeerLost(peer_id) => {
                         eprintln!("🔗 P2P: Lost peer {}", peer_id);
+                    }
+                }
+            }
+        });
+    }
+
+    // Fetch queue background worker: claim and execute pending jobs every 30s
+    {
+        let fq_store = state_clone_store.clone();
+        let fq_catalog = state_clone_catalog.clone();
+        let fq_queue = fetch_queue.clone();
+        let fq_node_id = state_node_id.clone();
+        let fq_is_beacon = beacon_enabled;
+        let fq_beacon_url: Option<String> = std::env::var("EARTHGRID_BEACON_URL").ok().or_else(|| {
+            let cfg_path = crate::config::Settings::config_dir().join("config.json");
+            std::fs::read_to_string(&cfg_path).ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
+        });
+        let fq_port_for_worker = port;
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+                // Beacon: if job was forwarded to another node, skip local execution
+                match fq_queue.claim_next(&fq_node_id) {
+                    Ok(Some(job)) => {
+                        let job_id = job.id;
+                        tracing::info!("Fetch queue worker: claimed job {} ({})", job_id, job.collection);
+
+                        // Parse bbox
+                        let parts: Vec<f64> = job.bbox.split(',')
+                            .filter_map(|v| v.trim().parse().ok())
+                            .collect();
+                        if parts.len() < 4 {
+                            let _ = fq_queue.fail(job_id, "Invalid bbox format");
+                            continue;
+                        }
+                        let bbox = [parts[0], parts[1], parts[2], parts[3]];
+                        let start_date = job.start_date.clone().unwrap_or_default();
+                        let end_date = job.end_date.clone().unwrap_or_default();
+                        let bands: Vec<String> = job.bands
+                            .as_deref()
+                            .map(|s| s.split(',').map(|b| b.trim().to_string()).filter(|b| !b.is_empty()).collect())
+                            .unwrap_or_default();
+                        let limit = job.limit_count as usize;
+                        let collection = job.collection.clone();
+
+                        // Set initial progress
+                        let _ = fq_queue.update_progress(job_id, 0, 0);
+
+                        let result = if fq_is_beacon {
+                            let self_url = std::env::var("EARTHGRID_PUBLIC_URL")
+                                .unwrap_or_else(|_| format!("http://127.0.0.1:{}", fq_port_for_worker));
+                            crate::fetcher::fetch_distributed(
+                                fq_store.clone(),
+                                fq_catalog.clone(),
+                                bbox,
+                                &start_date,
+                                &end_date,
+                                job.cloud_cover,
+                                &bands,
+                                limit,
+                                &collection,
+                                None,
+                                &self_url,
+                                &fq_node_id,
+                                &std::env::var("EARTHGRID_ADMIN_KEY").unwrap_or_default(),
+                            ).await
+                        } else if let Some(ref bu) = fq_beacon_url {
+                            // Forward to beacon
+                            let client = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(600))
+                                .build()
+                                .unwrap_or_default();
+                            let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
+                            let bands_str = bands.join(",");
+                            let url = format!(
+                                "{}/api/fetch?bbox={}&start_date={}&end_date={}&cloud_cover={}&bands={}&limit={}&collection={}",
+                                bu.trim_end_matches('/'), bbox_str, start_date, end_date, job.cloud_cover, bands_str, limit, collection
+                            );
+                            match client.post(&url).send().await {
+                                Ok(resp) if resp.status().is_success() => {
+                                    match resp.json::<serde_json::Value>().await {
+                                        Ok(data) => crate::fetcher::FetchResult {
+                                            items_searched: data.get("items_searched").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                                            items_downloaded: data.get("items_downloaded").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                                            items_skipped: data.get("items_skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                                            bytes_downloaded: data.get("bytes_downloaded").and_then(|v| v.as_u64()).unwrap_or(0),
+                                            errors: data.get("errors").and_then(|v| v.as_array())
+                                                .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+                                                .unwrap_or_default(),
+                                        },
+                                        Err(e) => {
+                                            tracing::warn!("Beacon response parse error: {}", e);
+                                            crate::fetcher::fetch_and_ingest(
+                                                fq_store.clone(), fq_catalog.clone(),
+                                                bbox, &start_date, &end_date, job.cloud_cover, &bands, limit, &collection, None,
+                                            ).await
+                                        }
+                                    }
+                                }
+                                _ => crate::fetcher::fetch_and_ingest(
+                                    fq_store.clone(), fq_catalog.clone(),
+                                    bbox, &start_date, &end_date, job.cloud_cover, &bands, limit, &collection, None,
+                                ).await,
+                            }
+                        } else {
+                            crate::fetcher::fetch_and_ingest(
+                                fq_store.clone(),
+                                fq_catalog.clone(),
+                                bbox,
+                                &start_date,
+                                &end_date,
+                                job.cloud_cover,
+                                &bands,
+                                limit,
+                                &collection,
+                                None,
+                            ).await
+                        };
+
+                        // Update progress with final counts
+                        let _ = fq_queue.update_progress(job_id, result.items_downloaded as i64, result.items_searched as i64);
+
+                        if result.errors.is_empty() || result.items_downloaded > 0 {
+                            let _ = fq_queue.complete(job_id);
+                            tracing::info!("Fetch queue job {} completed: {} downloaded, {} skipped",
+                                job_id, result.items_downloaded, result.items_skipped);
+                        } else {
+                            let err_msg = result.errors.join("; ");
+                            let _ = fq_queue.fail(job_id, &err_msg);
+                            tracing::warn!("Fetch queue job {} failed: {}", job_id, err_msg);
+                        }
+                    }
+                    Ok(None) => {} // No pending jobs
+                    Err(e) => {
+                        tracing::error!("Fetch queue claim error: {}", e);
                     }
                 }
             }
