@@ -48,6 +48,9 @@ pub enum EarthGridRequest {
 
     /// Request the peer list for gossip.
     GetPeers,
+
+    /// Beacon sync: request node stats + spatial coverage for beacon aggregation.
+    BeaconSync,
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,12 @@ pub enum EarthGridResponse {
     /// Peer list for gossip.
     Peers {
         peers: Vec<PeerEntry>,
+    },
+
+    /// Beacon sync data: stats + coverage for beacon aggregation.
+    BeaconSyncData {
+        stats: serde_json::Value,
+        coverage: serde_json::Value,
     },
 
     /// Generic error.

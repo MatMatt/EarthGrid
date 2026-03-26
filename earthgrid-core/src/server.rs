@@ -987,6 +987,9 @@ pub async fn serve(
         let p2p_node_id = state_node_id.clone();
         let p2p_node_name = state_node_name.clone();
         let p2p_version = state_version.clone();
+        let p2p_beacon_db: std::sync::Arc<Option<std::path::PathBuf>> = std::sync::Arc::new(
+            if beacon_enabled { Some(data_dir.join("beacon.db")) } else { None }
+        );
 
         tokio::spawn(async move {
             use crate::network::{NetworkCommand, NetworkEvent};
@@ -1043,6 +1046,60 @@ pub async fn serve(
                             EarthGridRequest::GetPeers => {
                                 EarthGridResponse::Peers { peers: vec![] }
                             }
+                            EarthGridRequest::BeaconSync => {
+                                // Build stats + coverage response for beacon sync
+                                let store = p2p_store.lock().await;
+                                let catalog = p2p_catalog.lock().await;
+                                let collections: Vec<String> = catalog
+                                    .list_collections()
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .map(|c| c.id)
+                                    .collect();
+                                let stats = serde_json::json!({
+                                    "total_items": catalog.item_count(None).unwrap_or(0),
+                                    "total_chunks": store.chunk_count(),
+                                    "total_bytes": store.total_bytes(),
+                                    "bytes_ingested": store.stats().bytes_ingested,
+                                    "bytes_served": store.stats().bytes_served,
+                                    "chunks_served": store.stats().chunks_served,
+                                    "requests_total": store.stats().requests_total,
+                                });
+                                // Build coverage from catalog
+                                let tiles = catalog.mgrs_coverage().unwrap_or_default();
+                                let mut cov_collections: std::collections::HashMap<String, Vec<serde_json::Value>> =
+                                    std::collections::HashMap::new();
+                                for t in &tiles {
+                                    let polygon = if let Some(ref poly) = t.polygon {
+                                        serde_json::json!(poly)
+                                    } else {
+                                        serde_json::json!([
+                                            [t.west, t.north], [t.east, t.north],
+                                            [t.east, t.south], [t.west, t.south],
+                                            [t.west, t.north],
+                                        ])
+                                    };
+                                    cov_collections.entry(t.collection.clone()).or_default().push(
+                                        serde_json::json!({
+                                            "bbox": [t.west, t.south, t.east, t.north],
+                                            "polygon": polygon,
+                                            "tile_id": t.tile_id,
+                                            "date_count": t.date_count,
+                                            "item_count": t.item_count,
+                                            "dates": t.dates,
+                                            "bands": t.bands,
+                                        })
+                                    );
+                                }
+                                let cov_map: serde_json::Value = cov_collections.into_iter()
+                                    .map(|(k, v)| (k, serde_json::json!({"cells": v})))
+                                    .collect();
+                                let coverage = serde_json::json!({
+                                    "collections": cov_map,
+                                    "total_items": catalog.item_count(None).unwrap_or(0),
+                                });
+                                EarthGridResponse::BeaconSyncData { stats, coverage }
+                            }
                             EarthGridRequest::ExecuteJob { .. } => {
                                 EarthGridResponse::JobError {
                                     message: "Job execution not yet supported via P2P".to_string(),
@@ -1058,6 +1115,39 @@ pub async fn serve(
                     }
                     NetworkEvent::PeerDiscovered { peer_id, addresses } => {
                         eprintln!("🔗 P2P: Discovered peer {} at {:?}", peer_id, addresses);
+                        // Trigger beacon sync via P2P for newly discovered peers
+                        let cmd_tx_clone = cmd_tx.clone();
+                        let beacon_db_clone = p2p_beacon_db.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                            let _ = cmd_tx_clone.send(NetworkCommand::SendRequest {
+                                peer: peer_id,
+                                request: EarthGridRequest::BeaconSync,
+                                response_tx: resp_tx,
+                            }).await;
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(30),
+                                resp_rx,
+                            ).await {
+                                Ok(Ok(Ok(EarthGridResponse::BeaconSyncData { stats, coverage }))) => {
+                                    let short_id = &peer_id.to_string()[..12.min(peer_id.to_string().len())];
+                                    eprintln!("📡 P2P beacon sync from {}: received stats+coverage", short_id);
+                                    if let Some(ref db_path) = *beacon_db_clone {
+                                        if let Ok(reg) = crate::beacon::BeaconRegistry::new(db_path) {
+                                            let node_id = peer_id.to_string();
+                                            let _ = reg.store_node_tiles(&node_id, &coverage);
+                                            let _ = reg.store_node_stats(&node_id, &stats, &coverage);
+                                            eprintln!("📡 P2P beacon sync: stored data for {}", short_id);
+                                        }
+                                    }
+                                }
+                                Ok(Ok(Ok(_))) => eprintln!("📡 P2P beacon sync: unexpected response type"),
+                                Ok(Ok(Err(e))) => eprintln!("📡 P2P beacon sync failed: {}", e),
+                                Ok(Err(_)) => eprintln!("📡 P2P beacon sync: channel closed"),
+                                Err(_) => eprintln!("📡 P2P beacon sync: timeout"),
+                            }
+                        });
                     }
                     NetworkEvent::PeerLost(peer_id) => {
                         eprintln!("🔗 P2P: Lost peer {}", peer_id);
