@@ -62,6 +62,8 @@ pub struct AppState {
     pub is_beacon: bool,
     /// Whether the web UI is enabled (default: true).
     pub ui_enabled: bool,
+    /// Cached S2 tile reference grid: tile_id -> polygon coordinates
+    pub tile_grid: Arc<std::collections::HashMap<String, Vec<Vec<f64>>>>,
 }
 
 
@@ -467,6 +469,24 @@ pub async fn serve(
                     .unwrap_or(false)
             };
             from_env || from_cfg
+        },
+        tile_grid: {
+            let grid_path = data_dir.join("s2_tile_grid.json");
+            if grid_path.exists() {
+                match std::fs::read_to_string(&grid_path) {
+                    Ok(s) => match serde_json::from_str(&s) {
+                        Ok(g) => {
+                            let g: std::collections::HashMap<String, Vec<Vec<f64>>> = g;
+                            println!("🗺️  Tile grid cached in AppState: {} tiles", g.len());
+                            Arc::new(g)
+                        }
+                        Err(_) => Arc::new(std::collections::HashMap::new()),
+                    },
+                    Err(_) => Arc::new(std::collections::HashMap::new()),
+                }
+            } else {
+                Arc::new(std::collections::HashMap::new())
+            }
         },
         ui_enabled: {
             let from_env = std::env::var("EARTHGRID_UI_ENABLED")

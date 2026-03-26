@@ -174,20 +174,12 @@ pub(crate) async fn coverage_spatial(
     (StatusCode::OK, Json(result)).into_response()
 }
 
-/// Override polygon fields with authoritative ESA tile grid geometry
+/// Override polygon fields with authoritative ESA tile grid geometry (cached in AppState)
 fn enrich_with_tile_grid(state: &AppState, data: &mut serde_json::Value) {
-    // Load tile grid from catalog
-    let tile_grid_path = state.data_dir.join("s2_tile_grid.json");
-    if !tile_grid_path.exists() {
+    if state.tile_grid.is_empty() {
         return;
     }
-    let grid: std::collections::HashMap<String, Vec<Vec<f64>>> = match std::fs::read_to_string(&tile_grid_path) {
-        Ok(s) => match serde_json::from_str(&s) {
-            Ok(g) => g,
-            Err(_) => return,
-        },
-        Err(_) => return,
-    };
+    let grid = &*state.tile_grid;
 
     if let Some(collections) = data.get_mut("collections").and_then(|c| c.as_object_mut()) {
         for (_col_id, col_data) in collections.iter_mut() {
