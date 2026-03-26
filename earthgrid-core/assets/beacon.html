@@ -226,11 +226,11 @@ function renderCoverageMap(data) {
       if (cell.polygon) {
         // Real MGRS tile polygon (from pyproj UTM->WGS84)
         const latlngs = cell.polygon.map(c => [c[1], c[0]]);
-        shape = L.polygon(latlngs, { color, weight: 1.5, fillOpacity: 0.25, opacity: 0.7 });
+        shape = L.polygon(latlngs, { color, weight: 1, fillOpacity: 0.18, opacity: 0.6 });
       } else {
         // Fallback: bbox rectangle
         const [w, s, e, n] = cell.bbox;
-        shape = L.rectangle([[s, w], [n, e]], { color, weight: 1.5, fillOpacity: 0.25, opacity: 0.7 });
+        shape = L.rectangle([[s, w], [n, e]], { color, weight: 1, fillOpacity: 0.18, opacity: 0.6 });
       }
 
       shape.on('click', () => showCoverageDetail(colId, cell));
