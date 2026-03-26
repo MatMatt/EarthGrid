@@ -62,8 +62,6 @@ impl DatetimeFilter {
 /// SQLite-backed STAC catalog.
 pub struct Catalog {
     conn: Connection,
-    /// MGRS tile reference polygons: tile_id -> [[lon,lat], ...]
-    tile_grid: std::collections::HashMap<String, Vec<Vec<f64>>>,
 }
 
 
@@ -102,8 +100,7 @@ impl Catalog {
         let conn = Connection::open(db_path)?;
         // WAL mode allows concurrent readers (Python + Rust)
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
-        let tile_grid = Self::load_tile_grid(db_path);
-        let catalog = Self { conn, tile_grid };
+        let catalog = Self { conn };
         catalog.init_tables()?;
         Ok(catalog)
     }
@@ -112,38 +109,12 @@ impl Catalog {
     #[cfg(test)]
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let catalog = Self { conn, tile_grid: std::collections::HashMap::new() };
+        let catalog = Self { conn };
         catalog.init_tables()?;
         Ok(catalog)
     }
 
-    /// Load S2 tile reference grid from s2_tile_grid.json (sibling of catalog.db or in data dir)
-    fn load_tile_grid(db_path: &std::path::Path) -> std::collections::HashMap<String, Vec<Vec<f64>>> {
-        // Try data dir (parent of catalog.db), then well-known paths
-        let candidates = [
-            db_path.parent().map(|p| p.join("s2_tile_grid.json")),
-            db_path.parent().and_then(|p| p.parent()).map(|p| p.join("s2_tile_grid.json")),
-        ];
-        for candidate in candidates.iter().flatten() {
-            if candidate.exists() {
-                match std::fs::read_to_string(candidate) {
-                    Ok(json_str) => {
-                        match serde_json::from_str(&json_str) {
-                            Ok(grid) => {
-                                let grid: std::collections::HashMap<String, Vec<Vec<f64>>> = grid;
-                                println!("🗺️  Loaded S2 tile grid: {} tiles from {}", grid.len(), candidate.display());
-                                return grid;
-                            }
-                            Err(e) => eprintln!("⚠️  Failed to parse tile grid: {}", e),
-                        }
-                    }
-                    Err(e) => eprintln!("⚠️  Failed to read tile grid: {}", e),
-                }
-            }
-        }
-        println!("ℹ️  No s2_tile_grid.json found, using STAC geometry fallback");
-        std::collections::HashMap::new()
-    }
+
 
     fn init_tables(&self) -> Result<()> {
         self.conn.execute_batch(
