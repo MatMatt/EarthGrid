@@ -574,7 +574,7 @@ fn check_login_rate(ip: &str) -> bool {
 
 fn is_localhost(headers: &HeaderMap) -> bool {
     let ip = extract_client_ip(headers);
-    ip == "127.0.0.1" || ip == "::1" || ip == "localhost" || ip == "unknown"
+    ip == "127.0.0.1" || ip == "::1" || ip == "localhost"
 }
 
 fn extract_client_ip(headers: &HeaderMap) -> String {
