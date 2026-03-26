@@ -57,7 +57,7 @@ pub(crate) async fn node_info(State(state): State<AppState>) -> Json<serde_json:
         "beacon_url": beacon_url,
         "auto_update": auto_update,
         "is_beacon": state.is_beacon,
-        "commit": option_env!("EARTHGRID_COMMIT").unwrap_or("unknown"),
+        "commit": std::env::var("EARTHGRID_COMMIT").unwrap_or_else(|_| "unknown".to_string()),
     }))
 }
 
