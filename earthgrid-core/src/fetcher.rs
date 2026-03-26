@@ -283,13 +283,15 @@ fn yearly_chunks(start_date: &str, end_date: &str) -> Vec<(String, String)> {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
     };
 
+    let today = chrono::Utc::now().date_naive();
+
     let start = match parse(start_date) {
         Some(d) => d,
-        None => return vec![(start_date.to_string(), end_date.to_string())],
+        None => today - chrono::Duration::days(90), // Default: last 90 days
     };
     let end = match parse(end_date) {
         Some(d) => d,
-        None => return vec![(start_date.to_string(), end_date.to_string())],
+        None => today,
     };
 
     if end <= start {
@@ -703,7 +705,10 @@ pub async fn beacon_inventory(
         .query(&[
             ("bbox", format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3])),
             ("collections", collection.to_string()),
-            ("datetime", format!("{}/{}", start_date, end_date)),
+            ("datetime", format!("{}/{}",
+                if start_date.contains('T') || start_date.is_empty() { start_date.to_string() } else { format!("{}T00:00:00Z", start_date) },
+                if end_date.contains('T') || end_date.is_empty() { end_date.to_string() } else { format!("{}T23:59:59Z", end_date) }
+            )),
             ("limit", "10000".to_string()),
         ])
         .send()

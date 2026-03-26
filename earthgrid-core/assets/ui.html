@@ -226,7 +226,7 @@ code:hover::after { opacity: 0.8; }
   <div class="tab-panel active" id="panel-status">
     <div class="grid grid-4" style="margin-bottom:16px" id="status-stats">
       <div class="stat"><div class="stat-label">Node Name</div><div class="stat-value" id="s-name" style="font-size:16px;cursor:pointer" title="Click to rename" onclick="startNodeRename()">—</div><div class="stat-sub" id="s-id">—</div></div>
-      <div class="stat"><div class="stat-label">Version</div><div class="stat-value" id="s-version" style="font-size:18px">—</div><div class="stat-sub" id="s-items">— items</div></div>
+      <div class="stat"><div class="stat-label">Version</div><div class="stat-value" id="s-version" style="font-size:18px">—</div><div class="stat-sub" id="s-items">—</div></div>
       <div class="stat"><div class="stat-label">Chunks</div><div class="stat-value" id="s-chunks">—</div><div class="stat-sub" id="s-chunks-bytes">—</div></div>
       <div class="stat"><div class="stat-label">Storage Used</div><div class="stat-value" id="s-storage-pct">—</div><div class="stat-sub" id="s-storage-detail">—</div></div>
     </div>
@@ -625,7 +625,7 @@ async function loadStatus() {
     document.getElementById('s-name').textContent = info.node_name || '—';
     document.getElementById('s-id').textContent = info.node_id || '—';
     document.getElementById('s-version').textContent = info.version || '—';
-    document.getElementById('s-items').textContent = fmt_num(info.item_count) + ' items';
+    document.getElementById('s-items').textContent = info.commit ? info.commit.substring(0, 7) : fmt_num(info.item_count) + ' items';
     document.getElementById('s-chunks').textContent = fmt_num(info.chunks);
     document.getElementById('s-chunks-bytes').textContent = fmt_bytes((info.storage_bytes || info.chunks_bytes || 0));
     const pct = info.storage_limit_gb > 0 ? ((info.storage_gb / info.storage_limit_gb) * 100).toFixed(1) + '%' : '—'; document.getElementById('s-storage-pct').textContent = pct; document.getElementById('s-storage-detail').textContent = fmt_bytes(info.storage_bytes) + ' / ' + fmt_num(Math.round(info.storage_limit_gb)) + ' GB';
@@ -1439,7 +1439,7 @@ async function submitNodeRename() {
   const name = inp.value.trim();
   if (!name) return;
   try {
-    const res = await apiFetch('/node-name?name=' + encodeURIComponent(name), {method: 'PATCH'});
+    const res = await apiFetch('/node-name', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name})});
     if (res.status === 'renamed') {
       document.getElementById('s-name').textContent = res.new;
       document.getElementById('header-node-name').textContent = res.new;

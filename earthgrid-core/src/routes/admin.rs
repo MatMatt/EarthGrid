@@ -72,20 +72,37 @@ pub struct NodeNamePatch {
 
 
 pub(crate) async fn patch_node_name(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<NodeNamePatch>,
 ) -> impl IntoResponse {
     let key = api_key(&headers);
-    if let Err(e) = _state.auth.check_admin(key) {
+    if let Err(e) = state.auth.check_admin(key) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
-    // Persist via env-var override is not possible at runtime; return accepted
+    let new_name = body.name.trim().to_string();
+    if new_name.is_empty() || new_name.len() > 64 {
+        return err(StatusCode::BAD_REQUEST, "Name must be 1-64 chars").into_response();
+    }
+
+    let old_name = state.node_name.clone();
+
+    // Persist to config.json
+    let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+    if let Ok(content) = std::fs::read_to_string(&cfg_path) {
+        if let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&content) {
+            cfg["node_name"] = serde_json::Value::String(new_name.clone());
+            if let Ok(serialized) = serde_json::to_string_pretty(&cfg) {
+                let _ = std::fs::write(&cfg_path, serialized);
+            }
+        }
+    }
+
     (StatusCode::OK, Json(serde_json::json!({
-        "status": "ok",
-        "node_name": body.name,
-        "note": "Restart with EARTHGRID_NODE_NAME env var to persist"
+        "status": "renamed",
+        "old": old_name,
+        "new": new_name,
     }))).into_response()
 }
 
