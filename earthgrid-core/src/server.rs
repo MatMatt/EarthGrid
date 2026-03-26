@@ -296,7 +296,16 @@ pub async fn serve(
     let stats_db_path = data_dir.join("stats.db");
     let gamification_db_path = data_dir.join("gamification.db");
 
-    let store = ChunkStore::new(&store_path, 0.0)?;
+    // Read storage_limit_gb from config BEFORE creating ChunkStore
+    let storage_limit_gb_init = {
+        let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+        std::fs::read_to_string(&cfg_path)
+            .ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .and_then(|v| v["storage_limit_gb"].as_f64())
+            .unwrap_or(0.0)
+    };
+    let store = ChunkStore::new(&store_path, storage_limit_gb_init)?;
     let catalog = Catalog::new(&catalog_path)?;
     let audit = AuditLog::new(&audit_path);
     let auth = AuthConfig::from_env();
