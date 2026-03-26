@@ -108,7 +108,10 @@ pub(crate) async fn coverage_spatial(
         if beacon_db_path.exists() {
             if let Ok(reg) = crate::beacon::BeaconRegistry::new(&beacon_db_path) {
                 match reg.get_aggregated_coverage() {
-                    Ok(coverage) => return (StatusCode::OK, Json(coverage)).into_response(),
+                    Ok(mut coverage) => {
+                        enrich_with_tile_grid(&state, &mut coverage);
+                        return (StatusCode::OK, Json(coverage)).into_response();
+                    }
                     Err(e) => eprintln!("⚠️  Beacon aggregated coverage failed: {}", e),
                 }
             }
@@ -164,9 +167,44 @@ pub(crate) async fn coverage_spatial(
         .map(|(k, v)| (k, serde_json::json!({ "cells": v })))
         .collect();
 
-    (StatusCode::OK, Json(serde_json::json!({
+    let mut result = serde_json::json!({
         "collections": col_map,
-    }))).into_response()
+    });
+    enrich_with_tile_grid(&state, &mut result);
+    (StatusCode::OK, Json(result)).into_response()
+}
+
+/// Override polygon fields with authoritative ESA tile grid geometry
+fn enrich_with_tile_grid(state: &AppState, data: &mut serde_json::Value) {
+    // Load tile grid from catalog
+    let tile_grid_path = state.data_dir.join("s2_tile_grid.json");
+    if !tile_grid_path.exists() {
+        return;
+    }
+    let grid: std::collections::HashMap<String, Vec<Vec<f64>>> = match std::fs::read_to_string(&tile_grid_path) {
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(g) => g,
+            Err(_) => return,
+        },
+        Err(_) => return,
+    };
+
+    if let Some(collections) = data.get_mut("collections").and_then(|c| c.as_object_mut()) {
+        for (_col_id, col_data) in collections.iter_mut() {
+            if let Some(cells) = col_data.get_mut("cells").and_then(|c| c.as_array_mut()) {
+                for cell in cells.iter_mut() {
+                    if let Some(tile_id) = cell.get("tile_id").and_then(|t| t.as_str()) {
+                        if let Some(ref_poly) = grid.get(tile_id) {
+                            cell.as_object_mut().map(|m| m.insert(
+                                "polygon".to_string(),
+                                serde_json::json!(ref_poly),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 
