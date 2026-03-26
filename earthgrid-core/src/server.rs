@@ -305,8 +305,11 @@ pub async fn serve(
     let fetch_queue_db_path = data_dir.join("fetch_queue.db");
 
     // Read storage_limit_gb from config BEFORE creating ChunkStore
+    // Try data_dir config first, then ~/.earthgrid/config.json as fallback
     let storage_limit_gb_init = {
-        let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+        let data_cfg = data_dir.join("config.json");
+        let home_cfg = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+        let cfg_path = if data_cfg.exists() { data_cfg } else { home_cfg };
         std::fs::read_to_string(&cfg_path)
             .ok()
             .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
