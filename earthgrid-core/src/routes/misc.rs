@@ -18,6 +18,15 @@ pub(crate) async fn health() -> Json<serde_json::Value> {
 }
 
 
+pub(crate) fn get_commit() -> String {
+    let build = env!("EARTHGRID_BUILD_COMMIT");
+    if build != "unknown" {
+        build.to_string()
+    } else {
+        std::env::var("EARTHGRID_COMMIT").unwrap_or_else(|_| "unknown".to_string())
+    }
+}
+
 pub(crate) async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     let store = state.store.lock().await;
     let catalog = state.catalog.lock().await;
@@ -57,7 +66,7 @@ pub(crate) async fn node_info(State(state): State<AppState>) -> Json<serde_json:
         "beacon_url": beacon_url,
         "auto_update": auto_update,
         "is_beacon": state.is_beacon,
-        "commit": std::env::var("EARTHGRID_COMMIT").unwrap_or_else(|_| "unknown".to_string()),
+        "commit": crate::routes::misc::get_commit(),
     }))
 }
 
