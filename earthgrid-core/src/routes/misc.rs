@@ -107,6 +107,26 @@ pub(crate) async fn download_item(
         }
     };
 
+    // Pre-fetch missing chunks from peers before reconstruction
+    {
+        let store = state.store.lock().await;
+        let missing: Vec<String> = item.chunk_hashes.iter()
+            .filter(|h| !store.has(h))
+            .cloned()
+            .collect();
+        drop(store);
+
+        if !missing.is_empty() {
+            eprintln!("📡 Download {}: {} missing chunks, fetching from peers...", item_id, missing.len());
+            for sha in &missing {
+                if let Some(data) = crate::routes::chunks::fetch_chunk_from_peers(&state, sha).await {
+                    let mut store = state.store.lock().await;
+                    let _ = store.put(&data);
+                }
+            }
+        }
+    }
+
     let tiff_bytes = {
         let mut store = state.store.lock().await;
         match reconstruct::reconstruct_cog(&item, &mut store, None) {

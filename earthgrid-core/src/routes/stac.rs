@@ -233,9 +233,82 @@ pub(crate) async fn stac_search(State(state): State<AppState>, Query(q): Query<S
     };
 
     match catalog.search(collection, bbox, datetime.as_ref(), limit, offset) {
-        Ok(items) => {
+        Ok(items) if !items.is_empty() || offset > 0 => {
             let body = build_search_response(items, total, limit, offset, "/stac/search");
             (StatusCode::OK, Json(body)).into_response()
+        }
+        Ok(_empty) => {
+            // No local results at offset 0 — try alive peers
+            drop(catalog);
+            let peer_urls: Vec<String> = {
+                let registry = state.peers.lock().await;
+                registry.list().into_iter()
+                    .filter(|p| p.alive())
+                    .map(|p| p.url.clone())
+                    .collect()
+            };
+            if peer_urls.is_empty() {
+                let body = build_search_response(vec![], 0, limit, 0, "/stac/search");
+                return (StatusCode::OK, Json(body)).into_response();
+            }
+
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .unwrap_or_default();
+
+            let mut all_features: Vec<serde_json::Value> = Vec::new();
+            let mut handles = vec![];
+            for url in peer_urls {
+                let client = client.clone();
+                let q_bbox = q.bbox.clone();
+                let q_col = q.collection.clone().or(q.collections.clone());
+                let q_dt = q.datetime.clone();
+                handles.push(tokio::spawn(async move {
+                    let mut params = vec![("limit", limit.to_string())];
+                    if let Some(c) = &q_col { params.push(("collections", c.clone())); }
+                    if let Some(b) = &q_bbox { params.push(("bbox", b.clone())); }
+                    if let Some(d) = &q_dt { params.push(("datetime", d.clone())); }
+                    let resp = client.get(format!("{}/stac/search", url))
+                        .query(&params).send().await;
+                    match resp {
+                        Ok(r) if r.status().is_success() => {
+                            r.json::<serde_json::Value>().await.ok()
+                                .and_then(|d| d.get("features").and_then(|f| f.as_array().cloned()))
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|mut f| {
+                                    if let Some(obj) = f.as_object_mut() {
+                                        obj.insert("earthgrid:source_node".to_string(), serde_json::json!(url));
+                                    }
+                                    f
+                                }).collect::<Vec<_>>()
+                        }
+                        _ => vec![],
+                    }
+                }));
+            }
+            for h in handles {
+                if let Ok(items) = h.await { all_features.extend(items); }
+            }
+            // Deduplicate by id
+            let mut seen = std::collections::HashSet::new();
+            let deduped: Vec<_> = all_features.into_iter()
+                .filter(|i| {
+                    let id = i.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if id.is_empty() { return true; }
+                    seen.insert(id)
+                })
+                .take(limit)
+                .collect();
+            let count = deduped.len();
+            (StatusCode::OK, Json(serde_json::json!({
+                "type": "FeatureCollection",
+                "numberMatched": count,
+                "numberReturned": count,
+                "features": deduped,
+                "context": {"source": "peer_fallback"},
+            }))).into_response()
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }

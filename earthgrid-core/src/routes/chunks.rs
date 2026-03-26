@@ -10,12 +10,67 @@ use crate::server::{AppState, api_key, err, LimitQuery};
 use crate::replication::Replicator;
 
 
+
+/// Fetch a chunk from alive peers. Returns the raw bytes on first success.
+pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str) -> Option<Vec<u8>> {
+    let peer_urls: Vec<String> = {
+        let registry = state.peers.lock().await;
+        registry.list().into_iter()
+            .filter(|p| p.alive())
+            .map(|p| p.url.clone())
+            .collect()
+    };
+    if peer_urls.is_empty() { return None; }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?;
+
+    // Race all peers — first success wins
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+    for url in &peer_urls {
+        let client = client.clone();
+        let url = url.clone();
+        let sha = sha.to_string();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let resp = client.get(format!("{}/api/chunks/{}", url, sha)).send().await;
+            if let Ok(r) = resp {
+                if r.status().is_success() {
+                    if let Ok(bytes) = r.bytes().await {
+                        let _ = tx.send(bytes.to_vec()).await;
+                    }
+                }
+            }
+        });
+    }
+    drop(tx); // Drop sender so rx completes when all spawned tasks finish
+    rx.recv().await
+}
+
 pub(crate) async fn get_chunk(State(state): State<AppState>, Path(sha): Path<String>) -> impl IntoResponse {
-    let mut store = state.store.lock().await;
-    match store.get(&sha) {
-        Ok(Some(data)) => (StatusCode::OK, data).into_response(),
-        Ok(None) => err(StatusCode::NOT_FOUND, "Chunk not found").into_response(),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    // 1. Try local store first
+    {
+        let mut store = state.store.lock().await;
+        match store.get(&sha) {
+            Ok(Some(data)) => return (StatusCode::OK, data).into_response(),
+            Ok(None) => {} // Fall through to peer lookup
+            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        }
+    }
+
+    // 2. Chunk not local — try alive peers
+    eprintln!("📡 Chunk {} not local, trying peers...", &sha[..8.min(sha.len())]);
+    match fetch_chunk_from_peers(&state, &sha).await {
+        Some(data) => {
+            // Cache locally for future requests
+            let mut store = state.store.lock().await;
+            let _ = store.put(&data);
+            eprintln!("📡 Chunk {} fetched from peer and cached", &sha[..8.min(sha.len())]);
+            (StatusCode::OK, data).into_response()
+        }
+        None => err(StatusCode::NOT_FOUND, "Chunk not found on any node").into_response(),
     }
 }
 
