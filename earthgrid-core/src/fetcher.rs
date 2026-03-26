@@ -804,7 +804,7 @@ async fn get_grid_nodes(beacon_url: &str) -> Vec<GridNode> {
         }
     }
     // Sort by free space descending
-    nodes.sort_by(|a, b| b.free_gb.partial_cmp(&a.free_gb).unwrap_or(std::cmp::Ordering::Equal));
+    nodes.sort_by(|a, b| b.free_gb.total_cmp(&a.free_gb));
     nodes
 }
 

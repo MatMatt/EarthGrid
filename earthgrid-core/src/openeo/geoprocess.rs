@@ -161,7 +161,7 @@ pub fn reduce_layers(kind: ReducerKind, layers: &[Vec<f32>]) -> Result<Vec<f32>,
                 for layer in layers {
                     buf.push(layer[i]);
                 }
-                buf.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                buf.sort_by(|a, b| a.total_cmp(b));
                 let mid = buf.len() / 2;
                 out[i] = if buf.len() % 2 == 1 {
                     buf[mid]
