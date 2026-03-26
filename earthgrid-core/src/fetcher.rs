@@ -287,7 +287,7 @@ fn yearly_chunks(start_date: &str, end_date: &str) -> Vec<(String, String)> {
 
     let start = match parse(start_date) {
         Some(d) => d,
-        None => today - chrono::Duration::days(90), // Default: last 90 days
+        None => NaiveDate::from_ymd_opt(2015, 7, 1).unwrap(), // Sentinel-2 launch
     };
     let end = match parse(end_date) {
         Some(d) => d,
