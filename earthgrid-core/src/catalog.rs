@@ -511,7 +511,41 @@ impl Catalog {
                 polygon: None,
             })
         })?;
-        let tiles: Vec<MgrsTile> = rows.filter_map(|r| r.ok()).collect();
+        let mut tiles: Vec<MgrsTile> = rows.filter_map(|r| r.ok()).collect();
+
+        // Enrich tiles with real polygon geometry from STAC data
+        for tile in &mut tiles {
+            // Prefer non-rectangular geometry (ORDER BY LENGTH DESC picks trapezoids over rectangles)
+            let geom_result: rusqlite::Result<Option<String>> = self.conn.query_row(
+                "SELECT geometry_json FROM items
+                 WHERE geometry_json IS NOT NULL
+                   AND collection = ?1
+                   AND id LIKE '%_' || ?2 || '_%'
+                 ORDER BY LENGTH(geometry_json) DESC
+                 LIMIT 1",
+                params![tile.collection, tile.tile_id],
+                |row| row.get(0),
+            );
+            if let Ok(Some(json_str)) = geom_result {
+                if let Ok(geom) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    if let Some(coords) = geom.get("coordinates")
+                        .and_then(|c| c.as_array())
+                        .and_then(|rings| rings.first())
+                        .and_then(|ring| ring.as_array())
+                    {
+                        let poly: Vec<Vec<f64>> = coords.iter()
+                            .filter_map(|pt| pt.as_array().map(|a| {
+                                a.iter().filter_map(|v| v.as_f64()).collect()
+                            }))
+                            .collect();
+                        if poly.len() >= 4 {
+                            tile.polygon = Some(poly);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(tiles)
     }
 
