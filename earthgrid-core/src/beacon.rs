@@ -130,6 +130,7 @@ struct TileRow {
     bands_json: String,
     _node_id: String,
     item_count: i64,
+    polygon_json: Option<String>,
 }
 
 struct TileAgg {
@@ -140,6 +141,7 @@ struct TileAgg {
     bands: std::collections::BTreeSet<String>,
     node_count: i64,
     item_count: i64,
+    polygon_json: Option<String>,
 }
 
 /// In-memory cache backed by SQLite.
@@ -615,11 +617,13 @@ Ok(affected)
                         let bands_json = cell.get("bands")
                             .map(|b| serde_json::to_string(b).unwrap_or_else(|_| "[]".to_string()))
                             .unwrap_or_else(|| "[]".to_string());
+                        let polygon_json = cell.get("polygon")
+                            .map(|p| serde_json::to_string(p).unwrap_or_else(|_| "null".to_string()));
                         self.conn.execute(
                             "INSERT OR REPLACE INTO beacon_node_tiles
-                                (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count, item_count, dates_json, bands_json)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                            params![node_id, collection, tile_id, w, s, e, n, date_count, item_count, dates_json, bands_json],
+                                (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count, item_count, dates_json, bands_json, polygon_json)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                            params![node_id, collection, tile_id, w, s, e, n, date_count, item_count, dates_json, bands_json, polygon_json],
                         )?;
                         count += 1;
                     }
@@ -634,7 +638,7 @@ Ok(affected)
     pub fn get_aggregated_coverage(&self) -> Result<serde_json::Value> {
         let mut stmt = self.conn.prepare(
             "SELECT collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north,
-                    dates_json, bands_json, node_id, item_count
+                    dates_json, bands_json, node_id, item_count, polygon_json
              FROM beacon_node_tiles
              ORDER BY collection, tile_id"
         )?;
@@ -655,6 +659,7 @@ Ok(affected)
                 bands_json: row.get(7)?,
                 _node_id: row.get(8)?,
                 item_count: row.get::<_, i64>(9).unwrap_or(0),
+                polygon_json: row.get::<_, Option<String>>(10).unwrap_or(None),
             })
         })?;
 
@@ -669,7 +674,16 @@ Ok(affected)
                     bands: std::collections::BTreeSet::new(),
                     node_count: 0,
                     item_count: 0,
+                    polygon_json: None,
                 });
+                // Use the first available real polygon
+                if agg.polygon_json.is_none() {
+                    if let Some(ref pj) = r.polygon_json {
+                        if pj != "null" {
+                            agg.polygon_json = Some(pj.clone());
+                        }
+                    }
+                }
                 // Merge dates (union)
                 if let Ok(dates) = serde_json::from_str::<Vec<String>>(&r.dates_json) {
                     for d in dates { agg.dates.insert(d); }
@@ -688,14 +702,16 @@ Ok(affected)
         for ((_, _), agg) in tile_map {
             let dates: Vec<&String> = agg.dates.iter().collect();
             let bands: Vec<&String> = agg.bands.iter().collect();
-            // Generate polygon from bbox for map visualization
-            let polygon = vec![
-                vec![agg.w, agg.n],
-                vec![agg.e, agg.n],
-                vec![agg.e, agg.s],
-                vec![agg.w, agg.s],
-                vec![agg.w, agg.n],
-            ];
+            // Use real polygon if available, fallback to bbox rectangle
+            let polygon: serde_json::Value = if let Some(ref pj) = agg.polygon_json {
+                serde_json::from_str(pj).unwrap_or_else(|_| serde_json::json!([
+                    [agg.w, agg.n], [agg.e, agg.n], [agg.e, agg.s], [agg.w, agg.s], [agg.w, agg.n]
+                ]))
+            } else {
+                serde_json::json!([
+                    [agg.w, agg.n], [agg.e, agg.n], [agg.e, agg.s], [agg.w, agg.s], [agg.w, agg.n]
+                ])
+            };
             collections.entry(agg.collection).or_default().push(
                 serde_json::json!({
                     "bbox": [agg.w, agg.s, agg.e, agg.n],

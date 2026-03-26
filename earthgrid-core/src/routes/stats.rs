@@ -135,9 +135,22 @@ pub(crate) async fn coverage_spatial(
     let mut collections: std::collections::HashMap<String, Vec<serde_json::Value>> =
         std::collections::HashMap::new();
     for t in &tiles {
+        let polygon = if let Some(ref poly) = t.polygon {
+            serde_json::json!(poly)
+        } else {
+            // Fallback: rectangle from bbox
+            serde_json::json!([
+                [t.west, t.north],
+                [t.east, t.north],
+                [t.east, t.south],
+                [t.west, t.south],
+                [t.west, t.north],
+            ])
+        };
         collections.entry(t.collection.clone()).or_default().push(
             serde_json::json!({
                 "bbox": [t.west, t.south, t.east, t.north],
+                "polygon": polygon,
                 "tile_id": t.tile_id,
                 "date_count": t.date_count,
                 "item_count": t.item_count,

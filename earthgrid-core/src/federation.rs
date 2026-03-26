@@ -204,6 +204,7 @@ fn json_to_stac_item(v: Value, source_node: &str) -> Option<StacItem> {
         properties,
         chunk_hashes,
         created_at,
+        geometry: None,
     })
 }
 

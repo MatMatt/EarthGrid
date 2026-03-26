@@ -24,6 +24,8 @@ pub struct StacItem {
     pub properties: serde_json::Value,
     pub chunk_hashes: Vec<String>,
     pub created_at: f64,
+    /// GeoJSON geometry (real tile footprint polygon)
+    pub geometry: Option<serde_json::Value>,
 }
 
 /// Parsed datetime filter from STAC spec.
@@ -85,6 +87,8 @@ pub struct MgrsTile {
     pub item_count: i64,
     pub dates: Vec<String>,
     pub bands: Vec<String>,
+    /// Real tile polygon coordinates [[lon,lat], ...] from STAC geometry
+    pub polygon: Option<Vec<Vec<f64>>>,
 }
 
 impl Catalog {
@@ -166,7 +170,7 @@ impl Catalog {
     /// Return items with created_at > since_ts (for change detection).
     pub fn changes_since(&self, since_ts: f64) -> Result<Vec<StacItem>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at, geometry_json
              FROM items WHERE created_at > ?1 ORDER BY created_at ASC",
         )?;
         let rows = stmt.query_map(params![since_ts], |row| {
@@ -179,6 +183,9 @@ impl Catalog {
                 properties: serde_json::from_str(&props_str).unwrap_or_default(),
                 chunk_hashes: serde_json::from_str(&hashes_str).unwrap_or_default(),
                 created_at: row.get(8)?,
+                geometry: row.get::<_, Option<String>>(9)
+                    .ok().flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
             })
         })?;
         let mut items = Vec::new();
@@ -253,9 +260,12 @@ impl Catalog {
         let hashes_json = serde_json::to_string(&item.chunk_hashes)?;
         let props_json = serde_json::to_string(&item.properties)?;
 
+        let geom_json = item.geometry.as_ref()
+            .map(|g| serde_json::to_string(g).unwrap_or_default());
+
         self.conn.execute(
-            "INSERT OR REPLACE INTO items (id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT OR REPLACE INTO items (id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at, geometry_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 item.id,
                 item.collection,
@@ -266,6 +276,7 @@ impl Catalog {
                 props_json,
                 hashes_json,
                 item.created_at,
+                geom_json,
             ],
         )?;
         self.increment_version()?;
@@ -275,7 +286,7 @@ impl Catalog {
     /// Get an item by ID.
     pub fn get_item(&self, id: &str) -> Result<Option<StacItem>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at, geometry_json
              FROM items WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
@@ -288,6 +299,9 @@ impl Catalog {
                 properties: serde_json::from_str(&props_str).unwrap_or_default(),
                 chunk_hashes: serde_json::from_str(&hashes_str).unwrap_or_default(),
                 created_at: row.get(8)?,
+                geometry: row.get::<_, Option<String>>(9)
+                    .ok().flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
             })
         })?;
         match rows.next() {
@@ -313,6 +327,9 @@ impl Catalog {
                 properties: serde_json::from_str(&props_str).unwrap_or_default(),
                 chunk_hashes: serde_json::from_str(&hashes_str).unwrap_or_default(),
                 created_at: row.get(8)?,
+                geometry: row.get::<_, Option<String>>(9)
+                    .ok().flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
             })
         })?;
         match rows.next() {
@@ -389,6 +406,9 @@ impl Catalog {
                 properties: serde_json::from_str(&props_str).unwrap_or_default(),
                 chunk_hashes: serde_json::from_str(&hashes_str).unwrap_or_default(),
                 created_at: row.get(8)?,
+                geometry: row.get::<_, Option<String>>(9)
+                    .ok().flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
             })
         })?;
 
@@ -488,6 +508,7 @@ impl Catalog {
                     d
                 },
                 bands: Vec::new(), // populated separately
+                polygon: None,
             })
         })?;
         let tiles: Vec<MgrsTile> = rows.filter_map(|r| r.ok()).collect();

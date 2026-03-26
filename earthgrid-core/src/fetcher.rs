@@ -57,6 +57,8 @@ pub struct StacSearchResult {
     /// band_name → COG URL
     pub assets: HashMap<String, String>,
     pub processing_baseline: Option<String>,
+    /// GeoJSON geometry from STAC (real tile footprint polygon)
+    pub geometry: Option<serde_json::Value>,
 }
 
 /// Aggregated result of a fetch+ingest run.
@@ -88,6 +90,7 @@ struct StacFeatureCollection {
 struct StacFeature {
     id: String,
     bbox: Option<Vec<f64>>,
+    geometry: Option<serde_json::Value>,
     properties: serde_json::Value,
     assets: Option<serde_json::Value>,
     #[allow(dead_code)]
@@ -153,6 +156,7 @@ fn parse_feature(f: StacFeature) -> Option<StacSearchResult> {
         cloud_cover,
         assets,
         processing_baseline,
+        geometry: f.geometry,
     })
 }
 
@@ -434,8 +438,9 @@ async fn ingest_item_band(
             .map_err(|e| format!("Ingest failed for {} {}: {}", item.id, band, e))?
     };
 
-    // Override with STAC metadata: proper bbox, id, and datetime
+    // Override with STAC metadata: proper bbox, id, datetime, and geometry
     stac_item.bbox = item.bbox;
+    stac_item.geometry = item.geometry.clone();
     stac_item.id = format!("{}_{}", item.id, band);
     if let Some(props) = stac_item.properties.as_object_mut() {
         props.insert("datetime".to_string(), serde_json::json!(item.datetime));

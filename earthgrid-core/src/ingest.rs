@@ -148,6 +148,7 @@ pub fn ingest_raster(
         id: stem.to_string(),
         collection: collection.to_string(),
         bbox,
+        geometry: None,
         properties: serde_json::json!({
             "datetime": acq_date.as_deref().unwrap_or(&now_str),
             "earthgrid:ingested": now_str,
@@ -283,6 +284,7 @@ pub fn ingest_file(
         id: item_id,
         collection: collection.to_string(),
         bbox: [0.0, 0.0, 0.0, 0.0],
+        geometry: None,
         properties: serde_json::json!({
             "earthgrid:filename": filename,
             "earthgrid:file_size": file_size,
