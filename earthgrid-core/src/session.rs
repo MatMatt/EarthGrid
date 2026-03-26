@@ -9,8 +9,8 @@ use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Default session lifetime: 24 hours.
-const SESSION_LIFETIME_SECS: u64 = 86400;
+/// Default session lifetime: 30 days.
+const SESSION_LIFETIME_SECS: u64 = 2_592_000;
 
 /// Cookie name for UI sessions.
 pub const SESSION_COOKIE: &str = "eg_session";
