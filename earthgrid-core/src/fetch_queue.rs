@@ -85,12 +85,37 @@ impl FetchQueue {
     }
 
     /// Enqueue a new fetch job. Returns the new job id.
+    /// Deduplicates: if an identical pending/running job exists, returns its id.
     pub fn enqueue(&self, job: NewFetchJob) -> Result<i64, EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs_f64();
+
+        // Deduplicate: check for existing pending/running job with same params
+        let existing: Option<i64> = conn.query_row(
+            "SELECT id FROM fetch_jobs WHERE collection=?1 AND bbox=?2 \
+             AND start_date IS ?3 AND end_date IS ?4 \
+             AND cloud_cover=?5 AND bands IS ?6 AND limit_count=?7 \
+             AND status IN ('pending', 'running') \
+             ORDER BY created_at ASC LIMIT 1",
+            params![
+                job.collection,
+                job.bbox,
+                job.start_date,
+                job.end_date,
+                job.cloud_cover.unwrap_or(30.0),
+                job.bands,
+                job.limit_count.unwrap_or(100),
+            ],
+            |r| r.get(0),
+        ).ok();
+
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+
         conn.execute(
             "INSERT INTO fetch_jobs
                 (collection, bbox, start_date, end_date, cloud_cover, bands, limit_count, status, created_at)
