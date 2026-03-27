@@ -358,10 +358,11 @@ pub(crate) async fn stats_uptake(
     Query(q): Query<UptakePeriodQuery>,
 ) -> impl IntoResponse {
     let period_days = q.period_days.unwrap_or(30);
-    // Use ingest_history as a proxy for uptake data
     match state.stats.ingest_history(period_days) {
         Ok(history) => {
             let total_gb = history.total_bytes as f64 / 1_073_741_824.0;
+            // Per-collection breakdown from uptake_log
+            let by_collection = state.stats.uptake_by_collection(period_days).unwrap_or_default();
             (StatusCode::OK, Json(serde_json::json!({
                 "report_type": "EarthGrid Uptake Statistics",
                 "period_days": period_days,
@@ -370,7 +371,9 @@ pub(crate) async fn stats_uptake(
                     "total_requests": history.total_items,
                     "total_gb": (total_gb * 1000.0).round() / 1000.0,
                     "total_bytes": history.total_bytes,
+                    "total_aoi_km2": by_collection.iter().map(|c| c.get("aoi_km2").and_then(|v| v.as_f64()).unwrap_or(0.0)).sum::<f64>(),
                 },
+                "by_collection": by_collection,
                 "daily_trend": history.daily.iter().map(|d| serde_json::json!({
                     "date": d.date,
                     "items": d.items,

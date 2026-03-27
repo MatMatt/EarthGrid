@@ -489,6 +489,34 @@ impl StatsEngine {
         })
     }
 
+    /// Per-collection uptake breakdown for a given period.
+    pub fn uptake_by_collection(&self, period_days: u64) -> Result<Vec<serde_json::Value>> {
+        let cutoff = unix_now() - (period_days as f64 * 86400.0);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(collection_id,'unknown'),
+                    COUNT(*),
+                    COALESCE(SUM(bytes_out),0),
+                    COALESCE(SUM(bbox_km2),0)
+             FROM uptake_log WHERE timestamp >= ?1
+             GROUP BY collection_id ORDER BY SUM(bytes_out) DESC",
+        )?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map(params![cutoff], |row| {
+                let bytes: i64 = row.get(2)?;
+                let km2: f64 = row.get(3)?;
+                Ok(serde_json::json!({
+                    "collection": row.get::<_, String>(0)?,
+                    "requests": row.get::<_, i64>(1)?,
+                    "gb": bytes as f64 / 1_073_741_824.0,
+                    "aoi_km2": km2,
+                }))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
     /// Delete log entries older than `retain_days`.
     pub fn cleanup(&self, retain_days: u64) -> Result<()> {
         let cutoff = unix_now() - (retain_days as f64 * 86400.0);
