@@ -652,69 +652,62 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Restart: try systemd first, then stop/start
+            // Restart: prefer systemd if service is enabled, else manual
             println!("\n4️⃣  Restarting...");
-            let sysd = process::Command::new("systemctl")
-                .args(["--user", "is-active", "--quiet", "earthgrid"])
-                .status();
-            if sysd.map(|s| s.success()).unwrap_or(false) {
+            let sysd_enabled = process::Command::new("systemctl")
+                .args(["--user", "is-enabled", "--quiet", "earthgrid"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            // Kill any rogue manual process first (outside systemd)
+            let kill_rogue = || {
+                if let Some(pid) = read_pid() {
+                    if is_process_alive(pid) {
+                        let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
+                }
+                let pgrep = process::Command::new("pgrep")
+                    .args(["-f", "earthgrid.*serve"])
+                    .output();
+                if let Ok(out) = pgrep {
+                    if out.status.success() {
+                        for line in String::from_utf8_lossy(&out.stdout).lines() {
+                            if let Ok(pid) = line.trim().parse::<u32>() {
+                                let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
+                }
+            };
+
+            if sysd_enabled {
+                // Stop any rogue process so systemd can take over cleanly
+                kill_rogue();
                 process::Command::new("systemctl")
                     .args(["--user", "restart", "earthgrid"])
                     .status()?;
                 println!("✅ Restarted via systemd");
             } else {
-                // Stop old daemon if running, then auto-restart
-                let was_running = {
-                    let mut found = false;
-                    // Try PID file first
-                    if let Some(pid) = read_pid() {
-                        if is_process_alive(pid) {
-                            let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
-                            std::thread::sleep(std::time::Duration::from_secs(2));
-                            found = true;
-                        }
-                    }
-                    // Always try pgrep as fallback (PID file may be stale)
-                    if !found {
-                        let pgrep = process::Command::new("pgrep")
-                            .args(["-f", "earthgrid.*serve"])
-                            .output();
-                        if let Ok(out) = pgrep {
-                            if out.status.success() {
-                                for line in String::from_utf8_lossy(&out.stdout).lines() {
-                                    if let Ok(pid) = line.trim().parse::<u32>() {
-                                        let _ = process::Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
-                                    }
-                                }
-                                std::thread::sleep(std::time::Duration::from_secs(2));
-                                found = true;
-                            }
-                        }
-                    }
-                    found
-                };
-
-                if was_running {
-                    // Auto-restart: find binary in ~/.cargo/bin or PATH
-                    let exe = dirs::home_dir()
-                        .map(|h| h.join(".cargo/bin/earthgrid"))
-                        .filter(|p| p.exists())
-                        .unwrap_or_else(|| std::path::PathBuf::from("earthgrid"));
-                    // Small delay to let cargo finish replacing the binary
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    let data_dir_str = cli.data_dir.to_string_lossy().to_string();
-                    let child = process::Command::new(&exe)
-                        .args(["--data-dir", &data_dir_str, "serve", "--host", "0.0.0.0"])
-                        .stdin(process::Stdio::null())
-                        .stdout(process::Stdio::null())
-                        .stderr(process::Stdio::null())
-                        .spawn();
-                    match child {
-                        Ok(c) => println!("✅ Update complete. Restarted (PID {})", c.id()),
-                        Err(e) => println!("✅ Update complete. Auto-restart failed: {}. Run `earthgrid start`.", e),
-                    }
-                } else {
-                    println!("✅ Update complete. Run `earthgrid start` to begin.");
+                // No systemd service — manual restart
+                kill_rogue();
+                let exe = dirs::home_dir()
+                    .map(|h| h.join(".cargo/bin/earthgrid"))
+                    .filter(|p| p.exists())
+                    .unwrap_or_else(|| std::path::PathBuf::from("earthgrid"));
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let data_dir_str = cli.data_dir.to_string_lossy().to_string();
+                let child = process::Command::new(&exe)
+                    .args(["--data-dir", &data_dir_str, "serve", "--host", "0.0.0.0"])
+                    .stdin(process::Stdio::null())
+                    .stdout(process::Stdio::null())
+                    .stderr(process::Stdio::null())
+                    .spawn();
+                match child {
+                    Ok(c) => println!("✅ Update complete. Restarted (PID {})", c.id()),
+                    Err(e) => println!("✅ Update complete. Auto-restart failed: {}. Run `earthgrid start`.", e),
                 }
             }
         }
