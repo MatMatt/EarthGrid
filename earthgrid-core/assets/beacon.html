@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EarthGrid — Distributed Earth Observation Data</title>
 <style>
-:root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --green:#3fb950; --orange:#d29922; --purple:#bc8cff; }
+:root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --dim:#8b949e; --error:#f85149; --gold:#ffd700; --silver:#c0c0c0; --bronze:#cd7f32; --accent:#58a6ff; --green:#3fb950; --orange:#d29922; --purple:#bc8cff; }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; line-height:1.6; }
 .container { max-width:960px; margin:0 auto; padding:2rem 1.5rem; }
@@ -74,7 +74,7 @@ a:hover { text-decoration:underline; }
 .economy-score { font-size:3rem; font-weight:800; line-height:1; }
 .economy-score.green { color:var(--green); }
 .economy-score.yellow { color:var(--orange); }
-.economy-score.red { color:#f85149; }
+.economy-score.red { color:var(--error); }
 .economy-label { font-size:1.1rem; font-weight:600; }
 .economy-sublabel { font-size:0.85rem; color:var(--dim); }
 .economy-bar-wrap { display:flex; gap:0.5rem; margin-bottom:0.3rem; align-items:center; }
@@ -141,11 +141,11 @@ a:hover { text-decoration:underline; }
 .cov-legend i { width:14px;height:14px;display:inline-block;margin-right:5px;border-radius:2px;vertical-align:middle;opacity:0.8; }
 .cov-popup { font-family:inherit; }
 .cov-popup h4 { margin:0 0 6px;font-size:0.95rem; }
-.cov-popup .cov-meta { font-size:0.8rem;color:#8b949e;margin-bottom:8px; }
+.cov-popup .cov-meta { font-size:0.8rem;color:var(--dim);margin-bottom:8px; }
 .cov-temporal { display:flex;align-items:flex-end;gap:1px;height:60px;margin-top:8px; }
 .cov-temporal .bar { flex:1;min-width:6px;border-radius:2px 2px 0 0;cursor:pointer;transition:opacity 0.2s; }
 .cov-temporal .bar:hover { opacity:1 !important; }
-.cov-temporal-labels { display:flex;justify-content:space-between;font-size:0.65rem;color:#8b949e;margin-top:2px; }
+.cov-temporal-labels { display:flex;justify-content:space-between;font-size:0.65rem;color:var(--dim);margin-top:2px; }
 </style>
 <script>
 let covMap, covLayers = [], covData = null, covFilter = 'all';
@@ -435,9 +435,9 @@ if (document.readyState === 'loading') {
 .lb-table tr:hover { background:rgba(88,166,255,0.04); }
 @media (max-width:600px) { .lb-table th, .lb-table td { padding:0.3rem 0.25rem; font-size:0.75rem; } .lb-name { max-width:80px; overflow:hidden; text-overflow:ellipsis; } pre { font-size:0.8rem; padding:0.75rem; } }
 .lb-rank { font-weight:700; color:var(--accent); width:2rem; text-align:center; }
-.lb-rank-1 { color:#ffd700; }
-.lb-rank-2 { color:#c0c0c0; }
-.lb-rank-3 { color:#cd7f32; }
+.lb-rank-1 { color:var(--gold); }
+.lb-rank-2 { color:var(--silver); }
+.lb-rank-3 { color:var(--bronze); }
 .lb-name { font-weight:600; }
 .lb-score { color:var(--green); font-weight:700; font-variant-numeric:tabular-nums; }
 .lb-meta { font-size:0.8rem; color:var(--dim); }
@@ -459,7 +459,7 @@ if (document.readyState === 'loading') {
 .economy-score { font-size:3rem; font-weight:800; line-height:1; }
 .economy-score.green { color:var(--green); }
 .economy-score.yellow { color:var(--orange); }
-.economy-score.red { color:#f85149; }
+.economy-score.red { color:var(--error); }
 .economy-label { font-size:1.1rem; font-weight:600; }
 .economy-sublabel { font-size:0.85rem; color:var(--dim); }
 .economy-bar-wrap { display:flex; gap:0.5rem; margin-bottom:0.3rem; align-items:center; }
@@ -822,7 +822,7 @@ setInterval(load, 60000);
 .economy-score { font-size:3rem; font-weight:800; line-height:1; }
 .economy-score.green { color:var(--green); }
 .economy-score.yellow { color:var(--orange); }
-.economy-score.red { color:#f85149; }
+.economy-score.red { color:var(--error); }
 .economy-label { font-size:1.1rem; font-weight:600; }
 .economy-sublabel { font-size:0.85rem; color:var(--dim); }
 .economy-bar-wrap { display:flex; gap:0.5rem; margin-bottom:0.3rem; align-items:center; }
@@ -1105,13 +1105,13 @@ function switchTab(id) {
 <div class="section">
 <h2>🚀 Get Started</h2>
 <p style="color:var(--dim);font-size:0.9rem;">Want to run your own node? Check the installation guide and join the network.</p>
-<a href="https://github.com/MatMatt/EarthGrid#-quick-start" style="display:inline-block;margin-top:0.5rem;padding:0.6rem 1.2rem;background:var(--accent);color:#0d1117;border-radius:8px;font-weight:600;font-size:0.9rem;text-decoration:none;">📖 Installation Guide on GitHub</a>
+<a href="https://github.com/MatMatt/EarthGrid#-quick-start" style="display:inline-block;margin-top:0.5rem;padding:0.6rem 1.2rem;background:var(--accent);color:var(--bg);border-radius:8px;font-weight:600;font-size:0.9rem;text-decoration:none;">📖 Installation Guide on GitHub</a>
 </div>
 
 
 
 <div class="footer">
-  EarthGrid v<span id="ver">0.3.2</span> · <a href="https://github.com/MatMatt/EarthGrid">GitHub</a> · Built with 🌍 by the EO community
+  EarthGrid v<span id="ver">0.7.0</span> · <a href="https://github.com/MatMatt/EarthGrid">GitHub</a> · Built with 🌍 by the EO community
 </div>
 </div>
 
@@ -1142,7 +1142,7 @@ function renderNodes(nodes) {
   let html = '';
   for (const n of nodes) {
     const isAlive = n.alive !== undefined ? n.alive : true;
-    const status = isAlive ? '<span style="color:var(--green)">● online</span>' : '<span style="color:#f85149">● offline</span>';
+    const status = isAlive ? '<span style="color:var(--green)">● online</span>' : '<span style="color:var(--error)">● offline</span>';
     const stored = n.chunks_bytes ? fmtBytes(n.chunks_bytes) : (n.storage_gb ? fmtGB(n.storage_gb) : '0 B');
     const items = (n.items || n.item_count || 0).toLocaleString();
     const chunks = n.chunks ? n.chunks.toLocaleString() + ' chunks' : '';
@@ -1167,12 +1167,12 @@ function renderNodes(nodes) {
 }
 
 async function load() {
-  console.log('EARTHGRID_API =', EARTHGRID_API);
+  console.log('EARTHGRID_API =', EARTHGRID_API); document.title = 'EG:' + EARTHGRID_API;
   const api = EARTHGRID_API || '';
 
   // Helper to fetch JSON without throwing
-  async function safeJson(url) {
-    try { const r = await fetch(url); return r.ok ? r.json() : null; }
+  async function safeJson(url) { // cache-bust
+    try { const sep = url.includes("?") ? "&" : "?"; const r = await fetch(url + sep + "_t=" + Date.now()); return r.ok ? r.json() : null; }
     catch(e) { return null; }
   }
 
@@ -1316,6 +1316,12 @@ async function load() {
 
     if (d.version) document.getElementById('ver').textContent = d.version;
 
+    // Dynamic host in code examples
+    const dynHost = window.location.origin + (EARTHGRID_API.replace('/api',''));
+    document.querySelectorAll('pre code').forEach(el => {
+      el.innerHTML = el.innerHTML.replace(/http:\/\/localhost:8400/g, dynHost);
+    });
+
     // Coverage table
     const covCols = d.coverage?.collections || [];
     const spCols = d.spatial_coverage?.collections || {};
@@ -1340,8 +1346,8 @@ async function load() {
 
     // Spatial coverage map
     const spatialCov = d.spatial_coverage || null;
-    if (spatialCov) {
-      renderCoverageMap(spatialCov);
+    if (spatialCov) { try {
+      renderCoverageMap(spatialCov);} catch(e) { console.warn("renderCoverageMap failed:", e); }
     } else {
       // Try live endpoint if not in stats.json
       try {
@@ -1357,6 +1363,9 @@ async function load() {
     document.getElementById('opsList').innerHTML = oh || '<em>None</em>';
 
 
+    // Direct fetch for ingest/uptake in case Promise.all failed
+    if (!d.ingest) { try { const ri = await fetch(EARTHGRID_API + "/stats/ingest?period_days=365"); if (ri.ok) d.ingest = await ri.json(); } catch(e) {} }
+    if (!d.uptake) { try { const ru = await fetch(EARTHGRID_API + "/stats/uptake?period_days=365"); if (ru.ok) { const ud = await ru.json(); d.uptake = { summary: ud.summary || {}, by_collection: ud.by_collection || [], daily_trend: ud.daily_trend || [], top_processes: [] }; } } catch(e) {} }
     // --- Ingest History ---
     const ingest = d.ingest || {};
     const ig = ingest.total_gb_fetched || 0;
@@ -1364,7 +1373,7 @@ async function load() {
     document.getElementById('sFetched').classList.remove('loading');
 
     // Prefer hourly data, fallback to daily
-    const iHourly = ingest.hourly || [];
+    const iHourly = (ingest.hourly || []).map(d => ({...d, gb: d.gb != null ? d.gb : (d.bytes || 0) / 1e9}));
     const iDaily = ingest.daily || [];
     const useHourly = iHourly.length > 0;
     const chartData = useHourly ? iHourly : iDaily;
