@@ -1,5 +1,5 @@
-//! Persistent fetch job queue backed by SQLite.
-//! Supports atomic job claiming, progress tracking, and crash recovery.
+//! Persistent fetch job queue backed by SQLite (local) or HTTP proxy (remote).
+//! Beacon nodes use the local SQLite queue; non-beacon nodes proxy to the beacon.
 
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -45,15 +45,113 @@ pub struct NewFetchJob {
 }
 
 // ---------------------------------------------------------------------------
-// FetchQueue
+// FetchQueueBackend — Local (SQLite) or Remote (HTTP proxy to beacon)
 // ---------------------------------------------------------------------------
 
-pub struct FetchQueue {
+pub enum FetchQueueBackend {
+    Local(LocalFetchQueue),
+    Remote(RemoteFetchQueue),
+}
+
+impl FetchQueueBackend {
+    pub fn enqueue(&self, job: NewFetchJob) -> Result<i64, EarthGridError> {
+        match self {
+            Self::Local(q) => q.enqueue(job),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.enqueue(job))
+            }),
+        }
+    }
+
+    pub fn claim_next(&self, node_id: &str) -> Result<Option<FetchJob>, EarthGridError> {
+        match self {
+            Self::Local(q) => q.claim_next(node_id),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.claim_next(node_id))
+            }),
+        }
+    }
+
+    pub fn update_progress(&self, job_id: i64, done: i64, total: i64) -> Result<(), EarthGridError> {
+        match self {
+            Self::Local(q) => q.update_progress(job_id, done, total),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.update_progress(job_id, done, total))
+            }),
+        }
+    }
+
+    pub fn complete(&self, job_id: i64) -> Result<(), EarthGridError> {
+        match self {
+            Self::Local(q) => q.complete(job_id),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.complete(job_id))
+            }),
+        }
+    }
+
+    pub fn fail(&self, job_id: i64, error: &str) -> Result<(), EarthGridError> {
+        match self {
+            Self::Local(q) => q.fail(job_id, error),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.fail(job_id, error))
+            }),
+        }
+    }
+
+    pub fn release_stale(&self, timeout_secs: f64) -> Result<usize, EarthGridError> {
+        match self {
+            Self::Local(q) => q.release_stale(timeout_secs),
+            Self::Remote(_) => Ok(0), // beacon handles stale recovery
+        }
+    }
+
+    pub fn list(&self, status_filter: Option<&str>) -> Result<Vec<FetchJob>, EarthGridError> {
+        match self {
+            Self::Local(q) => q.list(status_filter),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.list(status_filter))
+            }),
+        }
+    }
+
+    pub fn get(&self, job_id: i64) -> Result<Option<FetchJob>, EarthGridError> {
+        match self {
+            Self::Local(q) => q.get(job_id),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.get(job_id))
+            }),
+        }
+    }
+
+    pub fn cancel(&self, job_id: i64) -> Result<bool, EarthGridError> {
+        match self {
+            Self::Local(q) => q.cancel(job_id),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.cancel(job_id))
+            }),
+        }
+    }
+
+    pub fn retry(&self, job_id: i64) -> Result<bool, EarthGridError> {
+        match self {
+            Self::Local(q) => q.retry(job_id),
+            Self::Remote(q) => tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(q.retry(job_id))
+            }),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LocalFetchQueue — SQLite-backed (used by beacon)
+// ---------------------------------------------------------------------------
+
+pub struct LocalFetchQueue {
     conn: Mutex<Connection>,
 }
 
-impl FetchQueue {
-    /// Create or open the fetch queue database.
+impl LocalFetchQueue {
     pub fn new(db_path: &Path) -> Result<Self, EarthGridError> {
         let conn = Connection::open(db_path)
             .map_err(|e| EarthGridError::Other(e.to_string()))?;
@@ -84,8 +182,6 @@ impl FetchQueue {
         })
     }
 
-    /// Enqueue a new fetch job. Returns the new job id.
-    /// Deduplicates: if an identical pending/running job exists, returns its id.
     pub fn enqueue(&self, job: NewFetchJob) -> Result<i64, EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let now = std::time::SystemTime::now()
@@ -134,7 +230,6 @@ impl FetchQueue {
         Ok(conn.last_insert_rowid())
     }
 
-    /// Atomically claim the next pending job for a node. Returns the claimed job or None.
     pub fn claim_next(&self, node_id: &str) -> Result<Option<FetchJob>, EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let now = std::time::SystemTime::now()
@@ -142,7 +237,6 @@ impl FetchQueue {
             .unwrap_or_default()
             .as_secs_f64();
 
-        // Find the oldest pending job
         let id_opt: Option<i64> = conn
             .query_row(
                 "SELECT id FROM fetch_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1",
@@ -164,7 +258,6 @@ impl FetchQueue {
         Ok(None)
     }
 
-    /// Update progress for a running job.
     pub fn update_progress(&self, job_id: i64, done: i64, total: i64) -> Result<(), EarthGridError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -174,7 +267,6 @@ impl FetchQueue {
         Ok(())
     }
 
-    /// Mark a job as completed.
     pub fn complete(&self, job_id: i64) -> Result<(), EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let now = std::time::SystemTime::now()
@@ -188,7 +280,6 @@ impl FetchQueue {
         Ok(())
     }
 
-    /// Mark a job as failed with an error message.
     pub fn fail(&self, job_id: i64, error: &str) -> Result<(), EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let now = std::time::SystemTime::now()
@@ -202,8 +293,6 @@ impl FetchQueue {
         Ok(())
     }
 
-    /// Reset jobs stuck in 'running' for longer than timeout_secs back to 'pending'.
-    /// Called on startup for crash recovery.
     pub fn release_stale(&self, timeout_secs: f64) -> Result<usize, EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let now = std::time::SystemTime::now()
@@ -218,7 +307,6 @@ impl FetchQueue {
         Ok(n)
     }
 
-    /// List jobs, optionally filtered by status.
     pub fn list(&self, status_filter: Option<&str>) -> Result<Vec<FetchJob>, EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let mut jobs = Vec::new();
@@ -244,7 +332,6 @@ impl FetchQueue {
         Ok(jobs)
     }
 
-    /// Get a single job by ID.
     pub fn get(&self, job_id: i64) -> Result<Option<FetchJob>, EarthGridError> {
         let conn = self.conn.lock().unwrap();
         match self.get_job_with_conn(&conn, job_id) {
@@ -254,7 +341,6 @@ impl FetchQueue {
         }
     }
 
-    /// Cancel a job (set to 'paused').
     pub fn cancel(&self, job_id: i64) -> Result<bool, EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute(
@@ -264,7 +350,6 @@ impl FetchQueue {
         Ok(n > 0)
     }
 
-    /// Retry a failed or paused job (reset to pending).
     pub fn retry(&self, job_id: i64) -> Result<bool, EarthGridError> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute(
@@ -274,7 +359,6 @@ impl FetchQueue {
         Ok(n > 0)
     }
 
-    // Internal: fetch job row with existing connection
     fn get_job_with_conn(&self, conn: &Connection, job_id: i64) -> Result<FetchJob, EarthGridError> {
         conn.query_row(
             "SELECT id,collection,bbox,start_date,end_date,cloud_cover,bands,limit_count,status,assigned_node,progress_total,progress_done,error,created_at,started_at,completed_at,retry_count FROM fetch_jobs WHERE id=?1",
@@ -305,3 +389,154 @@ impl FetchQueue {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// RemoteFetchQueue — HTTP proxy to beacon node
+// ---------------------------------------------------------------------------
+
+pub struct RemoteFetchQueue {
+    beacon_url: String,
+    admin_key: String,
+    client: reqwest::Client,
+}
+
+impl RemoteFetchQueue {
+    pub fn new(beacon_url: &str, admin_key: &str) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
+        Self {
+            beacon_url: beacon_url.trim_end_matches('/').to_string(),
+            admin_key: admin_key.to_string(),
+            client,
+        }
+    }
+
+    async fn enqueue(&self, job: NewFetchJob) -> Result<i64, EarthGridError> {
+        let mut params = vec![
+            ("collection", job.collection),
+            ("bbox", job.bbox),
+        ];
+        if let Some(sd) = job.start_date { params.push(("start_date", sd)); }
+        if let Some(ed) = job.end_date { params.push(("end_date", ed)); }
+        if let Some(cc) = job.cloud_cover { params.push(("cloud_cover", cc.to_string())); }
+        if let Some(b) = job.bands { params.push(("bands", b)); }
+        if let Some(l) = job.limit_count { params.push(("limit_count", l.to_string())); }
+
+        let resp = self.client.post(format!("{}/api/fetch/queue", self.beacon_url))
+            .header("x-api-key", &self.admin_key)
+            .query(&params)
+            .send().await
+            .map_err(|e| EarthGridError::Other(format!("beacon enqueue: {}", e)))?;
+
+        let data: serde_json::Value = resp.json().await
+            .map_err(|e| EarthGridError::Other(format!("beacon enqueue parse: {}", e)))?;
+        data["job_id"].as_i64()
+            .ok_or_else(|| EarthGridError::Other("beacon enqueue: no job_id".to_string()))
+    }
+
+    async fn claim_next(&self, node_id: &str) -> Result<Option<FetchJob>, EarthGridError> {
+        let resp = self.client.post(format!("{}/api/fetch/queue/claim", self.beacon_url))
+            .header("x-api-key", &self.admin_key)
+            .query(&[("node_id", node_id)])
+            .send().await
+            .map_err(|e| EarthGridError::Other(format!("beacon claim: {}", e)))?;
+
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(None);
+        }
+
+        let data: serde_json::Value = resp.json().await
+            .map_err(|e| EarthGridError::Other(format!("beacon claim parse: {}", e)))?;
+
+        if data.get("job").is_some() {
+            let job: FetchJob = serde_json::from_value(data["job"].clone())
+                .map_err(|e| EarthGridError::Other(format!("beacon claim deserialize: {}", e)))?;
+            Ok(Some(job))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn update_progress(&self, job_id: i64, done: i64, total: i64) -> Result<(), EarthGridError> {
+        let _ = self.client.post(format!("{}/api/fetch/queue/{}/progress", self.beacon_url, job_id))
+            .header("x-api-key", &self.admin_key)
+            .json(&serde_json::json!({"done": done, "total": total}))
+            .send().await;
+        Ok(()) // progress updates are best-effort
+    }
+
+    async fn complete(&self, job_id: i64) -> Result<(), EarthGridError> {
+        self.client.post(format!("{}/api/fetch/queue/{}/complete", self.beacon_url, job_id))
+            .header("x-api-key", &self.admin_key)
+            .send().await
+            .map_err(|e| EarthGridError::Other(format!("beacon complete: {}", e)))?;
+        Ok(())
+    }
+
+    async fn fail(&self, job_id: i64, error: &str) -> Result<(), EarthGridError> {
+        self.client.post(format!("{}/api/fetch/queue/{}/fail", self.beacon_url, job_id))
+            .header("x-api-key", &self.admin_key)
+            .json(&serde_json::json!({"error": error}))
+            .send().await
+            .map_err(|e| EarthGridError::Other(format!("beacon fail: {}", e)))?;
+        Ok(())
+    }
+
+    async fn list(&self, status_filter: Option<&str>) -> Result<Vec<FetchJob>, EarthGridError> {
+        let mut url = format!("{}/api/fetch/queue", self.beacon_url);
+        if let Some(s) = status_filter {
+            url.push_str(&format!("?status={}", s));
+        }
+        let resp = self.client.get(&url)
+            .header("x-api-key", &self.admin_key)
+            .send().await
+            .map_err(|e| EarthGridError::Other(format!("beacon list: {}", e)))?;
+
+        let data: serde_json::Value = resp.json().await
+            .map_err(|e| EarthGridError::Other(format!("beacon list parse: {}", e)))?;
+
+        let jobs: Vec<FetchJob> = serde_json::from_value(data["jobs"].clone())
+            .unwrap_or_default();
+        Ok(jobs)
+    }
+
+    async fn get(&self, job_id: i64) -> Result<Option<FetchJob>, EarthGridError> {
+        let resp = self.client.get(format!("{}/api/fetch/queue/{}", self.beacon_url, job_id))
+            .header("x-api-key", &self.admin_key)
+            .send().await
+            .map_err(|e| EarthGridError::Other(format!("beacon get: {}", e)))?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let job: FetchJob = resp.json().await
+            .map_err(|e| EarthGridError::Other(format!("beacon get parse: {}", e)))?;
+        Ok(Some(job))
+    }
+
+    async fn cancel(&self, job_id: i64) -> Result<bool, EarthGridError> {
+        let resp = self.client.delete(format!("{}/api/fetch/queue/{}", self.beacon_url, job_id))
+            .header("x-api-key", &self.admin_key)
+            .send().await
+            .map_err(|e| EarthGridError::Other(format!("beacon cancel: {}", e)))?;
+        Ok(resp.status().is_success())
+    }
+
+    async fn retry(&self, job_id: i64) -> Result<bool, EarthGridError> {
+        let resp = self.client.post(format!("{}/api/fetch/queue/{}/retry", self.beacon_url, job_id))
+            .header("x-api-key", &self.admin_key)
+            .send().await
+            .map_err(|e| EarthGridError::Other(format!("beacon retry: {}", e)))?;
+        Ok(resp.status().is_success())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Backwards-compatible type alias
+// ---------------------------------------------------------------------------
+
+/// FetchQueue is now FetchQueueBackend. This alias keeps existing code working.
+pub type FetchQueue = FetchQueueBackend;

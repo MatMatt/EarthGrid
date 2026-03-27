@@ -29,7 +29,7 @@ use crate::{
     stats::StatsEngine,
     user_auth::UserAuth,
     node_identity::NodeIdentity,
-    fetch_queue::FetchQueue,
+    fetch_queue::{FetchQueue, FetchQueueBackend, LocalFetchQueue, RemoteFetchQueue},
 };
 use std::path::PathBuf;
 
@@ -202,6 +202,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/fetch/queue", post(crate::routes::ingest_routes::fetch_queue_enqueue).get(crate::routes::ingest_routes::fetch_queue_list))
         .route("/api/fetch/queue/{id}", get(crate::routes::ingest_routes::fetch_queue_get).delete(crate::routes::ingest_routes::fetch_queue_cancel))
         .route("/api/fetch/queue/{id}/retry", post(crate::routes::ingest_routes::fetch_queue_retry))
+        // Beacon queue coordination endpoints (claim/complete/fail/progress)
+        .route("/api/fetch/queue/claim", post(crate::routes::ingest_routes::fetch_queue_claim))
+        .route("/api/fetch/queue/{id}/complete", post(crate::routes::ingest_routes::fetch_queue_complete))
+        .route("/api/fetch/queue/{id}/fail", post(crate::routes::ingest_routes::fetch_queue_fail))
+        .route("/api/fetch/queue/{id}/progress", post(crate::routes::ingest_routes::fetch_queue_progress))
         .route("/api/catalog/changes", get(crate::routes::ingest_routes::catalog_changes))
         // Stats
         .route("/api/stats/downloads", get(crate::routes::stats::stats_downloads))
@@ -325,20 +330,69 @@ pub async fn serve(
     // Seed challenges on startup (no-op if already seeded)
     let _ = gamification_engine.seed_challenges();
 
-    // Initialize persistent fetch queue
-    let fetch_queue = match FetchQueue::new(&fetch_queue_db_path) {
-        Ok(q) => {
-            // On startup: recover any stale running jobs (node crash recovery)
-            let recovered = q.release_stale(300.0).unwrap_or(0);
-            if recovered > 0 {
-                println!("🔄 Fetch queue: recovered {} stale job(s) to pending", recovered);
+    // Determine beacon mode early (needed for queue init)
+    let is_beacon_early = {
+        let from_env = env::var("EARTHGRID_BEACON")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
+        let from_cfg = {
+            let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+            std::fs::read_to_string(&cfg_path)
+                .ok()
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                .and_then(|v| v["also_beacon"].as_bool())
+                .unwrap_or(false)
+        };
+        from_env || from_cfg
+    };
+
+    // Initialize fetch queue: beacon uses local SQLite, non-beacon proxies to beacon
+    let fetch_queue: Arc<FetchQueueBackend> = if is_beacon_early {
+        match LocalFetchQueue::new(&fetch_queue_db_path) {
+            Ok(q) => {
+                let recovered = q.release_stale(300.0).unwrap_or(0);
+                if recovered > 0 {
+                    println!("🔄 Fetch queue: recovered {} stale job(s) to pending", recovered);
+                }
+                Arc::new(FetchQueueBackend::Local(q))
             }
-            Arc::new(q)
+            Err(e) => {
+                eprintln!("⚠️  FetchQueue init failed: {}", e);
+                Arc::new(FetchQueueBackend::Local(
+                    LocalFetchQueue::new(std::path::Path::new(":memory:")).expect("in-memory FetchQueue")
+                ))
+            }
         }
-        Err(e) => {
-            eprintln!("⚠️  FetchQueue init failed: {}", e);
-            // Fallback: in-memory DB that won't persist but won't crash the server
-            Arc::new(FetchQueue::new(std::path::Path::new(":memory:")).expect("in-memory FetchQueue"))
+    } else {
+        // Non-beacon: proxy to beacon via HTTP
+        let beacon_url = env::var("EARTHGRID_BEACON_URL").ok().or_else(|| {
+            let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
+            std::fs::read_to_string(&cfg_path).ok()
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
+        });
+        let admin_key = env::var("EARTHGRID_ADMIN_KEY").unwrap_or_default();
+        if let Some(bu) = beacon_url {
+            println!("📡 Fetch queue: proxying to beacon at {}", bu);
+            Arc::new(FetchQueueBackend::Remote(RemoteFetchQueue::new(&bu, &admin_key)))
+        } else {
+            // No beacon configured: use local queue as fallback
+            eprintln!("⚠️  No beacon URL configured, using local fetch queue");
+            match LocalFetchQueue::new(&fetch_queue_db_path) {
+                Ok(q) => {
+                    let recovered = q.release_stale(300.0).unwrap_or(0);
+                    if recovered > 0 {
+                        println!("🔄 Fetch queue: recovered {} stale job(s) to pending", recovered);
+                    }
+                    Arc::new(FetchQueueBackend::Local(q))
+                }
+                Err(e) => {
+                    eprintln!("⚠️  FetchQueue init failed: {}", e);
+                    Arc::new(FetchQueueBackend::Local(
+                        LocalFetchQueue::new(std::path::Path::new(":memory:")).expect("in-memory FetchQueue")
+                    ))
+                }
+            }
         }
     };
 
@@ -493,20 +547,7 @@ pub async fn serve(
         storage_limit_gb: Arc::new(std::sync::atomic::AtomicU64::new(storage_limit_gb.to_bits())),
         data_dir: data_dir.clone(),
         active_requests: Arc::new(AtomicUsize::new(0)),
-        is_beacon: {
-            let from_env = env::var("EARTHGRID_BEACON")
-                .map(|v| v.to_lowercase() == "true" || v == "1")
-                .unwrap_or(false);
-            let from_cfg = {
-                let cfg_path = dirs::home_dir().unwrap_or_default().join(".earthgrid/config.json");
-                std::fs::read_to_string(&cfg_path)
-                    .ok()
-                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-                    .and_then(|v| v["also_beacon"].as_bool())
-                    .unwrap_or(false)
-            };
-            from_env || from_cfg
-        },
+        is_beacon: is_beacon_early,
         tile_grid: {
             // S2 tile reference grid baked into the binary at compile time
             let grid: std::collections::HashMap<String, Vec<Vec<f64>>> =
@@ -1200,25 +1241,21 @@ pub async fn serve(
     }
 
     // Fetch queue background worker: claim and execute pending jobs every 30s
+    // Beacon: claims locally, distributes across grid nodes
+    // Non-beacon: claims from beacon (via RemoteFetchQueue), executes locally
     {
         let fq_store = state_clone_store.clone();
         let fq_catalog = state_clone_catalog.clone();
         let fq_queue = fetch_queue.clone();
         let fq_node_id = state_node_id.clone();
         let fq_is_beacon = beacon_enabled;
-        let fq_beacon_url: Option<String> = std::env::var("EARTHGRID_BEACON_URL").ok().or_else(|| {
-            let cfg_path = crate::config::Settings::config_dir().join("config.json");
-            std::fs::read_to_string(&cfg_path).ok()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
-        });
         let fq_port_for_worker = port;
 
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
-                // Beacon: if job was forwarded to another node, skip local execution
+                // claim_next: local SQLite on beacon, HTTP to beacon on non-beacon
                 match fq_queue.claim_next(&fq_node_id) {
                     Ok(Some(job)) => {
                         let job_id = job.id;
@@ -1242,10 +1279,10 @@ pub async fn serve(
                         let limit = job.limit_count as usize;
                         let collection = job.collection.clone();
 
-                        // Set initial progress
                         let _ = fq_queue.update_progress(job_id, 0, 0);
 
                         let result = if fq_is_beacon {
+                            // Beacon: distribute across grid nodes
                             let self_url = std::env::var("EARTHGRID_PUBLIC_URL")
                                 .unwrap_or_else(|_| format!("http://127.0.0.1:{}", fq_port_for_worker));
                             crate::fetcher::fetch_distributed(
@@ -1263,45 +1300,8 @@ pub async fn serve(
                                 &fq_node_id,
                                 &std::env::var("EARTHGRID_ADMIN_KEY").unwrap_or_default(),
                             ).await
-                        } else if let Some(ref bu) = fq_beacon_url {
-                            // Forward to beacon
-                            let client = reqwest::Client::builder()
-                                .timeout(std::time::Duration::from_secs(600))
-                                .build()
-                                .unwrap_or_default();
-                            let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
-                            let bands_str = bands.join(",");
-                            let url = format!(
-                                "{}/api/fetch?bbox={}&start_date={}&end_date={}&cloud_cover={}&bands={}&limit={}&collection={}",
-                                bu.trim_end_matches('/'), bbox_str, start_date, end_date, job.cloud_cover, bands_str, limit, collection
-                            );
-                            match client.post(&url).send().await {
-                                Ok(resp) if resp.status().is_success() => {
-                                    match resp.json::<serde_json::Value>().await {
-                                        Ok(data) => crate::fetcher::FetchResult {
-                                            items_searched: data.get("items_searched").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                                            items_downloaded: data.get("items_downloaded").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                                            items_skipped: data.get("items_skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                                            bytes_downloaded: data.get("bytes_downloaded").and_then(|v| v.as_u64()).unwrap_or(0),
-                                            errors: data.get("errors").and_then(|v| v.as_array())
-                                                .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
-                                                .unwrap_or_default(),
-                                        },
-                                        Err(e) => {
-                                            tracing::warn!("Beacon response parse error: {}", e);
-                                            crate::fetcher::fetch_and_ingest(
-                                                fq_store.clone(), fq_catalog.clone(),
-                                                bbox, &start_date, &end_date, job.cloud_cover, &bands, limit, &collection, None,
-                                            ).await
-                                        }
-                                    }
-                                }
-                                _ => crate::fetcher::fetch_and_ingest(
-                                    fq_store.clone(), fq_catalog.clone(),
-                                    bbox, &start_date, &end_date, job.cloud_cover, &bands, limit, &collection, None,
-                                ).await,
-                            }
                         } else {
+                            // Non-beacon: execute locally (job was claimed from beacon queue)
                             crate::fetcher::fetch_and_ingest(
                                 fq_store.clone(),
                                 fq_catalog.clone(),
@@ -1316,7 +1316,7 @@ pub async fn serve(
                             ).await
                         };
 
-                        // Update progress with final counts
+                        // Report results back (local DB or HTTP to beacon)
                         let _ = fq_queue.update_progress(job_id, result.items_downloaded as i64, result.items_searched as i64);
 
                         if result.errors.is_empty() || result.items_downloaded > 0 {
@@ -1331,7 +1331,7 @@ pub async fn serve(
                     }
                     Ok(None) => {} // No pending jobs
                     Err(e) => {
-                        tracing::error!("Fetch queue claim error: {}", e);
+                        tracing::warn!("Fetch queue claim error: {}", e);
                     }
                 }
             }

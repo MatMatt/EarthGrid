@@ -375,38 +375,8 @@ pub(crate) async fn fetch_queue_enqueue(
     let bbox_str = format!("{},{},{},{}", bbox_arr[0], bbox_arr[1], bbox_arr[2], bbox_arr[3]);
     let collection = q.collection.as_deref().unwrap_or("sentinel-2-l2a").to_string();
 
-    // Beacon coordination: if this is the beacon, pick the node with most free storage
-    let local_only = q.local_only.unwrap_or(false);
-    if state.is_beacon && !local_only {
-        // Try to forward to node with most free space
-        if let Some(target_url) = pick_best_node_url(&state).await {
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .unwrap_or_default();
-
-            let mut params = vec![
-                ("collection", collection.clone()),
-                ("bbox", bbox_str.clone()),
-            ];
-            if let Some(ref sd) = q.start_date { params.push(("start_date", sd.clone())); }
-            if let Some(ref ed) = q.end_date { params.push(("end_date", ed.clone())); }
-            if let Some(cc) = q.cloud_cover { params.push(("cloud_cover", cc.to_string())); }
-            if let Some(l) = q.limit { params.push(("limit", l.to_string())); }
-            if let Some(ref b) = q.bands { params.push(("bands", b.clone())); }
-
-            let url = format!("{}/api/fetch/queue", target_url.trim_end_matches('/'));
-            match client.post(&url).query(&params).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    if let Ok(data) = resp.json::<serde_json::Value>().await {
-                        return (StatusCode::ACCEPTED, Json(data)).into_response();
-                    }
-                }
-                _ => {} // Fall through to local queue
-            }
-        }
-    }
-
+    // Enqueue into the fetch queue (local SQLite on beacon, HTTP proxy on non-beacon)
+    // Deduplication happens inside enqueue()
     let new_job = crate::fetch_queue::NewFetchJob {
         collection,
         bbox: bbox_str,
@@ -425,24 +395,6 @@ pub(crate) async fn fetch_queue_enqueue(
         }))).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
-}
-
-/// Pick the node URL with most free storage (storage_limit_gb - chunks_bytes)
-async fn pick_best_node_url(state: &AppState) -> Option<String> {
-    let beacon_db = state.data_dir.join("beacon.db");
-    if !beacon_db.exists() { return None; }
-    let conn = rusqlite::Connection::open(&beacon_db).ok()?;
-    let result: rusqlite::Result<(String, f64)> = conn.query_row(
-        "SELECT url, (storage_limit_gb * 1073741824 - chunks_bytes) as free_bytes
-         FROM beacon_nodes
-         WHERE url != '' AND storage_limit_gb > 0
-           AND last_seen > (unixepoch() - 300)
-         ORDER BY free_bytes DESC
-         LIMIT 1",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    );
-    result.ok().map(|(url, _)| url)
 }
 
 /// GET /api/fetch/queue — list jobs
@@ -496,6 +448,89 @@ pub(crate) async fn fetch_queue_retry(
     match state.fetch_queue.retry(id) {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "retried": true, "status": "pending" }))).into_response(),
         Ok(false) => err(StatusCode::BAD_REQUEST, "Job not in failed or paused state").into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Beacon-only endpoints for centralized queue coordination
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ClaimQuery {
+    pub node_id: String,
+}
+
+/// POST /api/fetch/queue/claim?node_id=X — atomically claim next pending job for a node
+pub(crate) async fn fetch_queue_claim(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ClaimQuery>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match state.fetch_queue.claim_next(&q.node_id) {
+        Ok(Some(job)) => (StatusCode::OK, Json(serde_json::json!({ "job": job }))).into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+/// POST /api/fetch/queue/{id}/complete — mark job as completed (called by remote workers)
+pub(crate) async fn fetch_queue_complete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match state.fetch_queue.complete(id) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "completed": true }))).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+/// POST /api/fetch/queue/{id}/fail — mark job as failed (called by remote workers)
+pub(crate) async fn fetch_queue_fail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    let error_msg = body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+    match state.fetch_queue.fail(id, error_msg) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "failed": true }))).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ProgressBody {
+    pub done: i64,
+    pub total: i64,
+}
+
+/// POST /api/fetch/queue/{id}/progress — update job progress (called by remote workers)
+pub(crate) async fn fetch_queue_progress(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(body): Json<ProgressBody>,
+) -> impl IntoResponse {
+    let key = api_key(&headers);
+    if let Err(e) = state.auth.check_write(key) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match state.fetch_queue.update_progress(id, body.done, body.total) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "updated": true }))).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
 }
