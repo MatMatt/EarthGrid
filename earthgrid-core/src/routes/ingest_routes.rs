@@ -179,7 +179,7 @@ pub(crate) async fn fetch_handler(
             collection,
             tile_filter.as_deref(),
             &beacon_url,
-            &state.node_name,
+            &state.node_id,
             &admin_key,
         )
         .await

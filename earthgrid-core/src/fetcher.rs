@@ -752,6 +752,7 @@ pub async fn beacon_inventory(
 /// Node info for distribution decisions.
 #[derive(Debug, Clone)]
 struct GridNode {
+    node_id: String,
     node_name: String,
     url: String,
     free_gb: f64,
@@ -795,6 +796,7 @@ async fn get_grid_nodes(beacon_url: &str) -> Vec<GridNode> {
             if url.is_empty() { continue; }
 
             nodes.push(GridNode {
+                node_id: n.get("node_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 node_name: n.get("node_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 url,
                 free_gb: free_gb.max(0.0),
@@ -885,7 +887,7 @@ pub async fn fetch_distributed(
     collection: &str,
     tile_filter: Option<&str>,
     beacon_url: &str,
-    local_node_name: &str,
+    local_node_id: &str,
     admin_key: &str,
 ) -> FetchResult {
     // Get alive nodes from beacon
@@ -895,9 +897,9 @@ pub async fn fetch_distributed(
         return fetch_and_ingest(store, catalog, bbox, start_date, end_date, cloud_cover, bands, limit, collection, tile_filter).await;
     }
 
-    // Mark local node (match by name OR by localhost URL)
+    // Mark local node (match by node_id OR by localhost URL)
     for n in &mut nodes {
-        if n.node_name == local_node_name
+        if n.node_id == local_node_id
             || n.url.contains("127.0.0.1")
             || n.url.contains("localhost")
         {
