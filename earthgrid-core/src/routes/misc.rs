@@ -1,12 +1,12 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     Json,
 };
+use std::net::SocketAddr;
 
-use crate::server::{AppState, err, check_admin_or_session, LimitQuery};
-use axum::response::Html;
+use crate::server::{AppState, err, check_admin_or_session, is_localhost, LimitQuery};
 
 
 // ---------------------------------------------------------------------------
@@ -74,9 +74,10 @@ pub(crate) async fn node_info(State(state): State<AppState>) -> Json<serde_json:
 pub(crate) async fn audit_log(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers, addr) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     let limit = q.limit.unwrap_or(50).min(500);
@@ -445,6 +446,7 @@ pub(crate) async fn openeo_result(
 pub(crate) async fn dashboard_auth(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     let secret = crate::session::session_secret();
 
@@ -454,7 +456,7 @@ pub(crate) async fn dashboard_auth(
     }
 
     // Localhost: skip auth (shell access = full access)
-    if is_localhost(&headers) {
+    if is_localhost(addr) {
         return Html(include_str!("../../assets/ui.html")).into_response();
     }
 
@@ -539,9 +541,10 @@ pub(crate) async fn logout_handler() -> impl IntoResponse {
 /// GET /ui/me — return current session user info (for UI role-based rendering).
 pub(crate) async fn session_me(
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     // Localhost gets admin access without session
-    if is_localhost(&headers) {
+    if is_localhost(addr) {
         return (
             StatusCode::OK,
             Json(serde_json::json!({
@@ -602,20 +605,6 @@ fn check_login_rate(ip: &str) -> bool {
     true
 }
 
-fn is_localhost(headers: &HeaderMap) -> bool {
-    let ip = extract_client_ip(headers);
-    ip == "127.0.0.1" || ip == "::1" || ip == "localhost"
-}
-
-fn extract_client_ip(headers: &HeaderMap) -> String {
-    if let Some(fwd) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        if let Some(first) = fwd.split(',').next() {
-            return first.trim().to_string();
-        }
-    }
-    "unknown".to_string()
-}
-
 fn ui_disabled_response() -> axum::response::Response {
     (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Web UI is disabled on this node"}))).into_response()
 }
@@ -624,11 +613,12 @@ fn ui_disabled_response() -> axum::response::Response {
 pub(crate) async fn ui_dispatch(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     if !state.ui_enabled {
         return ui_disabled_response();
     }
-    dashboard_auth(State(state), headers).await.into_response()
+    dashboard_auth(State(state), headers, ConnectInfo(addr)).await.into_response()
 }
 
 /// GET /ui/login
@@ -644,13 +634,14 @@ pub(crate) async fn login_dispatch(
 /// POST /ui/login (with rate limiting)
 pub(crate) async fn login_post_dispatch(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: Json<serde_json::Value>,
 ) -> impl IntoResponse {
     if !state.ui_enabled {
         return ui_disabled_response();
     }
-    let ip = extract_client_ip(&headers);
+    let ip = addr.ip().to_string();
     if !check_login_rate(&ip) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
@@ -674,9 +665,10 @@ pub(crate) async fn logout_dispatch(
 pub(crate) async fn session_me_dispatch(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     if !state.ui_enabled {
         return ui_disabled_response();
     }
-    session_me(headers).await.into_response()
+    session_me(headers, ConnectInfo(addr)).await.into_response()
 }

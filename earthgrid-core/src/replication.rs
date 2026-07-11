@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
@@ -161,9 +162,17 @@ impl Replicator {
                         result.errors.push(e);
                     }
 
-                    // Store downloaded chunks
+                    // Store downloaded chunks (verify hashes first — peer data is untrusted)
                     let mut store = self.store.lock().await;
                     for (hash, data) in downloaded {
+                        let actual_sha = hex::encode(Sha256::digest(&data));
+                        if actual_sha != hash {
+                            result.errors.push(format!(
+                                "Hash mismatch for chunk {}: expected {}, got {}",
+                                hash, hash, actual_sha
+                            ));
+                            continue;
+                        }
                         match store.put(&data) {
                             Ok(_) => {}
                             Err(EarthGridError::StorageLimitExceeded(_)) => {

@@ -9,6 +9,11 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::http::HeaderMap;
+
+use crate::auth::AuthConfig;
+use crate::server::api_key;
+
 use axum::{
     Router,
     extract::{Path, Query, State},
@@ -966,12 +971,21 @@ Ok(affected)
 pub struct BeaconState {
     pub registry: Arc<Mutex<BeaconRegistry>>,
     pub federation: Option<FederationState>,
+    pub auth: AuthConfig,
 }
 
 async fn register_node(
     State(state): State<BeaconState>,
+    headers: HeaderMap,
     Json(req): Json<RegisterRequest>,
 ) -> impl IntoResponse {
+    if let Some(key) = api_key(&headers) {
+        if let Err(e) = state.auth.check_admin(Some(key)) {
+            return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+        }
+    } else if state.auth.is_enabled() {
+        return err(StatusCode::UNAUTHORIZED, "Admin key required").into_response();
+    }
     if req.node_id.is_empty() {
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
@@ -996,8 +1010,16 @@ async fn register_node(
 
 async fn heartbeat_node(
     State(state): State<BeaconState>,
+    headers: HeaderMap,
     Json(req): Json<HeartbeatRequest>,
 ) -> impl IntoResponse {
+    if let Some(key) = api_key(&headers) {
+        if let Err(e) = state.auth.check_admin(Some(key)) {
+            return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+        }
+    } else if state.auth.is_enabled() {
+        return err(StatusCode::UNAUTHORIZED, "Admin key required").into_response();
+    }
     if req.node_id.is_empty() {
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
@@ -1074,8 +1096,16 @@ async fn get_node(
 
 async fn remove_node(
     State(state): State<BeaconState>,
+    headers: HeaderMap,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(key) = api_key(&headers) {
+        if let Err(e) = state.auth.check_admin(Some(key)) {
+            return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+        }
+    } else if state.auth.is_enabled() {
+        return err(StatusCode::UNAUTHORIZED, "Admin key required").into_response();
+    }
     let registry = state.registry.lock().await;
     match registry.remove(&node_id) {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({"status": "removed", "node_id": node_id}))).into_response(),

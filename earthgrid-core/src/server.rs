@@ -87,14 +87,11 @@ pub(crate) fn api_key(headers: &HeaderMap) -> Option<&str> {
 
 /// Check if the request originates from localhost using ConnectInfo.
 /// Requires `into_make_service_with_connect_info::<SocketAddr>()`.
-pub(crate) fn is_localhost(headers: &HeaderMap) -> bool {
-    // If X-Forwarded-For is present, we're behind a proxy — don't trust localhost
-    if headers.get("x-forwarded-for").is_some() {
-        return false;
-    }
-    // Without a proxy, absence of X-Forwarded-For on a direct connection means localhost
-    // (The ratelimiter also uses this pattern for LAN detection)
-    true
+/// Check if the request originates from localhost using the real peer socket address.
+/// Uses axum's `ConnectInfo<SocketAddr>` (set via `into_make_service_with_connect_info`).
+/// Does NOT trust `X-Forwarded-For` — that header is client-controlled and spoofable.
+pub(crate) fn is_localhost(addr: std::net::SocketAddr) -> bool {
+    addr.ip().is_loopback()
 }
 
 /// Extract user role from session cookie. Returns (username, role) if valid.
@@ -105,9 +102,13 @@ pub(crate) fn session_user(headers: &HeaderMap) -> Option<(String, String)> {
     crate::session::validate_token(&token, &secret)
 }
 
-/// Check admin access: localhost bypasses, then API key, then session cookie.
-pub(crate) fn check_admin_or_session(auth: &crate::auth::AuthConfig, headers: &HeaderMap) -> Result<(), crate::error::EarthGridError> {
-    if is_localhost(headers) {
+/// Check admin access: localhost bypasses (real socket addr), then API key, then session cookie.
+pub(crate) fn check_admin_or_session(
+    auth: &crate::auth::AuthConfig,
+    headers: &HeaderMap,
+    addr: std::net::SocketAddr,
+) -> Result<(), crate::error::EarthGridError> {
+    if is_localhost(addr) {
         return Ok(());
     }
     // Try API key first
@@ -123,9 +124,13 @@ pub(crate) fn check_admin_or_session(auth: &crate::auth::AuthConfig, headers: &H
     Err(crate::error::EarthGridError::AuthRequired)
 }
 
-/// Check write access: localhost bypasses, then API key, then session cookie.
-pub(crate) fn check_write_or_session(auth: &crate::auth::AuthConfig, headers: &HeaderMap) -> Result<(), crate::error::EarthGridError> {
-    if is_localhost(headers) {
+/// Check write access: localhost bypasses (real socket addr), then API key, then session cookie.
+pub(crate) fn check_write_or_session(
+    auth: &crate::auth::AuthConfig,
+    headers: &HeaderMap,
+    addr: std::net::SocketAddr,
+) -> Result<(), crate::error::EarthGridError> {
+    if is_localhost(addr) {
         return Ok(());
     }
     // Try API key first
@@ -535,7 +540,7 @@ pub async fn serve(
         store: Arc::new(Mutex::new(store)),
         catalog: Arc::new(Mutex::new(catalog)),
         audit: Arc::new(audit),
-        auth,
+        auth: auth.clone(),
         peers: Arc::new(Mutex::new(peer_registry)),
         stats: Arc::new(stats_engine),
         gamification: Arc::new(gamification_engine),
@@ -607,6 +612,7 @@ pub async fn serve(
                 let beacon_state = BeaconState {
                     registry: Arc::new(Mutex::new(registry)),
                     federation: Some(federation),
+                    auth: auth.clone(),
                 };
                 app = app.merge(beacon_router(beacon_state.clone()));
                 println!("🔦 Beacon registry enabled ({}) [beacon_id={}]", beacon_db_path.display(), &beacon_id[..8]);

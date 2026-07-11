@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use crate::server::{AppState, api_key, err, LimitQuery};
 use crate::replication::Replicator;
@@ -64,6 +65,12 @@ pub(crate) async fn get_chunk(State(state): State<AppState>, Path(sha): Path<Str
     eprintln!("📡 Chunk {} not local, trying peers...", &sha[..8.min(sha.len())]);
     match fetch_chunk_from_peers(&state, &sha).await {
         Some(data) => {
+            // Verify hash before caching — peer data is untrusted
+            let actual_sha = hex::encode(Sha256::digest(&data));
+            if actual_sha != sha {
+                eprintln!("⚠️ Chunk {} hash mismatch from peer (expected {}, got {}), discarding", &sha[..8.min(sha.len())], &sha[..8.min(sha.len())], &actual_sha[..8.min(actual_sha.len())]);
+                return err(StatusCode::INTERNAL_SERVER_ERROR, "Chunk hash verification failed").into_response();
+            }
             // Cache locally for future requests
             let mut store = state.store.lock().await;
             let _ = store.put(&data);

@@ -1,9 +1,10 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
+use std::net::SocketAddr;
 
 use crate::server::{AppState, api_key, err, check_admin_or_session, check_write_or_session, LimitQuery};
 
@@ -15,8 +16,9 @@ use crate::server::{AppState, api_key, err, check_admin_or_session, check_write_
 pub(crate) async fn admin_stats(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers, addr) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
@@ -52,9 +54,10 @@ pub(crate) async fn admin_stats(
 pub(crate) async fn admin_activity(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_write_or_session(&state.auth, &headers) {
+    if let Err(e) = check_write_or_session(&state.auth, &headers, addr) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
@@ -114,9 +117,10 @@ pub(crate) async fn patch_node_name(
 pub(crate) async fn admin_delete_collection(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path(collection_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers, addr) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     let catalog = state.catalog.lock().await;
@@ -168,8 +172,9 @@ pub(crate) async fn admin_delete_collection(
 pub(crate) async fn admin_list_users(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers, addr) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     match &state.user_auth {
@@ -197,9 +202,10 @@ pub struct CreateUserBody {
 pub(crate) async fn admin_create_user(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<CreateUserBody>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers, addr) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     if body.username.is_empty() {
@@ -229,9 +235,10 @@ pub(crate) async fn admin_create_user(
 pub(crate) async fn admin_delete_user(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path(user_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers, addr) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     match &state.user_auth {
@@ -273,9 +280,10 @@ pub(crate) async fn patch_node_name_alias(
 pub(crate) async fn delete_node(
     State(state): State<AppState>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_admin_or_session(&state.auth, &headers) {
+    if let Err(e) = check_admin_or_session(&state.auth, &headers, addr) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     // Remove from peer registry

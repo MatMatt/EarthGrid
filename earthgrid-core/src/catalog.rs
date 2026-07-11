@@ -133,6 +133,7 @@ impl Catalog {
                 properties_json TEXT NOT NULL DEFAULT '{}',
                 chunk_hashes_json TEXT NOT NULL DEFAULT '[]',
                 created_at REAL DEFAULT (strftime('%s','now')),
+                geometry_json TEXT,
                 FOREIGN KEY (collection) REFERENCES collections(id)
             );
             CREATE INDEX IF NOT EXISTS idx_items_collection ON items(collection);
@@ -144,6 +145,10 @@ impl Catalog {
             );
             INSERT OR IGNORE INTO catalog_meta (key, value) VALUES ('catalog_version', '0');",
         )?;
+        // Safe migration: add geometry_json column if missing (added after initial schema)
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE items ADD COLUMN geometry_json TEXT;",
+        );
         Ok(())
     }
 
@@ -595,6 +600,7 @@ mod tests {
             properties: serde_json::json!({"datetime": "2026-03-11"}),
             chunk_hashes: vec!["abc123".to_string(), "def456".to_string()],
             created_at: now_ts(),
+            geometry: None,
         };
         catalog.add_item(&item).unwrap();
 
@@ -615,6 +621,7 @@ mod tests {
                     properties: serde_json::json!({}),
                     chunk_hashes: vec![],
                     created_at: now_ts(),
+                geometry: None,
                 })
                 .unwrap();
         }
@@ -626,6 +633,7 @@ mod tests {
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
                 created_at: now_ts(),
+            geometry: None,
             })
             .unwrap();
 
@@ -644,6 +652,7 @@ mod tests {
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
                 created_at: now_ts(),
+            geometry: None,
             })
             .unwrap();
         catalog
@@ -654,6 +663,7 @@ mod tests {
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
                 created_at: now_ts(),
+            geometry: None,
             })
             .unwrap();
 
@@ -674,6 +684,7 @@ mod tests {
                 properties: serde_json::json!({"datetime": "2020-06-15T00:00:00Z"}),
                 chunk_hashes: vec![],
                 created_at: now_ts(),
+            geometry: None,
             })
             .unwrap();
         catalog
@@ -684,6 +695,7 @@ mod tests {
                 properties: serde_json::json!({"datetime": "2021-06-15T00:00:00Z"}),
                 chunk_hashes: vec![],
                 created_at: now_ts(),
+            geometry: None,
             })
             .unwrap();
 
@@ -705,6 +717,7 @@ mod tests {
                     properties: serde_json::json!({}),
                     chunk_hashes: vec![],
                     created_at: i as f64,
+                    geometry: None,
                 })
                 .unwrap();
         }
@@ -734,6 +747,7 @@ mod tests {
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
                 created_at: now_ts(),
+            geometry: None,
             })
             .unwrap();
         assert_eq!(catalog.item_count(None).unwrap(), 1);
@@ -751,6 +765,7 @@ mod tests {
             properties: serde_json::json!({}),
             chunk_hashes: vec![],
             created_at: now_ts(),
+            geometry: None,
         }).unwrap();
         assert_eq!(catalog.catalog_version().unwrap(), 1);
 
@@ -761,6 +776,7 @@ mod tests {
             properties: serde_json::json!({}),
             chunk_hashes: vec![],
             created_at: now_ts(),
+            geometry: None,
         }).unwrap();
         assert_eq!(catalog.catalog_version().unwrap(), 2);
 
@@ -779,6 +795,7 @@ mod tests {
             properties: serde_json::json!({}),
             chunk_hashes: vec![],
             created_at: t1,
+            geometry: None,
         }).unwrap();
         let t2 = t1 + 100.0;
         catalog.add_item(&StacItem {
@@ -788,6 +805,7 @@ mod tests {
             properties: serde_json::json!({}),
             chunk_hashes: vec![],
             created_at: t2,
+            geometry: None,
         }).unwrap();
 
         let changes = catalog.changes_since(t1).unwrap();
@@ -806,6 +824,7 @@ mod tests {
                 properties: serde_json::json!({}),
                 chunk_hashes: vec![],
                 created_at: now_ts(),
+            geometry: None,
             })
             .unwrap();
         assert!(catalog.delete_item("del").unwrap());
