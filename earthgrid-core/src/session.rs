@@ -6,6 +6,7 @@
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::path::Path;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -84,17 +85,48 @@ pub fn clear_cookie() -> String {
     )
 }
 
-/// Derive the session signing secret.
+/// Load or generate the session signing secret.
 ///
-/// Uses EARTHGRID_SESSION_SECRET env var if set, otherwise falls back to
-/// EARTHGRID_ADMIN_KEY, then EARTHGRID_API_KEY, then a hardcoded fallback
-/// (not recommended for production).
-pub fn session_secret() -> Vec<u8> {
-    std::env::var("EARTHGRID_SESSION_SECRET")
-        .or_else(|_| std::env::var("EARTHGRID_ADMIN_KEY"))
-        .or_else(|_| std::env::var("EARTHGRID_API_KEY"))
-        .unwrap_or_else(|_| "earthgrid-default-secret-change-me".to_string())
-        .into_bytes()
+/// Looks for `data_dir/.session_secret` first. If it doesn't exist, generates
+/// 32 random bytes, writes them (mode 0600), and uses those. Never falls back
+/// to env vars or hardcoded defaults — the secret is always a persisted
+/// random value independent of API keys.
+pub fn session_secret(data_dir: &Path) -> Vec<u8> {
+    let secret_path = data_dir.join(".session_secret");
+
+    if let Ok(existing) = std::fs::read(&secret_path) {
+        if existing.len() >= 32 {
+            return existing;
+        }
+    }
+
+    // Generate new secret from OS randomness
+    let mut secret = vec![0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut secret))
+        .unwrap_or_else(|_| {
+            // Fallback: use a hash of current time + pid (worse but better than hardcoded)
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::time::SystemTime::now().hash(&mut h);
+            std::process::id().hash(&mut h);
+            let hash = h.finish();
+            for i in 0..32 {
+                secret[i] = ((hash >> ((i % 8) * 8)) & 0xFF) as u8;
+            }
+        });
+
+    if let Some(parent) = secret_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&secret_path, &secret);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    secret
 }
 
 // ---------------------------------------------------------------------------
@@ -182,5 +214,16 @@ mod tests {
 
         let clear = clear_cookie();
         assert!(clear.contains("Max-Age=0"));
+    }
+
+    #[test]
+    fn test_persisted_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = session_secret(dir.path());
+        assert_eq!(secret.len(), 32);
+
+        // Second call returns the same secret
+        let secret2 = session_secret(dir.path());
+        assert_eq!(secret, secret2);
     }
 }

@@ -9,7 +9,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
 // ---------------------------------------------------------------------------
@@ -108,40 +107,6 @@ impl NodeIdentity {
         base64_encode(&sig)
     }
 
-    /// Create a signed key-exchange payload for peer authentication.
-    ///
-    /// The signature covers `"{node_name}|{node_id}|{api_key}|{timestamp}"`.
-    pub fn sign_exchange(&self, node_name: &str, node_id: &str, api_key: &str) -> SignedPayload {
-        let ts = unix_now();
-        let msg = format!("{node_name}|{node_id}|{api_key}|{ts}");
-        let signature = self.sign(&msg);
-        SignedPayload {
-            node_name: node_name.to_string(),
-            node_id: node_id.to_string(),
-            api_key: api_key.to_string(),
-            public_key: self.public_key_b64(),
-            timestamp: ts,
-            signature,
-        }
-    }
-
-    /// Verify a signed key-exchange payload from a peer.
-    ///
-    /// Returns `true` if the signature is valid and not older than `max_age_secs`.
-    pub fn verify_exchange(payload: &SignedPayload, max_age_secs: u64) -> bool {
-        let age = unix_now().saturating_sub(payload.timestamp);
-        if age > max_age_secs {
-            warn!("Key exchange replay: age={}s > max={}s", age, max_age_secs);
-            return false;
-        }
-
-        let msg = format!(
-            "{}|{}|{}|{}",
-            payload.node_name, payload.node_id, payload.api_key, payload.timestamp
-        );
-        Self::verify_request(&payload.public_key, &payload.signature, &msg)
-    }
-
     /// Verify an arbitrary signed message from a known peer.
     ///
     /// `public_key_b64` — base64-encoded 32-byte Ed25519 public key.  
@@ -182,25 +147,13 @@ pub struct SignedPayload {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Base64 helpers (hand-rolled, no dependency)
 // ---------------------------------------------------------------------------
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 
 /// Encode bytes to standard (padded) base64.
 fn base64_encode(data: impl AsRef<[u8]>) -> String {
     use std::fmt::Write;
-    // stdlib-only base64 encoder (no crate added, uses base64 crate if available,
-    // else manual encoding)
-    //
-    // base64 0.22 is available as a transitive dep and Rust allows using it
-    // only if it's in Cargo.toml.  Since it isn't, we implement a minimal
-    // standard-alphabet encoder.
+    // stdlib-only base64 encoder
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let data = data.as_ref();
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
@@ -329,27 +282,6 @@ mod tests {
         assert!(
             !NodeIdentity::verify_request(&id.public_key_b64(), &sig, "tampered"),
             "tampered message should not verify"
-        );
-    }
-
-    #[test]
-    fn sign_exchange_and_verify() {
-        let (id, _dir) = make_identity();
-        let payload = id.sign_exchange("swift-peak-ab12", "ab12cd34ef56", "my-api-key");
-        assert!(
-            NodeIdentity::verify_exchange(&payload, 300),
-            "fresh payload should verify"
-        );
-    }
-
-    #[test]
-    fn verify_exchange_rejects_old_payload() {
-        let (id, _dir) = make_identity();
-        let mut payload = id.sign_exchange("a", "b", "c");
-        payload.timestamp = 0; // epoch = very old
-        assert!(
-            !NodeIdentity::verify_exchange(&payload, 300),
-            "expired payload should be rejected"
         );
     }
 

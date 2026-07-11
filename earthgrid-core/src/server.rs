@@ -85,8 +85,6 @@ pub(crate) fn api_key(headers: &HeaderMap) -> Option<&str> {
     headers.get("x-api-key").and_then(|v| v.to_str().ok())
 }
 
-/// Check if the request originates from localhost using ConnectInfo.
-/// Requires `into_make_service_with_connect_info::<SocketAddr>()`.
 /// Check if the request originates from localhost using the real peer socket address.
 /// Uses axum's `ConnectInfo<SocketAddr>` (set via `into_make_service_with_connect_info`).
 /// Does NOT trust `X-Forwarded-For` — that header is client-controlled and spoofable.
@@ -94,55 +92,74 @@ pub(crate) fn is_localhost(addr: std::net::SocketAddr) -> bool {
     addr.ip().is_loopback()
 }
 
-/// Extract user role from session cookie. Returns (username, role) if valid.
-pub(crate) fn session_user(headers: &HeaderMap) -> Option<(String, String)> {
-    let cookie_header = headers.get("cookie")?.to_str().ok()?;
-    let token = crate::session::extract_cookie(cookie_header)?;
-    let secret = crate::session::session_secret();
-    crate::session::validate_token(&token, &secret)
-}
-
-/// Check admin access: localhost bypasses (real socket addr), then API key, then session cookie.
-pub(crate) fn check_admin_or_session(
+/// Unified authorization entry point.
+///
+/// Checks in order: localhost → env grid key → per-user key → session cookie.
+/// Returns the authenticated identity and the level of access granted.
+pub(crate) fn authorize(
     auth: &crate::auth::AuthConfig,
+    user_auth: Option<&crate::user_auth::UserAuth>,
     headers: &HeaderMap,
     addr: std::net::SocketAddr,
-) -> Result<(), crate::error::EarthGridError> {
+    level: crate::auth::AccessLevel,
+    data_dir: &std::path::Path,
+) -> Result<crate::auth::Identity, crate::error::EarthGridError> {
+    // 1. Localhost — full trust
     if is_localhost(addr) {
-        return Ok(());
+        return Ok(crate::auth::Identity::Localhost);
     }
-    // Try API key first
-    if let Some(key) = api_key(headers) {
-        return auth.check_admin(Some(key));
-    }
-    // Fall back to session cookie
-    if let Some((_username, role)) = session_user(headers) {
-        if role == "admin" {
-            return Ok(());
-        }
-    }
-    Err(crate::error::EarthGridError::AuthRequired)
-}
 
-/// Check write access: localhost bypasses (real socket addr), then API key, then session cookie.
-pub(crate) fn check_write_or_session(
-    auth: &crate::auth::AuthConfig,
-    headers: &HeaderMap,
-    addr: std::net::SocketAddr,
-) -> Result<(), crate::error::EarthGridError> {
-    if is_localhost(addr) {
-        return Ok(());
+    // 2. API key from header (x-api-key or Bearer)
+    let key = api_key(headers)
+        .or_else(|| headers.get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer ")));
+
+    // 3a. Try per-user key from users.db first
+    if let Some(key) = key {
+        if let Some(ua) = user_auth {
+            if let Ok(Some(user)) = ua.validate_key(key) {
+                if crate::user_auth::UserAuth::check_role(&user, match level {
+                    crate::auth::AccessLevel::Admin => crate::user_auth::ROLE_ADMIN,
+                    crate::auth::AccessLevel::Write => crate::user_auth::ROLE_USER,
+                }) {
+                    return Ok(crate::auth::Identity::User(user));
+                }
+                return Err(crate::error::EarthGridError::AuthRequired);
+            }
+        }
+        // 3b. Fall back to env grid keys
+        match level {
+            crate::auth::AccessLevel::Admin => auth.check_admin(Some(key))?,
+            crate::auth::AccessLevel::Write => auth.check_write(Some(key))?,
+        }
+        return Ok(crate::auth::Identity::GridKey);
     }
-    // Try API key first
-    if let Some(key) = api_key(headers) {
-        return auth.check_write(Some(key));
-    }
-    // Fall back to session cookie
-    if let Some((_username, role)) = session_user(headers) {
-        if role == "admin" || role == "user" || role == "member" {
-            return Ok(());
+
+    // 4. Session cookie
+    let cookie_header = headers.get("cookie").and_then(|v| v.to_str().ok());
+    if let Some(cookie) = cookie_header {
+        if let Some(token) = crate::session::extract_cookie(cookie) {
+            let secret = crate::session::session_secret(data_dir);
+            if let Some((username, role)) = crate::session::validate_token(&token, &secret) {
+                let has_role = match level {
+                    crate::auth::AccessLevel::Admin => role == "admin",
+                    crate::auth::AccessLevel::Write => {
+                        role == "admin" || role == "user" || role == "member" || role == "readonly"
+                    }
+                };
+                if has_role {
+                    return Ok(crate::auth::Identity::Session { username, role });
+                }
+            }
         }
     }
+
+    // 5. Open mode fallback — no key, no session, auth not enabled
+    if !auth.is_enabled() {
+        return Ok(crate::auth::Identity::Localhost); // open mode = localhost-equivalent
+    }
+
     Err(crate::error::EarthGridError::AuthRequired)
 }
 
@@ -198,7 +215,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/peers", post(crate::routes::federation::register_peer))
         .route("/api/federation/sync", post(crate::routes::federation::federation_sync))
         .route("/api/federation/search", get(crate::routes::federation::federation_search))
-        // Gossip + file ingest
+        // Gossip
         .route("/api/peers.json", get(crate::routes::federation::peers_json))
         // Element84 STAC Fetcher
         .route("/api/fetch", post(crate::routes::ingest_routes::fetch_handler))
@@ -270,8 +287,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/chunk-map/{collection_id}/{item_id}", get(crate::routes::chunks::chunk_map))
         // Point extraction
         .route("/api/point/{collection_id}/{item_id}", get(crate::routes::chunks::point_extract))
-        // Federation: key exchange + user sync
-        .route("/api/federation/exchange-key", post(crate::routes::federation::federation_exchange_key))
+        // Federation: user sync
         .route("/api/federation/users", get(crate::routes::federation::federation_list_users).post(crate::routes::federation::federation_import_users))
         // HTML Node UI (session-authenticated, can be disabled via EARTHGRID_UI_ENABLED=false)
         .route("/ui", get(crate::routes::misc::ui_dispatch))

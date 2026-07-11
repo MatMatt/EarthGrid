@@ -976,16 +976,8 @@ pub struct BeaconState {
 
 async fn register_node(
     State(state): State<BeaconState>,
-    headers: HeaderMap,
     Json(req): Json<RegisterRequest>,
 ) -> impl IntoResponse {
-    if let Some(key) = api_key(&headers) {
-        if let Err(e) = state.auth.check_admin(Some(key)) {
-            return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
-        }
-    } else if state.auth.is_enabled() {
-        return err(StatusCode::UNAUTHORIZED, "Admin key required").into_response();
-    }
     if req.node_id.is_empty() {
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
@@ -1010,16 +1002,8 @@ async fn register_node(
 
 async fn heartbeat_node(
     State(state): State<BeaconState>,
-    headers: HeaderMap,
     Json(req): Json<HeartbeatRequest>,
 ) -> impl IntoResponse {
-    if let Some(key) = api_key(&headers) {
-        if let Err(e) = state.auth.check_admin(Some(key)) {
-            return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
-        }
-    } else if state.auth.is_enabled() {
-        return err(StatusCode::UNAUTHORIZED, "Admin key required").into_response();
-    }
     if req.node_id.is_empty() {
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }

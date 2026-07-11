@@ -1,12 +1,36 @@
 //! Authentication and authorization for EarthGrid.
 //!
-//! API key-based auth with two tiers:
-//! - `api_key`: required for write operations (ingest, process, sync)
-//! - `admin_key`: required for destructive operations (delete, audit)
+//! Unified auth model with two identity planes, one enforcement point.
 //!
-//! If no keys are configured, the node operates in open mode (backward compatible).
+//! - **Humans**: per-user keys from `users.db` (roles admin/user/readonly),
+//!   presented as `x-api-key`/Bearer on API calls, or exchanged for a session cookie.
+//! - **Nodes**: shared grid key (`EARTHGRID_API_KEY`) for peer coordination.
+//! - **Localhost**: trusted bypass for direct shell access.
+//!
+//! The `authorize()` function is the single entry point for all auth checks.
 
 use crate::error::{EarthGridError, Result};
+use crate::user_auth::AuthUser;
+
+/// What level of access is required.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AccessLevel {
+    Write,
+    Admin,
+}
+
+/// Who was authenticated and how.
+#[derive(Debug, Clone)]
+pub enum Identity {
+    /// Request from loopback — full trust.
+    Localhost,
+    /// Authenticated via shared grid key (EARTHGRID_API_KEY / EARTHGRID_ADMIN_KEY).
+    GridKey,
+    /// Authenticated via per-user key from users.db.
+    User(AuthUser),
+    /// Authenticated via session cookie.
+    Session { username: String, role: String },
+}
 
 /// Authentication configuration.
 #[derive(Debug, Clone)]
@@ -31,19 +55,19 @@ impl AuthConfig {
         !self.api_key.is_empty()
     }
 
-    /// Validate a write operation.
+    /// Validate a write operation against env keys.
     pub fn check_write(&self, provided_key: Option<&str>) -> Result<()> {
         if self.api_key.is_empty() {
             return Ok(()); // Open mode
         }
         match provided_key {
-            Some(key) if key == self.api_key => Ok(()),
-            Some(key) if key == self.admin_key && !self.admin_key.is_empty() => Ok(()),
+            Some(key) if constant_time_eq_str(key, &self.api_key) => Ok(()),
+            Some(key) if !self.admin_key.is_empty() && constant_time_eq_str(key, &self.admin_key) => Ok(()),
             _ => Err(EarthGridError::AuthRequired),
         }
     }
 
-    /// Validate an admin/destructive operation.
+    /// Validate an admin/destructive operation against env keys.
     pub fn check_admin(&self, provided_key: Option<&str>) -> Result<()> {
         if self.api_key.is_empty() && self.admin_key.is_empty() {
             return Ok(()); // Fully open mode
@@ -52,10 +76,22 @@ impl AuthConfig {
             return Err(EarthGridError::Forbidden); // No admin key = blocked
         }
         match provided_key {
-            Some(key) if key == self.admin_key => Ok(()),
+            Some(key) if constant_time_eq_str(key, &self.admin_key) => Ok(()),
             _ => Err(EarthGridError::AuthRequired),
         }
     }
+}
+
+/// Constant-time string comparison to prevent timing attacks on key checks.
+fn constant_time_eq_str(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[cfg(test)]
@@ -102,7 +138,6 @@ mod tests {
             api_key: "write-key".to_string(),
             admin_key: String::new(),
         };
-        // Admin ops blocked entirely when no admin key configured
         assert!(auth.check_admin(Some("write-key")).is_err());
     }
 
@@ -112,7 +147,6 @@ mod tests {
             api_key: "write-key".to_string(),
             admin_key: "admin-key".to_string(),
         };
-        // Admin key should also allow write operations
         assert!(auth.check_write(Some("admin-key")).is_ok());
     }
 }

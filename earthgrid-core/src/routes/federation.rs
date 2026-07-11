@@ -8,7 +8,6 @@ use serde::Deserialize;
 
 use crate::server::{AppState, api_key, err};
 use crate::peers::NodeInfo;
-use crate::node_identity::NodeIdentity;
 
 
 #[derive(Deserialize)]
@@ -310,71 +309,6 @@ pub(crate) async fn sync_item(
         "item_id": req.item_id,
         "collection": req.collection,
         "source_url": req.source_url,
-    }))).into_response()
-}
-
-
-// ---------------------------------------------------------------------------
-// Federation: exchange key
-// ---------------------------------------------------------------------------
-
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct ExchangeKeyBody {
-    pub node_name: Option<String>,
-    pub node_id: Option<String>,
-    pub api_key: Option<String>,
-    pub public_key: Option<String>,
-    pub timestamp: Option<u64>,
-    pub signature: Option<String>,
-}
-
-
-pub(crate) async fn federation_exchange_key(
-    State(state): State<AppState>,
-    Json(body): Json<ExchangeKeyBody>,
-) -> impl IntoResponse {
-    if body.signature.is_none() {
-        return err(StatusCode::BAD_REQUEST, "Missing signature in payload").into_response();
-    }
-    // Verify signature using NodeIdentity if available
-    let peer_name = body.node_name.clone().unwrap_or_default();
-    let peer_pubkey = body.public_key.clone().unwrap_or_default();
-
-    if let Some(ni) = &state.node_identity {
-        // Verify the peer signature
-        let msg = format!(
-            "{}|{}|{}|{}",
-            peer_name,
-            body.node_id.as_deref().unwrap_or(""),
-            body.api_key.as_deref().unwrap_or(""),
-            body.timestamp.unwrap_or(0)
-        );
-        let sig = body.signature.as_deref().unwrap_or("");
-        if !NodeIdentity::verify_request(&peer_pubkey, sig, &msg) {
-            state.audit.log("key_exchange_rejected", &format!("peer={} invalid_signature", peer_name), "", false);
-            return err(StatusCode::FORBIDDEN, "Invalid signature — key exchange rejected").into_response();
-        }
-
-        // Register peer in user_auth if available
-        if let Some(ua) = &state.user_auth {
-            let username = format!("node:{}", peer_name);
-            let _ = ua.add_user(&username, "member");
-        }
-
-        state.audit.log("key_exchange_ok", &format!("peer={}", peer_name), "", true);
-
-        // Return our signed payload
-        let payload = ni.sign_exchange(&state.node_name, &state.node_id, &state.auth.api_key);
-        return (StatusCode::OK, Json(serde_json::to_value(payload).unwrap_or_default())).into_response();
-    }
-
-    // No node identity — return basic info
-    state.audit.log("key_exchange_ok", &format!("peer={} (no sig verify)", peer_name), "", true);
-    (StatusCode::OK, Json(serde_json::json!({
-        "node_name": state.node_name,
-        "node_id": state.node_id,
-        "public_key": "",
-        "note": "Node identity not configured",
     }))).into_response()
 }
 

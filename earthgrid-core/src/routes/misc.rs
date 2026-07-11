@@ -6,7 +6,8 @@ use axum::{
 };
 use std::net::SocketAddr;
 
-use crate::server::{AppState, err, check_admin_or_session, is_localhost, LimitQuery};
+use crate::auth::AccessLevel;
+use crate::server::{AppState, err, authorize, is_localhost, LimitQuery};
 
 
 // ---------------------------------------------------------------------------
@@ -77,7 +78,7 @@ pub(crate) async fn audit_log(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    if let Err(e) = check_admin_or_session(&state.auth, &headers, addr) {
+    if let Err(e) = authorize(&state.auth, state.user_auth.as_deref(), &headers, addr, AccessLevel::Admin, &state.data_dir) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
     let limit = q.limit.unwrap_or(50).min(500);
@@ -448,7 +449,7 @@ pub(crate) async fn dashboard_auth(
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
-    let secret = crate::session::session_secret();
+    let secret = crate::session::session_secret(&state.data_dir);
 
     // Check if user_auth is configured; if not, redirect to login with hint
     if state.user_auth.is_none() {
@@ -505,7 +506,7 @@ pub(crate) async fn login_handler(
     // Validate API key
     match user_auth.validate_key(api_key) {
         Ok(Some(user)) if user.username == username => {
-            let secret = crate::session::session_secret();
+            let secret = crate::session::session_secret(&state.data_dir);
             let token = crate::session::create_token(&user.username, &user.role, &secret);
             let cookie = crate::session::set_cookie(&token);
 
@@ -540,6 +541,7 @@ pub(crate) async fn logout_handler() -> impl IntoResponse {
 
 /// GET /ui/me — return current session user info (for UI role-based rendering).
 pub(crate) async fn session_me(
+    State(state): State<AppState>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
@@ -555,7 +557,7 @@ pub(crate) async fn session_me(
         ).into_response();
     }
 
-    let secret = crate::session::session_secret();
+    let secret = crate::session::session_secret(&state.data_dir);
     if let Some(cookie_header) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
         if let Some(token) = crate::session::extract_cookie(cookie_header) {
             if let Some((username, role)) = crate::session::validate_token(&token, &secret) {
@@ -670,5 +672,5 @@ pub(crate) async fn session_me_dispatch(
     if !state.ui_enabled {
         return ui_disabled_response();
     }
-    session_me(headers, ConnectInfo(addr)).await.into_response()
+    session_me(State(state), headers, ConnectInfo(addr)).await.into_response()
 }
