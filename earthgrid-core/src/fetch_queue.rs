@@ -325,7 +325,7 @@ impl LocalFetchQueue {
         let mut jobs = Vec::new();
         if let Some(s) = status_filter {
             let mut stmt = conn.prepare(
-                "SELECT id,collection,bbox,start_date,end_date,cloud_cover,bands,limit_count,status,assigned_node,progress_total,progress_done,error,created_at,started_at,completed_at,retry_count FROM fetch_jobs WHERE status=?1 ORDER BY created_at DESC",
+                "SELECT id,collection,bbox,start_date,end_date,cloud_cover,bands,limit_count,status,assigned_node,progress_total,progress_done,stage,error,created_at,started_at,completed_at,retry_count FROM fetch_jobs WHERE status=?1 ORDER BY created_at DESC",
             ).map_err(|e| EarthGridError::Other(e.to_string()))?;
             let rows = stmt.query_map(params![s], Self::row_to_job)
                 .map_err(|e| EarthGridError::Other(e.to_string()))?;
@@ -334,7 +334,7 @@ impl LocalFetchQueue {
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT id,collection,bbox,start_date,end_date,cloud_cover,bands,limit_count,status,assigned_node,progress_total,progress_done,error,created_at,started_at,completed_at,retry_count FROM fetch_jobs ORDER BY created_at DESC",
+                "SELECT id,collection,bbox,start_date,end_date,cloud_cover,bands,limit_count,status,assigned_node,progress_total,progress_done,stage,error,created_at,started_at,completed_at,retry_count FROM fetch_jobs ORDER BY created_at DESC",
             ).map_err(|e| EarthGridError::Other(e.to_string()))?;
             let rows = stmt.query_map([], Self::row_to_job)
                 .map_err(|e| EarthGridError::Other(e.to_string()))?;
@@ -374,7 +374,7 @@ impl LocalFetchQueue {
 
     fn get_job_with_conn(&self, conn: &Connection, job_id: i64) -> Result<FetchJob, EarthGridError> {
         conn.query_row(
-            "SELECT id,collection,bbox,start_date,end_date,cloud_cover,bands,limit_count,status,assigned_node,progress_total,progress_done,error,created_at,started_at,completed_at,retry_count FROM fetch_jobs WHERE id=?1",
+            "SELECT id,collection,bbox,start_date,end_date,cloud_cover,bands,limit_count,status,assigned_node,progress_total,progress_done,stage,error,created_at,started_at,completed_at,retry_count FROM fetch_jobs WHERE id=?1",
             params![job_id],
             Self::row_to_job,
         ).map_err(|_| EarthGridError::ItemNotFound(format!("job {}", job_id)))
@@ -399,7 +399,7 @@ impl LocalFetchQueue {
             created_at: r.get(14)?,
             started_at: r.get(15)?,
             completed_at: r.get(16)?,
-            retry_count: r.get(16)?,
+            retry_count: r.get(17)?,
         })
     }
 }
