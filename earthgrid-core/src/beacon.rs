@@ -1008,21 +1008,8 @@ async fn heartbeat_node(
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
 
-    // Check if catalog_version changed or data is missing → need sync
-    let (old_version, has_tiles, has_stats) = {
-        let reg = state.registry.lock().await;
-        let cv = reg.get_catalog_version(&req.node_id);
-        let tiles = reg.node_tile_count(&req.node_id).unwrap_or(0);
-        let stats = reg.has_node_stats(&req.node_id);
-        (cv, tiles > 0, stats)
-    };
-    let new_version = req.catalog_version;
-    let version_changed = match (old_version, new_version) {
-        (Some(old), Some(new)) => new != old,
-        (None, Some(_)) => true, // first time seeing this node's version
-        _ => false,
-    };
-    let needs_coverage = version_changed || !has_tiles || !has_stats;
+    // Always refresh coverage on heartbeat — keeps aggregated map current.
+    let needs_coverage = true;
 
     let registry = state.registry.lock().await;
     match registry.heartbeat(&req) {
