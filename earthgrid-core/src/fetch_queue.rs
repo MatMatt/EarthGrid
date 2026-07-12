@@ -237,6 +237,12 @@ impl LocalFetchQueue {
             .unwrap_or_default()
             .as_secs_f64();
 
+        // Release stale jobs stuck in "running" (>10 min) so workers can retry them
+        drop(conn.execute(
+            "UPDATE fetch_jobs SET status='pending', assigned_node=NULL, started_at=NULL WHERE status='running' AND started_at < ?1",
+            params![now - 600.0],
+        ));
+
         let id_opt: Option<i64> = conn
             .query_row(
                 "SELECT id FROM fetch_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1",
