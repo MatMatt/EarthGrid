@@ -324,6 +324,65 @@ EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid
 
 ---
 
+## MCP Server (AI Agent Integration)
+
+EarthGrid includes a **Model Context Protocol** server that lets AI agents (Claude, Codex, etc.)
+interact with your node — trigger data fetches, query coverage, and search the catalog.
+
+### Setup
+
+```bash
+# Build the MCP binary (standalone crate)
+cd earthgrid-mcp && cargo build --release
+
+# Run it — connects to a running EarthGrid node
+./target/release/earthgrid-mcp --api-key <your-key> --api-url http://localhost:8400
+```
+
+The `--api-key` is required — it's sent as `x-api-key` on every request.
+Only the node owner can trigger data ingestion.
+
+### Tools exposed
+
+| Tool | Description | Auth |
+|------|-------------|------|
+| `earthgrid_fetch_enqueue` | Trigger data fetch from Element84 STAC | Key required |
+| `earthgrid_fetch_status` | Check job progress | Key required |
+| `earthgrid_fetch_list` | List fetch jobs by status | Key required |
+| `earthgrid_coverage` | Get spatial coverage tiles (GeoJSON) | Read-only |
+| `earthgrid_catalog_search` | Search STAC items | Read-only |
+
+### Example: trigger a fetch
+
+```
+> earthgrid_fetch_enqueue
+  bbox: "10.5,46.0,11.5,46.5"
+  start_date: "2026-06-01"
+  end_date: "2026-07-01"
+  limit: 5
+  bands: "B04,B08"
+
+← {"job_id": 462, "status": "pending"}
+```
+
+### Wiring into an AI agent
+
+Configure your agent's MCP client to launch `earthgrid-mcp` as a subprocess.
+The server speaks JSON-RPC over stdio. Example config for Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "earthgrid": {
+      "command": "/path/to/earthgrid-mcp",
+      "args": ["--api-key", "${EARTHGRID_API_KEY}", "--api-url", "http://localhost:8400"]
+    }
+  }
+}
+```
+
+---
+
 ## Security Model
 
 ### What's open (by design)
