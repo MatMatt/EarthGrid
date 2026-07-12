@@ -1011,7 +1011,8 @@ async fn heartbeat_node(
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
 
-    // Always refresh coverage on heartbeat — keeps aggregated map current.
+    // Always refresh coverage on heartbeat.
+    // Skip HTTP round-trip for the beacon's own node — read local catalog directly.
     let needs_coverage = true;
 
     let registry = state.registry.lock().await;
