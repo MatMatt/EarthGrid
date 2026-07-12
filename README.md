@@ -327,7 +327,7 @@ EARTHGRID_HOST_DATA_DIR=/mnt/sda/earthgrid
 ## MCP Server (AI Agent Integration)
 
 EarthGrid includes a **Model Context Protocol** server that lets AI agents (Claude, Codex, etc.)
-interact with your node — trigger data fetches, query coverage, and search the catalog.
+interact with the grid — trigger data fetches, query grid-wide coverage, and search the catalog.
 
 ### Setup
 
