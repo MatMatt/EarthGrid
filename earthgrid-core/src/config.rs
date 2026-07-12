@@ -109,7 +109,7 @@ impl Settings {
 
     /// Load settings from a JSON config file. Missing fields use defaults.
     /// Default beacon URL baked into the binary.
-    pub const DEFAULT_BEACON_URL: &str = "http://mattiuzzi.zapto.org/earthgrid";
+    pub const DEFAULT_BEACON_URL: &str = "https://mattiuzzi.zapto.org/earthgrid";
 
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)

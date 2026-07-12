@@ -283,7 +283,7 @@ impl Replicator {
         limit: usize,
     ) -> anyhow::Result<Vec<serde_json::Value>> {
         let url = format!(
-            "{}/stac/collections/{}/items?limit={}",
+            "{}/api/stac/collections/{}/items?limit={}",
             peer_url, collection_id, limit
         );
         let resp = self

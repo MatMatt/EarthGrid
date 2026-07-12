@@ -321,7 +321,7 @@ impl Catalog {
     /// Get a single item within a specific collection.
     pub fn get_collection_item(&self, collection: &str, item_id: &str) -> Result<Option<StacItem>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at, geometry_json
              FROM items WHERE id = ?1 AND collection = ?2",
         )?;
         let mut rows = stmt.query_map(params![item_id, collection], |row| {
@@ -397,7 +397,7 @@ impl Catalog {
     ) -> Result<Vec<StacItem>> {
         let (where_clause, params_vec) = Self::build_search_where(collection, bbox, datetime);
         let sql = format!(
-            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at FROM items{} ORDER BY json_extract(properties_json, '$.datetime') DESC, created_at DESC LIMIT {} OFFSET {}",
+            "SELECT id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at, geometry_json FROM items{} ORDER BY json_extract(properties_json, '$.datetime') DESC, created_at DESC LIMIT {} OFFSET {}",
             where_clause, limit, offset
         );
 

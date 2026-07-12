@@ -222,7 +222,7 @@ impl Client {
 
     /// Get a single item by collection and item ID.
     pub async fn get_item(&self, collection: &str, item_id: &str) -> Result<Item> {
-        let path = format!("/stac/collections/{}/items/{}", collection, item_id);
+        let path = format!("/api/stac/collections/{}/items/{}", collection, item_id);
         let data = self.get_json(&path).await?;
         Ok(Item::from_json(&data))
     }
