@@ -23,6 +23,7 @@ pub mod network;
 pub mod node_identity;
 pub mod openeo;
 pub mod peers;
+pub mod perf;
 pub mod processing;
 pub mod ratelimit;
 pub mod replication;

@@ -46,6 +46,7 @@ pub struct AppState {
     pub auth: AuthConfig,
     pub peers: Arc<Mutex<PeerRegistry>>,
     pub stats: Arc<StatsEngine>,
+    pub perf: Arc<crate::perf::PerfRecorder>,
     pub gamification: Arc<GamificationEngine>,
     pub version: String,
     pub node_id: String,
@@ -279,6 +280,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/stats.json", get(crate::routes::stats::stats_json_alias))
         .route("/api/stats/uptake", get(crate::routes::stats::stats_uptake))
         .route("/api/stats/uptake/csv", get(crate::routes::stats::stats_uptake_csv))
+        .route("/api/stats/performance", get(crate::routes::stats::stats_performance))
         // Replication items list
         .route("/api/replicate/items", get(crate::routes::chunks::replicate_items))
         // Resize storage
@@ -304,6 +306,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/result", post(crate::routes::misc::openeo_result))
         .route("/api/validate", post(crate::routes::misc::openeo_validate))
         .route("/api/jobs/{job_id}", get(crate::routes::misc::openeo_job_status))
+                .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            perf_middleware,
+        ))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -559,6 +565,7 @@ pub async fn serve(
         auth: auth.clone(),
         peers: Arc::new(Mutex::new(peer_registry)),
         stats: Arc::new(stats_engine),
+        perf: Arc::new(crate::perf::PerfRecorder::new()),
         gamification: Arc::new(gamification_engine),
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_id,
@@ -610,6 +617,8 @@ pub async fn serve(
     let sync_gamification = state.gamification.clone();
     let repl_peers = state.peers.clone();
     let fq_stats = Arc::clone(&state.stats);
+    let state_clone_perf = Arc::clone(&state.perf);
+    let state_clone_stats = Arc::clone(&state.stats);
     // Clones for auto-eviction (must be before router() consumes state)
     let evict_store_c = state.store.clone();
     let evict_catalog_c = state.catalog.clone();
