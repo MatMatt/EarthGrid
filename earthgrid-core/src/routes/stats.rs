@@ -102,13 +102,16 @@ pub(crate) async fn coverage_spatial(
 ) -> impl IntoResponse {
     let force_local = q.source.as_deref() == Some("local");
 
-    // If running as beacon (and not forced local), serve aggregated coverage from all nodes
+    // If running as beacon (and not forced local), serve aggregated coverage from all nodes,
+    // merged with the beacon's own local catalog so self-tiles are never stale.
     if state.is_beacon && !force_local {
         let beacon_db_path = state.data_dir.join("beacon.db");
         if beacon_db_path.exists() {
             if let Ok(reg) = crate::beacon::BeaconRegistry::new(&beacon_db_path) {
                 match reg.get_aggregated_coverage() {
                     Ok(mut coverage) => {
+                        // Merge local catalog tiles — always up-to-date, overwrites stale beacon entries
+                        merge_local_coverage(&state, &mut coverage).await;
                         enrich_with_tile_grid(&state, &mut coverage);
                         return (StatusCode::OK, Json(coverage)).into_response();
                     }
@@ -172,6 +175,57 @@ pub(crate) async fn coverage_spatial(
     });
     enrich_with_tile_grid(&state, &mut result);
     (StatusCode::OK, Json(result)).into_response()
+}
+
+async fn merge_local_coverage(state: &AppState, coverage: &mut serde_json::Value) {
+    let catalog = state.catalog.lock().await;
+    let tiles = match catalog.mgrs_coverage() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    if tiles.is_empty() {
+        return;
+    }
+
+    let collections = coverage
+        .get_mut("collections")
+        .and_then(|c| c.as_object_mut());
+    if collections.is_none() {
+        return;
+    }
+    let collections = collections.unwrap();
+
+    for t in &tiles {
+        let polygon = if let Some(ref poly) = t.polygon {
+            serde_json::json!(poly)
+        } else {
+            serde_json::json!([
+                [t.west, t.north],
+                [t.east, t.north],
+                [t.east, t.south],
+                [t.west, t.south],
+                [t.west, t.north],
+            ])
+        };
+        let cell = serde_json::json!({
+            "bbox": [t.west, t.south, t.east, t.north],
+            "polygon": polygon,
+            "tile_id": t.tile_id,
+            "date_count": t.date_count,
+            "item_count": t.item_count,
+            "dates": t.dates,
+            "bands": t.bands,
+        });
+
+        let col_entry = collections
+            .entry(t.collection.clone())
+            .or_insert_with(|| serde_json::json!({"cells": []}));
+        if let Some(cells) = col_entry.get_mut("cells").and_then(|c| c.as_array_mut()) {
+            // Replace stale beacon entry if same tile_id exists
+            cells.retain(|c| c.get("tile_id").and_then(|tid| tid.as_str()) != Some(&t.tile_id));
+            cells.push(cell);
+        }
+    }
 }
 
 /// Override polygon fields with authoritative ESA tile grid geometry (cached in AppState)
