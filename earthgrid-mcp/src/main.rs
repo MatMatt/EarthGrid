@@ -227,6 +227,7 @@ async fn main() {
         HeaderValue::from_str(&args.api_key).expect("invalid api-key characters"),
     );
     let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
         .default_headers(headers)
         .build()
         .expect("failed to build HTTP client");

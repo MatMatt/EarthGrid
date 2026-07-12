@@ -269,7 +269,7 @@ pub(crate) async fn stac_search(State(state): State<AppState>, Query(q): Query<S
                     if let Some(c) = &q_col { params.push(("collections", c.clone())); }
                     if let Some(b) = &q_bbox { params.push(("bbox", b.clone())); }
                     if let Some(d) = &q_dt { params.push(("datetime", d.clone())); }
-                    let resp = client.get(format!("{}/stac/search", url))
+                    let resp = client.get(format!("{}/api/stac/search", url))
                         .query(&params).send().await;
                     match resp {
                         Ok(r) if r.status().is_success() => {

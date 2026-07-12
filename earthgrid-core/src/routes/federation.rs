@@ -173,7 +173,7 @@ pub(crate) async fn federation_search(
             if let Some(d) = &q_dt { params.push(("datetime", d.clone())); }
 
             let resp = client
-                .get(format!("{}/stac/search", url))
+                .get(format!("{}/api/stac/search", url))
                 .query(&params)
                 .send()
                 .await;

@@ -787,7 +787,7 @@ pub async fn serve(
                 }
 
                 // 2. Gossip: fetch peers from this peer
-                let gossip_url = format!("{}/peers.json", url);
+                let gossip_url = format!("{}/api/peers.json", url);
                 if let Ok(resp) = client.get(&gossip_url).send().await {
                     if resp.status().is_success() {
                         if let Ok(gossip) = resp.json::<GossipPeerList>().await {
