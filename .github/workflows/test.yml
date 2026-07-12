@@ -37,6 +37,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install GDAL
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_FROM_API: 1
         run: brew install gdal pkg-config llvm netcdf
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -62,13 +65,12 @@ jobs:
         shell: bash -l {0}
     steps:
       - uses: actions/checkout@v6
-      - uses: conda-incubator/setup-miniconda@v3
+      - uses: conda-incubator/setup-miniconda@v4
         with:
           channels: conda-forge
           activate-environment: test
           environment-file: ""
       - name: Install GDAL
-        # gdal + libnetcdf pull compatible hdf5 on conda-forge; `libhdf5` is not a win-64 package name.
         run: conda install -y gdal libnetcdf pkg-config clang libclang
       - name: Set GDAL env
         run: |
@@ -77,17 +79,17 @@ jobs:
           echo "GDAL_LIB_DIR=$CONDA_PREFIX/Library/lib" >> $GITHUB_ENV
           echo "GDAL_INCLUDE_DIR=$CONDA_PREFIX/Library/include" >> $GITHUB_ENV
           echo "$CONDA_PREFIX/Library/bin" >> $GITHUB_PATH
-      - name: Create gdal.dll.lib alias
+      - name: Create gdal.lib alias
         shell: pwsh
         run: |
-          $lib = "C:\Miniconda\envs\test\Library\lib"
-          $bin = "C:\Miniconda\envs\test\Library\bin"
+          $lib = "$env:CONDA_PREFIX\Library\lib"
+          $bin = "$env:CONDA_PREFIX\Library\bin"
           $src = Get-ChildItem "$lib" -Filter "gdal*.lib" | Select-Object -First 1
           if ($src) {
-            Copy-Item $src.FullName "$lib\gdal.dll.lib" -Force
-            Copy-Item $src.FullName "$bin\gdal.dll.lib" -Force
+            Copy-Item $src.FullName "$lib\gdal.lib" -Force
+            Copy-Item $src.FullName "$bin\gdal.lib" -Force
           } else {
-            Write-Error "No gdal*.lib found in $lib"
+            Write-Host "No gdal*.lib found in $lib, skipping alias"
           }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
