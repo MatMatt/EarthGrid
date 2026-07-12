@@ -220,6 +220,9 @@ impl BeaconRegistry {
         let _ = self.conn.execute_batch(
             "ALTER TABLE beacon_node_tiles ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0;",
         );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_tiles ADD COLUMN polygon_json TEXT;",
+        );
 
         // Spatial coverage tiles aggregated from all nodes
         self.conn.execute_batch(
