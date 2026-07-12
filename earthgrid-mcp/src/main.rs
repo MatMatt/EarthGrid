@@ -105,7 +105,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "earthgrid_catalog_search",
-                "description": "Search STAC items in the local catalog.",
+                "description": "Search STAC items across the entire grid (federation search — all alive peers + local catalog). Falls back to local-only if federation unavailable.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -172,15 +172,32 @@ async fn handle_coverage(client: &Client, api_url: &str) -> Result<Value, String
 async fn handle_catalog_search(client: &Client, api_url: &str, params: &Value) -> Result<Value, String> {
     let collection = params["collection"].as_str().unwrap_or("sentinel-2-l2a");
     let limit = params["limit"].as_u64().unwrap_or(10);
+
+    // Use federation search — queries all alive peers + local catalog
     let mut url = format!(
-        "{}/api/stac/collections/{}/items?limit={}",
+        "{}/api/federation/search?collection={}&limit={}",
         api_url.trim_end_matches('/'),
         collection, limit
     );
     if let Some(b) = params["bbox"].as_str() {
         url.push_str(&format!("&bbox={}", b));
     }
+
     let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        return resp.json().await.map_err(|e| e.to_string());
+    }
+
+    // Fallback: local STAC search if federation unavailable
+    let mut local_url = format!(
+        "{}/api/stac/collections/{}/items?limit={}",
+        api_url.trim_end_matches('/'),
+        collection, limit
+    );
+    if let Some(b) = params["bbox"].as_str() {
+        local_url.push_str(&format!("&bbox={}", b));
+    }
+    let resp = client.get(&local_url).send().await.map_err(|e| e.to_string())?;
     resp.json().await.map_err(|e| e.to_string())
 }
 
