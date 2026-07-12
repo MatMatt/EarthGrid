@@ -272,7 +272,7 @@ impl LocalFetchQueue {
 
     pub fn update_progress(&self, job_id: i64, done: i64, total: i64, stage: Option<&str>) -> Result<(), EarthGridError> {
         let conn = self.conn.lock().unwrap();
-        println!("📊 update_progress job={} done={} total={} stage={:?}", job_id, done, total, stage);
+        tracing::info!("📊 update_progress job={} done={} total={} stage={:?}", job_id, done, total, stage);
         conn.execute(
             "UPDATE fetch_jobs SET progress_done=?1, progress_total=?2, stage=?3 WHERE id=?4",
             params![done, total, stage, job_id],
