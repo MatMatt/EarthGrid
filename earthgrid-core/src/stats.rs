@@ -181,7 +181,24 @@ impl StatsEngine {
                 bbox_km2        REAL
             );
             CREATE INDEX IF NOT EXISTS idx_ul_ts        ON uptake_log(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_ul_col       ON uptake_log(collection_id);",
+            CREATE INDEX IF NOT EXISTS idx_ul_col       ON uptake_log(collection_id);
+
+            CREATE TABLE IF NOT EXISTS perf_minutes (
+                ts              REAL    NOT NULL,
+                endpoint        TEXT    NOT NULL,
+                count           INTEGER NOT NULL DEFAULT 0,
+                bytes           INTEGER NOT NULL DEFAULT 0,
+                sum_us          INTEGER NOT NULL DEFAULT 0,
+                max_us          INTEGER NOT NULL DEFAULT 0,
+                b0  INTEGER NOT NULL DEFAULT 0, b1  INTEGER NOT NULL DEFAULT 0,
+                b2  INTEGER NOT NULL DEFAULT 0, b3  INTEGER NOT NULL DEFAULT 0,
+                b4  INTEGER NOT NULL DEFAULT 0, b5  INTEGER NOT NULL DEFAULT 0,
+                b6  INTEGER NOT NULL DEFAULT 0, b7  INTEGER NOT NULL DEFAULT 0,
+                b8  INTEGER NOT NULL DEFAULT 0, b9  INTEGER NOT NULL DEFAULT 0,
+                b10 INTEGER NOT NULL DEFAULT 0, b11 INTEGER NOT NULL DEFAULT 0,
+                b12 INTEGER NOT NULL DEFAULT 0, b13 INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_pm_ts ON perf_minutes(ts);",
         )?;
         Ok(())
     }
@@ -652,7 +669,7 @@ fn percentiles_from_buckets(buckets: &[i64]) -> (f64, f64, f64) {
             cum += b;
             if cum >= target {
                 let lower = if i == 0 { 0 } else { bounds[i - 1] };
-                let upper = bounds[i];
+                let upper = if i < bounds.len() { bounds[i] } else { *bounds.last().unwrap_or(&10000) };
                 let prev_cum = cum - b;
                 let frac = (target - prev_cum) as f64 / b.max(1) as f64;
                 return lower as f64 + frac * (upper - lower) as f64;

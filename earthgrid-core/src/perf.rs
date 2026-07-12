@@ -15,7 +15,6 @@ pub const BUCKET_BOUNDS_MS: &[u64] = &[1, 2, 5, 10, 25, 50, 100, 250, 500, 1000,
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Endpoint {
     ChunkGet,
-    ChunkPut,
     StacSearch,
     Coverage,
 }
@@ -24,14 +23,13 @@ impl Endpoint {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::ChunkGet => "chunk_get",
-            Self::ChunkPut => "chunk_put",
             Self::StacSearch => "stac_search",
             Self::Coverage => "coverage",
         }
     }
 
-    pub fn all() -> [Self; 4] {
-        [Self::ChunkGet, Self::ChunkPut, Self::StacSearch, Self::Coverage]
+    pub fn all() -> [Self; 3] {
+        [Self::ChunkGet, Self::StacSearch, Self::Coverage]
     }
 }
 
@@ -75,14 +73,13 @@ pub struct PerfSnapshot {
 
 /// Lock-free, allocation-free performance recorder.
 pub struct PerfRecorder {
-    counters: [EndpointCounters; 4],
+    counters: [EndpointCounters; 3],
 }
 
 impl PerfRecorder {
     pub fn new() -> Self {
         Self {
             counters: [
-                EndpointCounters::new(),
                 EndpointCounters::new(),
                 EndpointCounters::new(),
                 EndpointCounters::new(),
@@ -93,9 +90,8 @@ impl PerfRecorder {
     fn idx(ep: Endpoint) -> usize {
         match ep {
             Endpoint::ChunkGet => 0,
-            Endpoint::ChunkPut => 1,
-            Endpoint::StacSearch => 2,
-            Endpoint::Coverage => 3,
+            Endpoint::StacSearch => 1,
+            Endpoint::Coverage => 2,
         }
     }
 
@@ -113,24 +109,12 @@ impl PerfRecorder {
                 Err(actual) => current = actual,
             }
         }
-        // Bucket by latency in milliseconds
-        let ms = latency_us / 1000;
-        let b = match ms {
-            0..=1 => 0,
-            2 => 1,
-            3..=5 => 2,
-            6..=10 => 3,
-            11..=25 => 4,
-            26..=50 => 5,
-            51..=100 => 6,
-            101..=250 => 7,
-            251..=500 => 8,
-            501..=1000 => 9,
-            1001..=2500 => 10,
-            2501..=5000 => 11,
-            5001..=10000 => 12,
-            _ => 13,
-        };
+        // Bucket by latency — binary search against BUCKET_BOUNDS_MS (bounds in ms,
+        // converted to µs for integer comparison). Fallback to overflow bucket 13.
+        let b = BUCKET_BOUNDS_MS
+            .iter()
+            .position(|&bound_ms| latency_us <= bound_ms * 1000)
+            .unwrap_or(13);
         c.buckets[b].fetch_add(1, Ordering::Relaxed);
     }
 
@@ -190,9 +174,9 @@ mod tests {
         assert_eq!(s.bytes, 524288 * 3);
         assert_eq!(s.sum_us, 17000);
         assert_eq!(s.max_us, 12000);
-        // 0.5ms → bucket 0, 4.5ms → bucket 3, 12ms → bucket 4
+        // 500µs → bucket 0 (≤1ms), 4500µs → bucket 2 (≤5ms), 12000µs → bucket 4 (≤25ms)
         assert_eq!(s.buckets[0], 1);
-        assert_eq!(s.buckets[3], 1);
+        assert_eq!(s.buckets[2], 1);
         assert_eq!(s.buckets[4], 1);
 
         // Drain again → empty
