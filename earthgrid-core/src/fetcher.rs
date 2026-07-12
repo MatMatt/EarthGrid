@@ -47,6 +47,16 @@ fn band_key_to_name(key: &str) -> Option<&'static str> {
 // Data structures
 // ---------------------------------------------------------------------------
 
+/// Real-time progress reporter for fetch operations.
+/// Called from search and download phases — no channels needed.
+#[derive(Clone)]
+pub enum FetchPhase {
+    Searching { chunks_done: usize, chunks_total: usize, found: usize },
+    Downloading { scenes_done: usize, scenes_total: usize, bytes: u64, errors: usize },
+}
+
+pub type ProgressSink = Arc<dyn Fn(FetchPhase) + Send + Sync + 'static>;
+
 /// A single result from a STAC search.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StacSearchResult {

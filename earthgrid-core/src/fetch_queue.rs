@@ -26,6 +26,7 @@ pub struct FetchJob {
     pub assigned_node: Option<String>,
     pub progress_total: i64,
     pub progress_done: i64,
+    pub stage: Option<String>,   // human-readable progress text
     pub error: Option<String>,
     pub created_at: f64,
     pub started_at: Option<f64>,
@@ -170,6 +171,7 @@ impl LocalFetchQueue {
                 assigned_node TEXT,
                 progress_total INTEGER DEFAULT 0,
                 progress_done INTEGER DEFAULT 0,
+                stage TEXT,
                 error TEXT,
                 created_at REAL NOT NULL,
                 started_at REAL,
@@ -177,6 +179,10 @@ impl LocalFetchQueue {
                 retry_count INTEGER DEFAULT 0
             );",
         )?;
+        // Safe migration: add stage column for real-time progress text
+        let _ = conn.execute_batch(
+            "ALTER TABLE fetch_jobs ADD COLUMN stage TEXT;",
+        );
         Ok(Self {
             conn: Mutex::new(conn),
         })
