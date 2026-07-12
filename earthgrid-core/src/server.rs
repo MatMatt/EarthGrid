@@ -609,6 +609,7 @@ pub async fn serve(
     let sync_is_beacon = state.is_beacon;
     let sync_gamification = state.gamification.clone();
     let repl_peers = state.peers.clone();
+    let fq_stats = Arc::clone(&state.stats);
     // Clones for auto-eviction (must be before router() consumes state)
     let evict_store_c = state.store.clone();
     let evict_catalog_c = state.catalog.clone();
@@ -1343,14 +1344,15 @@ pub async fn serve(
 
                         // Record ingest stats so the dashboard chart shows queue-driven fetches
                         if result.items_downloaded > 0 {
-                            // Upsert into stats.db uptake_log (same as direct /api/fetch handler)
-                            if let Some(stats) = &state_clone.stats {
-                                let now = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs_f64();
-                                let _ = stats.record_uptake("fetch", &collection, result.items_downloaded as i64, result.bytes_downloaded, now);
-                            }
+                            let _ = fq_stats.record_uptake(
+                                &collection,
+                                Some("fetch"),
+                                Some(&job.bbox),
+                                None,
+                                result.bytes_downloaded as i64,
+                                None,
+                                None,
+                            );
                         }
 
                         if result.errors.is_empty() || result.items_downloaded > 0 {
@@ -1368,6 +1370,18 @@ pub async fn serve(
                         tracing::warn!("Fetch queue claim error: {}", e);
                     }
                 }
+            }
+        });
+    }
+
+    // Periodic flush_stats: persist ChunkStore counters every 60s
+    // so cumulative served/ingested numbers survive restarts.
+    {
+        let flush_store = state_clone_store.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                flush_store.lock().await.flush_stats();
             }
         });
     }
