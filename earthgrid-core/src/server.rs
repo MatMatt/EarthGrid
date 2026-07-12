@@ -1302,7 +1302,7 @@ pub async fn serve(
                         let limit = job.limit_count as usize;
                         let collection = job.collection.clone();
 
-                        let _ = fq_queue.update_progress(job_id, 0, 0);
+                        let _ = fq_queue.update_progress(job_id, 0, 0, Some("searching..."));
 
                         let result = if fq_is_beacon {
                             // Beacon: distribute across grid nodes
@@ -1340,7 +1340,7 @@ pub async fn serve(
                         };
 
                         // Report results back (local DB or HTTP to beacon)
-                        let _ = fq_queue.update_progress(job_id, result.items_downloaded as i64, result.items_searched as i64);
+                        let _ = fq_queue.update_progress(job_id, result.items_downloaded as i64, result.items_searched as i64, None);
 
                         // Record ingest stats so the dashboard chart shows queue-driven fetches
                         if result.items_downloaded > 0 {

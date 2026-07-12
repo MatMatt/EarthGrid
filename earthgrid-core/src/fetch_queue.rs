@@ -73,11 +73,11 @@ impl FetchQueueBackend {
         }
     }
 
-    pub fn update_progress(&self, job_id: i64, done: i64, total: i64) -> Result<(), EarthGridError> {
+    pub fn update_progress(&self, job_id: i64, done: i64, total: i64, stage: Option<&str>) -> Result<(), EarthGridError> {
         match self {
-            Self::Local(q) => q.update_progress(job_id, done, total),
+            Self::Local(q) => q.update_progress(job_id, done, total, stage),
             Self::Remote(q) => tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(q.update_progress(job_id, done, total))
+                tokio::runtime::Handle::current().block_on(q.update_progress(job_id, done, total, stage))
             }),
         }
     }
@@ -270,11 +270,11 @@ impl LocalFetchQueue {
         Ok(None)
     }
 
-    pub fn update_progress(&self, job_id: i64, done: i64, total: i64) -> Result<(), EarthGridError> {
+    pub fn update_progress(&self, job_id: i64, done: i64, total: i64, stage: Option<&str>) -> Result<(), EarthGridError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE fetch_jobs SET progress_done=?1, progress_total=?2 WHERE id=?3",
-            params![done, total, job_id],
+            "UPDATE fetch_jobs SET progress_done=?1, progress_total=?2, stage=?3 WHERE id=?4",
+            params![done, total, stage, job_id],
         ).map_err(|e| EarthGridError::Other(e.to_string()))?;
         Ok(())
     }
@@ -393,10 +393,11 @@ impl LocalFetchQueue {
             assigned_node: r.get(9)?,
             progress_total: r.get(10)?,
             progress_done: r.get(11)?,
-            error: r.get(12)?,
-            created_at: r.get(13)?,
-            started_at: r.get(14)?,
-            completed_at: r.get(15)?,
+            stage: r.get(12)?,
+            error: r.get(13)?,
+            created_at: r.get(14)?,
+            started_at: r.get(15)?,
+            completed_at: r.get(16)?,
             retry_count: r.get(16)?,
         })
     }
@@ -471,10 +472,10 @@ impl RemoteFetchQueue {
         }
     }
 
-    async fn update_progress(&self, job_id: i64, done: i64, total: i64) -> Result<(), EarthGridError> {
+    async fn update_progress(&self, job_id: i64, done: i64, total: i64, stage: Option<&str>) -> Result<(), EarthGridError> {
         let _ = self.client.post(format!("{}/api/fetch/queue/{}/progress", self.beacon_url, job_id))
             .header("x-api-key", &self.admin_key)
-            .json(&serde_json::json!({"done": done, "total": total}))
+            .json(&serde_json::json!({"done": done, "total": total, "stage": stage}))
             .send().await;
         Ok(()) // progress updates are best-effort
     }

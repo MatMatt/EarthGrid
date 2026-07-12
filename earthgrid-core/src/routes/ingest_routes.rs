@@ -516,6 +516,8 @@ pub(crate) async fn fetch_queue_fail(
 pub struct ProgressBody {
     pub done: i64,
     pub total: i64,
+    #[serde(default)]
+    pub stage: Option<String>,
 }
 
 /// POST /api/fetch/queue/{id}/progress — update job progress (called by remote workers)
@@ -529,7 +531,7 @@ pub(crate) async fn fetch_queue_progress(
     if let Err(e) = state.auth.check_write(key) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
-    match state.fetch_queue.update_progress(id, body.done, body.total) {
+    match state.fetch_queue.update_progress(id, body.done, body.total, body.stage.as_deref()) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "updated": true }))).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
     }
