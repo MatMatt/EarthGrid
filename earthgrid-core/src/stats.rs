@@ -530,7 +530,95 @@ impl StatsEngine {
         ))?;
         Ok(())
     }
+
+    /// Write drained performance snapshots into perf_minutes table (called every 60s).
+    pub fn write_perf_snapshots(&self, ts: f64, snaps: &[crate::perf::PerfSnapshot]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let ts_floor = (ts / 60.0).floor() * 60.0;
+        for s in snaps {
+            conn.execute(
+                "INSERT INTO perf_minutes (ts, endpoint, count, bytes, sum_us, max_us,
+                    b0,b1,b2,b3,b4,b5,b6,b7,b8,b9,b10,b11,b12,b13)
+                 VALUES (?1,?2,?3,?4,?5,?6,
+                    ?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+                rusqlite::params![
+                    ts_floor, s.endpoint, s.count as i64, s.bytes as i64,
+                    s.sum_us as i64, s.max_us as i64,
+                    s.buckets[0] as i64, s.buckets[1] as i64, s.buckets[2] as i64,
+                    s.buckets[3] as i64, s.buckets[4] as i64, s.buckets[5] as i64,
+                    s.buckets[6] as i64, s.buckets[7] as i64, s.buckets[8] as i64,
+                    s.buckets[9] as i64, s.buckets[10] as i64, s.buckets[11] as i64,
+                    s.buckets[12] as i64, s.buckets[13] as i64,
+                ],
+            )?;
+        }
+        let cutoff = ts - 7.0 * 86400.0;
+        conn.execute("DELETE FROM perf_minutes WHERE ts < ?1", rusqlite::params![cutoff])?;
+        Ok(())
+    }
+
+    /// Query performance data for the given window in seconds.
+    pub fn query_perf(&self, window_secs: f64) -> Result<serde_json::Value> {
+        let conn = self.conn.lock().unwrap();
+        let now = unix_now();
+        let cutoff = now - window_secs;
+
+        let mut stmt = conn.prepare(
+            "SELECT endpoint, SUM(count), SUM(bytes), SUM(sum_us), MAX(max_us),
+                    SUM(b0),SUM(b1),SUM(b2),SUM(b3),SUM(b4),SUM(b5),SUM(b6),
+                    SUM(b7),SUM(b8),SUM(b9),SUM(b10),SUM(b11),SUM(b12),SUM(b13)
+             FROM perf_minutes WHERE ts >= ?1 GROUP BY endpoint"
+        )?;
+
+        let endpoints: Vec<serde_json::Value> = stmt
+            .query_map(rusqlite::params![cutoff], |row| {
+                let ep: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                let bytes: i64 = row.get(2)?;
+                let sum_us: i64 = row.get(3)?;
+                let max_us: i64 = row.get(4)?;
+                let buckets: Vec<i64> = (5..19).map(|i| row.get::<_, i64>(i).unwrap_or(0)).collect();
+                Ok((ep, count, bytes, sum_us, max_us, buckets))
+            })?
+            .filter_map(|r| r.ok())
+            .map(|(ep, count, bytes, sum_us, max_us, buckets)| {
+                let rps = count as f64 / window_secs;
+                let mbps = bytes as f64 / window_secs / 1_048_576.0;
+                let mean_ms = if count > 0 { sum_us as f64 / count as f64 / 1000.0 } else { 0.0 };
+                let (p50, p95, p99) = percentiles_from_buckets(&buckets);
+                serde_json::json!({
+                    "endpoint": ep,
+                    "requests": count, "rps": (rps*100.0).round()/100.0,
+                    "mb_per_s": (mbps*100.0).round()/100.0,
+                    "latency_ms": {
+                        "mean": (mean_ms*100.0).round()/100.0,
+                        "p50": p50, "p95": p95, "p99": p99,
+                        "max": max_us as f64 / 1000.0
+                    }
+                })
+            })
+            .collect();
+
+        let mut stmt2 = conn.prepare(
+            "SELECT ts, endpoint, count, bytes FROM perf_minutes WHERE ts >= ?1 ORDER BY ts"
+        )?;
+        let series: Vec<serde_json::Value> = stmt2
+            .query_map(rusqlite::params![cutoff], |row| {
+                Ok(serde_json::json!({
+                    "ts": row.get::<_, f64>(0)?,
+                    "endpoint": row.get::<_, String>(1)?,
+                    "count": row.get::<_, i64>(2)?,
+                    "bytes": row.get::<_, i64>(3)?,
+                }))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(serde_json::json!({"window_secs": window_secs, "endpoints": endpoints, "series": series}))
+    }
 }
+
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -545,11 +633,32 @@ fn unix_now() -> f64 {
 
 /// Simple percentile from a sorted slice (returns value at given percentile).
 fn percentile(values: &[i64], p: u8) -> i64 {
-    if values.is_empty() {
-        return 0;
-    }
+    if values.is_empty() { return 0; }
     let mut sorted = values.to_vec();
     sorted.sort_unstable();
     let idx = ((p as f64 / 100.0) * (sorted.len() - 1) as f64).round() as usize;
     sorted[idx.min(sorted.len() - 1)]
+}
+
+/// Compute p50, p95, p99 from cumulative histogram bucket counts.
+fn percentiles_from_buckets(buckets: &[i64]) -> (f64, f64, f64) {
+    let bounds = crate::perf::BUCKET_BOUNDS_MS;
+    let total: i64 = buckets.iter().sum();
+    if total == 0 { return (0.0, 0.0, 0.0); }
+    let p = |rank: f64| -> f64 {
+        let target = (rank / 100.0 * total as f64).ceil() as i64;
+        let mut cum = 0i64;
+        for (i, &b) in buckets.iter().enumerate() {
+            cum += b;
+            if cum >= target {
+                let lower = if i == 0 { 0 } else { bounds[i - 1] };
+                let upper = bounds[i];
+                let prev_cum = cum - b;
+                let frac = (target - prev_cum) as f64 / b.max(1) as f64;
+                return lower as f64 + frac * (upper - lower) as f64;
+            }
+        }
+        *bounds.last().unwrap_or(&10000) as f64
+    };
+    (p(50.0), p(95.0), p(99.0))
 }

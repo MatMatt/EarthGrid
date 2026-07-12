@@ -471,3 +471,25 @@ pub(crate) async fn stats_uptake_csv(
     }
 }
 
+
+/// Query parameters for /api/stats/performance
+#[derive(Debug, serde::Deserialize)]
+pub struct PerformanceQuery {
+    pub window: Option<String>,
+}
+
+/// GET /api/stats/performance — latency histograms, throughput, bandwidth
+pub(crate) async fn stats_performance(
+    State(state): State<AppState>,
+    Query(q): Query<PerformanceQuery>,
+) -> impl IntoResponse {
+    let window_secs: f64 = match q.window.as_deref() {
+        Some("24h") => 86400.0,
+        Some("7d") => 604800.0,
+        _ => 3600.0,
+    };
+    match state.stats.query_perf(window_secs) {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
+}

@@ -7,8 +7,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::{
+    extract::State,
     Router,
     http::{HeaderMap, StatusCode},
+    middleware,
     routing::{delete, get, patch, post},
     Json,
 };
@@ -307,11 +309,37 @@ pub fn router(state: AppState) -> Router {
         .route("/api/validate", post(crate::routes::misc::openeo_validate))
         .route("/api/jobs/{job_id}", get(crate::routes::misc::openeo_job_status))
                 .layer(axum::middleware::from_fn_with_state(
-            app_state.clone(),
+            state.clone(),
             perf_middleware,
         ))
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+/// Axum middleware: record latency + response size per endpoint.
+async fn perf_middleware(
+    State(state): State<AppState>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let ep = match req.uri().path() {
+        p if p.starts_with("/api/chunks/") => Some(crate::perf::Endpoint::ChunkGet),
+        p if p.starts_with("/api/stac/search") => Some(crate::perf::Endpoint::StacSearch),
+        p if p.starts_with("/api/coverage/spatial") => Some(crate::perf::Endpoint::Coverage),
+        _ => None,
+    };
+    let Some(ep) = ep else { return next.run(req).await; };
+
+    let t0 = std::time::Instant::now();
+    let resp = next.run(req).await;
+    let elapsed_us = t0.elapsed().as_micros() as u64;
+    let bytes = resp.headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    state.perf.record(ep, elapsed_us, bytes);
+    resp
 }
 
 // ---------------------------------------------------------------------------
@@ -1387,10 +1415,23 @@ pub async fn serve(
     // so cumulative served/ingested numbers survive restarts.
     {
         let flush_store = state_clone_store.clone();
+        let flush_perf = state_clone_perf.clone();
+        let flush_stats = state_clone_stats.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 flush_store.lock().await.flush_stats();
+                // Drain perf recorder and write to stats.db
+                let snaps = flush_perf.drain();
+                if !snaps.is_empty() {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64();
+                    if let Err(e) = flush_stats.write_perf_snapshots(ts, &snaps) {
+                        eprintln!("perf flush: {}", e);
+                    }
+                }
             }
         });
     }
