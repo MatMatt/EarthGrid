@@ -99,8 +99,8 @@ a:hover { text-decoration:underline; }
   <div class="stat loading" id="sItems"><div class="value" id="vItems">—</div><div class="label">Items across Grid</div></div>
   <div class="stat loading" id="sStorage"><div class="value" id="vStorage">—</div><div class="label">Data across Grid</div></div>
   <div class="stat loading" id="sUptakeReq"><div class="value" id="vUptakeReq">—</div><div class="label">Requests from Grid (30d)</div></div>
-  <div class="stat loading" id="sUptakeGB"><div class="value" id="vUptakeGB">—</div><div class="label">GB Delivered from Grid (30d)</div></div>
-  <div class="stat loading" id="sFetched"><div class="value" id="vFetched">—</div><div class="label">GB Ingested into Grid</div></div>
+  <div class="stat loading" id="sUptakeGB"><div class="value" id="vUptakeGB">—</div><div class="label">GB Delivered</div></div>
+  <div class="stat loading" id="sFetched"><div class="value" id="vFetched">—</div><div class="label">GB Ingested</div></div>
 </div>
 
 
@@ -1194,20 +1194,19 @@ async function load() {
   if (!apiOk) try {
     const [nodesData, nodeInfoData, statsData, coverageData, spatialData,
            uptakeData, ingestData, opsData,
-           lbNodes, lbUsers, lbGroups, achData, feedData, economyData, challengesData] =
+           lbNodes, lbUsers, lbGroups, feedData, economyData, challengesData] =
       await Promise.all([
         safeJson(api + '/beacon/nodes'),
         safeJson(api + '/node-info'),
         safeJson(api + '/stats'),
         safeJson(api + '/stats/coverage'),
         safeJson(api + '/coverage/spatial'),
-        safeJson(api + '/stats/uptake?period_days=365'),
-        safeJson(api + '/stats/ingest?period_days=365'),
+        safeJson(api + '/stats/uptake?period_days=30'),
+        safeJson(api + '/stats/ingest?period_days=30'),
         safeJson(api + '/process/operations'),
         safeJson(api + '/gamification/leaderboard?type=nodes&limit=20'),
         safeJson(api + '/gamification/leaderboard?type=users&limit=20'),
         safeJson(api + '/gamification/leaderboard?type=groups&limit=20'),
-        safeJson(api + '/gamification/achievements'),
         safeJson(api + '/gamification/feed?limit=30'),
         safeJson(api + '/gamification/economy'),
         safeJson(api + '/gamification/challenges'),
@@ -1227,7 +1226,7 @@ async function load() {
       d.network = {
         nodes_alive: aliveNodes.length,
         nodes_total: nodes.length,
-        total_bytes: (statsData && statsData.total_bytes) || totalBytesFromNodes,
+        total_bytes: totalBytesFromNodes || (statsData && statsData.total_bytes) || 0,
         available_storage_gb: availStorageGB,
       };
       d.nodes = nodes;
@@ -1269,7 +1268,6 @@ async function load() {
         leaderboard_nodes: lbNodes || {},
         leaderboard_users: lbUsers || {},
         leaderboard_groups: lbGroups || {},
-        achievements: achData || {},
         feed: feedData || {},
         economy: economyData || null,
         challenges: challengesData || null,
