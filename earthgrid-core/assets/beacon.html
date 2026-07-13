@@ -133,8 +133,8 @@ a:hover { text-decoration:underline; }
 <div id="coverageDetail" style="display:none;margin-top:1rem;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem"></div>
 </div>
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="/assets/lib/leaflet.css"/>
+<script src="/assets/lib/leaflet.js"></script>
 <style>
 #coverageMap .leaflet-container { background: var(--bg) !important; }
 .cov-legend { background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:0.8rem;color:var(--text);line-height:1.6; }
@@ -1088,6 +1088,29 @@ curl "http://localhost:8400/collections"
 # Network status
 curl "http://localhost:8400/nodes"</code></pre>
 </div>
+
+<!-- MCP Panel -->
+<div class="card" style="margin-top:1.5rem">
+<h2>🧠 MCP — AI Agent Access</h2>
+<div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-top:0.5rem">
+<p style="margin:0 0 0.5rem;color:var(--text)">Give AI coding tools direct access to the grid via <a href="https://modelcontextprotocol.io" target="_blank" style="color:#58a6ff">Model Context Protocol</a>.</p>
+<pre style="background:var(--bg);color:var(--text);padding:0.8rem;border-radius:6px;overflow-x:auto;font-size:0.85rem;line-height:1.5;margin:0"><code># Claude Code / Codex / Cursor — add to ~/.mcp.json:
+{
+  "mcpServers": {
+    "earthgrid": {
+      "command": "earthgrid-mcp",
+      "args": ["--api-key", "<strong>your-key</strong>", "--api-url", "<strong id="mcpUrl"></strong>"]
+    }
+  }
+}
+
+# Then in your AI tool:
+# "Search the grid for Sentinel-2 data over Südtirol"
+# "Enqueue a fetch for tile 32TPS, 2024-2026"
+# "Show me the current coverage map"</code></pre>
+</div>
+</div>
+<script>document.getElementById('mcpUrl').textContent = window.location.origin;</script>
 
 </div>
 

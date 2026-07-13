@@ -298,6 +298,12 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/login", get(crate::routes::misc::login_dispatch).post(crate::routes::misc::login_post_dispatch))
         .route("/ui/logout", post(crate::routes::misc::logout_dispatch))
         .route("/ui/me", get(crate::routes::misc::session_me_dispatch))
+        // Static Leaflet assets (vendored, no CDN dependency)
+        .route("/assets/lib/leaflet.css", get(serve_leaflet_css))
+        .route("/assets/lib/leaflet.js", get(serve_leaflet_js))
+        .route("/assets/lib/leaflet.draw.css", get(serve_leaflet_draw_css))
+        .route("/assets/lib/leaflet.draw.js", get(serve_leaflet_draw_js))
+        .route("/assets/lib/images/{name}", get(serve_leaflet_image))
         // openEO compatibility aliases (without /stac/ prefix)
         .route("/api/collections", get(crate::routes::stac::list_collections))
         .route("/api/collections/{id}", get(crate::routes::stac::get_collection))
@@ -339,6 +345,37 @@ async fn perf_middleware(
         .unwrap_or(0);
     state.perf.record(ep, elapsed_us, bytes);
     resp
+}
+
+// ---------------------------------------------------------------------------
+// Static asset handlers (Leaflet vendored, no CDN dependency)
+// ---------------------------------------------------------------------------
+
+async fn serve_leaflet_css() -> impl IntoResponse {
+    (StatusCode::OK, [("Content-Type", "text/css")], include_bytes!("../assets/lib/leaflet.css").as_ref())
+}
+async fn serve_leaflet_js() -> impl IntoResponse {
+    (StatusCode::OK, [("Content-Type", "application/javascript")], include_bytes!("../assets/lib/leaflet.js").as_ref())
+}
+async fn serve_leaflet_draw_css() -> impl IntoResponse {
+    (StatusCode::OK, [("Content-Type", "text/css")], include_bytes!("../assets/lib/leaflet.draw.css").as_ref())
+}
+async fn serve_leaflet_draw_js() -> impl IntoResponse {
+    (StatusCode::OK, [("Content-Type", "application/javascript")], include_bytes!("../assets/lib/leaflet.draw.js").as_ref())
+}
+async fn serve_leaflet_image(Path(name): Path<String>) -> impl IntoResponse {
+    let ct = if name.ends_with(".png") { "image/png" } else if name.ends_with(".svg") { "image/svg+xml" } else { "application/octet-stream" };
+    let data: &[u8] = match name.as_str() {
+        "layers.png" => include_bytes!("../assets/lib/images/layers.png"),
+        "layers-2x.png" => include_bytes!("../assets/lib/images/layers-2x.png"),
+        "marker-icon.png" => include_bytes!("../assets/lib/images/marker-icon.png"),
+        "marker-icon-2x.png" => include_bytes!("../assets/lib/images/marker-icon-2x.png"),
+        "marker-shadow.png" => include_bytes!("../assets/lib/images/marker-shadow.png"),
+        "spritesheet.svg" => include_bytes!("../assets/lib/images/spritesheet.svg"),
+        "spritesheet-2x.png" => include_bytes!("../assets/lib/images/spritesheet-2x.png"),
+        _ => &[],
+    };
+    (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ct)], data)
 }
 
 // ---------------------------------------------------------------------------
