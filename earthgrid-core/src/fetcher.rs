@@ -229,9 +229,9 @@ async fn search_one_range(
         // Emit search progress
         if let Some(ref cb) = progress {
             cb(FetchPhase::Searching {
-                chunk: format!("{}-{}", &start_date[..4], &end_date[..4]),
-                page,
-                items_found: results.len(),
+                chunks_done: page - 1,
+                chunks_total: 0,
+                found: results.len(),
             });
         }
         page += 1;
