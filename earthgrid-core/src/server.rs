@@ -351,19 +351,19 @@ async fn perf_middleware(
 // Static asset handlers (Leaflet vendored, no CDN dependency)
 // ---------------------------------------------------------------------------
 
-async fn serve_leaflet_css() -> impl IntoResponse {
-    (StatusCode::OK, [("Content-Type", "text/css")], include_bytes!("../assets/lib/leaflet.css").as_ref())
+async fn serve_leaflet_css() -> axum::response::Response {
+    (StatusCode::OK, [("Content-Type", "text/css")], include_bytes!("../assets/lib/leaflet.css").as_ref()).into_response()
 }
-async fn serve_leaflet_js() -> impl IntoResponse {
-    (StatusCode::OK, [("Content-Type", "application/javascript")], include_bytes!("../assets/lib/leaflet.js").as_ref())
+async fn serve_leaflet_js() -> axum::response::Response {
+    (StatusCode::OK, [("Content-Type", "application/javascript")], include_bytes!("../assets/lib/leaflet.js").as_ref()).into_response()
 }
-async fn serve_leaflet_draw_css() -> impl IntoResponse {
-    (StatusCode::OK, [("Content-Type", "text/css")], include_bytes!("../assets/lib/leaflet.draw.css").as_ref())
+async fn serve_leaflet_draw_css() -> axum::response::Response {
+    (StatusCode::OK, [("Content-Type", "text/css")], include_bytes!("../assets/lib/leaflet.draw.css").as_ref()).into_response()
 }
-async fn serve_leaflet_draw_js() -> impl IntoResponse {
-    (StatusCode::OK, [("Content-Type", "application/javascript")], include_bytes!("../assets/lib/leaflet.draw.js").as_ref())
+async fn serve_leaflet_draw_js() -> axum::response::Response {
+    (StatusCode::OK, [("Content-Type", "application/javascript")], include_bytes!("../assets/lib/leaflet.draw.js").as_ref()).into_response()
 }
-async fn serve_leaflet_image(Path(name): Path<String>) -> impl IntoResponse {
+async fn serve_leaflet_image(axum::extract::Path(name): axum::extract::Path<String>) -> axum::response::Response {
     let ct = if name.ends_with(".png") { "image/png" } else if name.ends_with(".svg") { "image/svg+xml" } else { "application/octet-stream" };
     let data: &[u8] = match name.as_str() {
         "layers.png" => include_bytes!("../assets/lib/images/layers.png"),
@@ -375,7 +375,7 @@ async fn serve_leaflet_image(Path(name): Path<String>) -> impl IntoResponse {
         "spritesheet-2x.png" => include_bytes!("../assets/lib/images/spritesheet-2x.png"),
         _ => &[],
     };
-    (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ct)], data)
+    (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ct)], data).into_response()
 }
 
 // ---------------------------------------------------------------------------
