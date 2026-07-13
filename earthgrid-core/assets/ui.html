@@ -580,9 +580,9 @@ function setHtml(id, html) {
   if (el) el.innerHTML = html;
 }
 
-function showAlert(containerId, msg, type='info') {
+function showAlert(containerId, msg, type='info', timeout=5000) {
   setHtml(containerId, `<div class="alert ${type}">${msg}</div>`);
-  if (type !== 'error') setTimeout(() => setHtml(containerId, ''), 5000);
+  if (type !== 'error' && timeout > 0) setTimeout(() => setHtml(containerId, ''), timeout);
 }
 
 // ============================================================
@@ -1376,13 +1376,14 @@ async function createUser() {
   const role = document.getElementById('new-role').value;
   if (!username) { showAlert('user-form-result', 'Username is required', 'error'); return; }
   try {
-    const user = await apiFetch('/admin/users', {
+    const user = await apiFetch('/api/admin/users', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({username, role}),
     });
     document.getElementById('new-username').value = '';
-    showAlert('user-form-result', `✓ User "${user.username}" created. API key: ${user.api_key || '(see response)'}`, 'success');
+    // Show API key persistently in a copyable block
+    showAlert('user-form-result', `✓ User created. API key: <code style="user-select:all;background:var(--bg);padding:2px 6px;border-radius:3px;cursor:copy" onclick="navigator.clipboard.writeText(this.textContent)">${user.api_key || '(no key)'}</code>`, 'success', 0);
     loadAccounts();
   } catch(e) {
     showAlert('user-form-result', `Error: ${e.message}`, 'error');
@@ -1392,7 +1393,7 @@ async function createUser() {
 async function deleteUser(userId, username) {
   if (!confirm(`Remove user "${username}"?`)) return;
   try {
-    await apiFetch(`/admin/users/${encodeURIComponent(userId)}`, {method: 'DELETE'});
+    await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}`, {method: 'DELETE'});
     showAlert('user-form-result', `✓ User "${username}" deactivated`, 'success');
     loadAccounts();
   } catch(e) {
