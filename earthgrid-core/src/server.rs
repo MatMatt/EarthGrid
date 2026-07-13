@@ -1377,40 +1377,33 @@ pub async fn serve(
 
                         let _ = fq_queue.update_progress(job_id, 0, 0, Some("searching..."));
 
-                        let result = if fq_is_beacon {
-                            // Beacon: distribute across grid nodes
-                            let self_url = std::env::var("EARTHGRID_PUBLIC_URL")
-                                .unwrap_or_else(|_| format!("http://127.0.0.1:{}", fq_port_for_worker));
-                            crate::fetcher::fetch_distributed(
-                                fq_store.clone(),
-                                fq_catalog.clone(),
-                                bbox,
-                                &start_date,
-                                &end_date,
-                                job.cloud_cover,
-                                &bands,
-                                limit,
-                                &collection,
-                                None,
-                                &self_url,
-                                &fq_node_id,
-                                &std::env::var("EARTHGRID_ADMIN_KEY").unwrap_or_default(),
-                            ).await
-                        } else {
-                            // Non-beacon: execute locally (job was claimed from beacon queue)
-                            crate::fetcher::fetch_and_ingest(
-                                fq_store.clone(),
-                                fq_catalog.clone(),
-                                bbox,
-                                &start_date,
-                                &end_date,
-                                job.cloud_cover,
-                                &bands,
-                                limit,
-                                &collection,
-                                None,
-                            ).await
-                        };
+                        // 10-minute timeout on fetch to prevent worker hanging
+                        let result = tokio::time::timeout(
+                            std::time::Duration::from_secs(600),
+                            async {
+                                if fq_is_beacon {
+                                    let self_url = std::env::var("EARTHGRID_PUBLIC_URL")
+                                        .unwrap_or_else(|_| format!("http://127.0.0.1:{}", fq_port_for_worker));
+                                    crate::fetcher::fetch_distributed(
+                                        fq_store.clone(), fq_catalog.clone(),
+                                        bbox, &start_date, &end_date, job.cloud_cover,
+                                        &bands, limit, &collection, None,
+                                        &self_url, &fq_node_id,
+                                        &std::env::var("EARTHGRID_ADMIN_KEY").unwrap_or_default(),
+                                    ).await
+                                } else {
+                                    crate::fetcher::fetch_and_ingest(
+                                        fq_store.clone(), fq_catalog.clone(),
+                                        bbox, &start_date, &end_date, job.cloud_cover,
+                                        &bands, limit, &collection, None,
+                                    ).await
+                                }
+                            },
+                        ).await.unwrap_or_else(|_| crate::fetcher::FetchResult {
+                            items_downloaded: 0, items_searched: 0,
+                            items_skipped: 0, bytes_downloaded: 0,
+                            errors: vec!["Fetch timed out after 10 minutes".to_string()],
+                        });
 
                         // Report results back (local DB or HTTP to beacon)
                         let _ = fq_queue.update_progress(job_id, result.items_downloaded as i64, result.items_searched as i64, None);
