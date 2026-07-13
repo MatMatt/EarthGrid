@@ -72,7 +72,7 @@ impl Default for Settings {
             port: 8400,
             peers: Vec::new(),
             role: "node".to_string(),
-            beacon_url: "http://mattiuzzi.zapto.org/earthgrid".to_string(),
+            beacon_url: "https://earthgrid.mattiuzzi.com".to_string(),
             beacon_peers: Vec::new(),
             public_url: String::new(),
             storage_limit_gb: 50.0,
@@ -109,7 +109,7 @@ impl Settings {
 
     /// Load settings from a JSON config file. Missing fields use defaults.
     /// Default beacon URL baked into the binary.
-    pub const DEFAULT_BEACON_URL: &str = "https://mattiuzzi.zapto.org/earthgrid";
+    pub const DEFAULT_BEACON_URL: &str = "https://earthgrid.mattiuzzi.com";
 
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
