@@ -1393,7 +1393,7 @@ async function createUser() {
 async function deleteUser(userId, username) {
   if (!confirm(`Remove user "${username}"?`)) return;
   try {
-    await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}`, {method: 'DELETE'});
+    await apiFetch(`/api/admin/users/${encodeURIComponent(username)}`, {method: 'DELETE'});
     showAlert('user-form-result', `✓ User "${username}" deactivated`, 'success');
     loadAccounts();
   } catch(e) {
