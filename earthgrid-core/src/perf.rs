@@ -5,7 +5,6 @@
 //! and a few relaxed atomic adds per request.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 /// Latency histogram buckets (log-spaced, in milliseconds).
 /// Bounds: 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, +inf

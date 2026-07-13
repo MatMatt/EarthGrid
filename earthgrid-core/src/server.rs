@@ -10,7 +10,6 @@ use axum::{
     extract::State,
     Router,
     http::{HeaderMap, StatusCode},
-    middleware,
     routing::{delete, get, patch, post},
     Json,
 };
