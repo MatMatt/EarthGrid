@@ -216,14 +216,25 @@ async fn search_one_range(
     cloud_cover: f64,
     limit: usize,
     collection: &str,
+    progress: Option<Arc<dyn Fn(FetchPhase) + Send + Sync>>,
 ) -> (Vec<StacSearchResult>, Vec<String>) {
     let mut results = Vec::new();
     let mut errors = Vec::new();
 
     let search_url = format!("{}/search", ELEMENT84_BASE);
     let mut body = build_search_body(&bbox, start_date, end_date, cloud_cover, limit, collection);
+    let mut page = 1usize;
 
     loop {
+        // Emit search progress
+        if let Some(ref cb) = progress {
+            cb(FetchPhase::Searching {
+                chunk: format!("{}-{}", &start_date[..4], &end_date[..4]),
+                page,
+                items_found: results.len(),
+            });
+        }
+        page += 1;
         let resp = match client
             .post(&search_url)
             .json(&body)
@@ -359,7 +370,7 @@ pub async fn search_element84(
             let s = s.clone();
             let e = e.clone();
             async move {
-                search_one_range(&client, bbox, &s, &e, cloud_cover, per_chunk_limit, &collection).await
+                search_one_range(&client, bbox, &s, &e, cloud_cover, per_chunk_limit, &collection, None).await
             }
         })
         .collect();
