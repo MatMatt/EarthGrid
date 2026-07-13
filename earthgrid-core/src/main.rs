@@ -477,11 +477,19 @@ fn main() -> anyhow::Result<()> {
                 stats.bytes_served as f64 / 1e9
             );
 
-            // Daemon status
-            let pid = read_pid();
-            let running = pid.map(is_process_alive).unwrap_or(false);
+            // Daemon status — check PID file OR health endpoint (systemd fallback)
+                        let pid = read_pid();
+                        let mut running = pid.map(is_process_alive).unwrap_or(false);
 
-            if let Some(p) = pid {
+                        // If PID file is missing/stale, try the health endpoint directly
+                        if !running {
+                            let hport = config_port();
+                            if let Ok(resp) = ureq::get(&format!("http://localhost:{}/api/health", hport)).call() {
+                                running = resp.status() == 200;
+                            }
+                        }
+
+                        if let Some(p) = pid {
                 if running {
                     println!("\n✅ Daemon running (PID {})", p);
 
