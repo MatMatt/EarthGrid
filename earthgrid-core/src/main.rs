@@ -478,18 +478,18 @@ fn main() -> anyhow::Result<()> {
             );
 
             // Daemon status — check PID file OR health endpoint (systemd fallback)
-                        let pid = read_pid();
-                        let mut running = pid.map(is_process_alive).unwrap_or(false);
+            let pid = read_pid();
+            let mut running = pid.map(is_process_alive).unwrap_or(false);
 
-                        // If PID file is missing/stale, try the health endpoint directly
-                        if !running {
-                            let hport = config_port();
-                            if let Ok(resp) = ureq::get(&format!("http://localhost:{}/api/health", hport)).call() {
-                                running = resp.status() == 200;
-                            }
-                        }
+            // If PID file is missing/stale, try the health endpoint directly
+            if !running {
+                let hport = config_port();
+                if let Ok(resp) = ureq::get(&format!("http://localhost:{}/api/health", hport)).call() {
+                    running = resp.status() == 200;
+                }
+            }
 
-                        if let Some(p) = pid {
+            if let Some(p) = pid {
                 if running {
                     println!("\n✅ Daemon running (PID {})", p);
 
@@ -509,6 +509,8 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     println!("\n⚠️  Daemon not running (stale PID {})", p);
                 }
+            } else if running {
+                println!("\n✅ Daemon running (via systemd — no PID file)");
             } else {
                 println!("\n⚠️  Daemon not running");
             }
