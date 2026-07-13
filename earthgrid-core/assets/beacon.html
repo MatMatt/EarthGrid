@@ -518,16 +518,16 @@ function renderLeaderboard(data) {
   for (const e of entries) {
     h += '<tr><td class="lb-rank' + rankClass(e.rank) + '">' + rankIcon(e.rank) + '</td>';
     if (currentBoard === 'nodes') {
-      const name = e.node_name || e.node_id;
+      const name = esc(e.node_name || e.node_id);
       const isAlive = e.last_seen && (Date.now()/1000 - e.last_seen) < 300;
       const aliveDot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + (isAlive ? '#22c55e' : '#ef4444') + ';margin-right:6px;vertical-align:middle" title="' + (isAlive ? 'Online' : 'Offline') + '"></span>';
       const nameHtml = aliveDot + (e.node_url
-        ? '<a href="' + e.node_url + '" target="_blank" style="color:var(--accent);text-decoration:none" title="Open node dashboard">' + name + ' ↗</a>'
+        ? '<a href="' + esc(e.node_url) + '" target="_blank" style="color:var(--accent);text-decoration:none" title="Open node dashboard">' + name + ' ↗</a>'
         : name);
       const sponsorHtml = e.sponsor_name
         ? '<div style="font-size:0.65rem;color:var(--dim)">' +
-          (e.sponsor_url ? '<a href="' + e.sponsor_url + '" target="_blank" style="color:var(--dim)">' : '') +
-          'Sponsored by ' + e.sponsor_name +
+          (e.sponsor_url ? '<a href="' + esc(e.sponsor_url) + '" target="_blank" style="color:var(--dim)">' : '') +
+          'Sponsored by ' + esc(e.sponsor_name) +
           (e.sponsor_url ? '</a>' : '') + '</div>'
         : '';
       h += '<td class="lb-name">' + nameHtml + sponsorHtml + '</td>';
@@ -538,12 +538,12 @@ function renderLeaderboard(data) {
       h += '<td>' + (e.gb_served||0) + ' GB</td>';
       h += '<td>' + (e.streak||0) + 'd</td>';
     } else if (currentBoard === 'users') {
-      h += '<td class="lb-name">' + (e.display_name||e.username) + '</td>';
+      h += '<td class="lb-name">' + esc(e.display_name||e.username) + '</td>';
       h += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
       h += '<td>' + (e.nodes||0) + '</td><td>' + (e.items||0).toLocaleString() + '</td>';
       h += '<td>' + (e.gb_stored||0) + ' GB</td>';
     } else {
-      h += '<td class="lb-name">' + e.group_name + '</td>';
+      h += '<td class="lb-name">' + esc(e.group_name) + '</td>';
       h += '<td class="lb-score">' + (e.score||0).toLocaleString() + '</td>';
       h += '<td>' + (e.members||0) + '</td>';
     }
@@ -562,9 +562,9 @@ function renderAchievements(data) {
   let h = '';
   achs.forEach(a => {
     const cls = a.earned ? 'ach-card earned' : 'ach-card';
-    h += '<div class="' + cls + '"><span class="ach-icon">' + a.icon + '</span>';
-    h += '<div><div class="ach-name">' + a.name + '</div>';
-    h += '<div class="ach-desc">' + a.desc + '</div></div></div>';
+    h += '<div class="' + cls + '"><span class="ach-icon">' + esc(a.icon) + '</span>';
+    h += '<div><div class="ach-name">' + esc(a.name) + '</div>';
+    h += '<div class="ach-desc">' + esc(a.desc) + '</div></div></div>';
   });
   document.getElementById('achievementShowcase').innerHTML = h;
 }
@@ -579,7 +579,7 @@ function renderFeed(data) {
   items.forEach(f => {
     const icon = f.event_type === 'achievement' ? '🏆' : f.event_type === 'ingest' ? '📥' : '📡';
     h += '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.85rem">';
-    h += icon + ' <strong>' + (f.node_name||f.node_id||'') + '</strong> ' + (f.message||'') ;
+    h += icon + ' <strong>' + esc(f.node_name||f.node_id||'') + '</strong> ' + esc(f.message||'') ;
     h += ' <span style="color:var(--dim);font-size:0.75rem">' + fmtTime(f.timestamp) + '</span></div>';
   });
   document.getElementById('activityFeed').innerHTML = h;
@@ -614,9 +614,9 @@ async function loadAchievements(fromStats) {
     let html = '';
     for (const a of (data.achievements || [])) {
       html += '<div class="ach-badge">';
-      html += '<div class="ach-icon">' + a.icon + '</div>';
-      html += '<div class="ach-name">' + a.name + '</div>';
-      html += '<div class="ach-desc">' + a.desc + '</div>';
+      html += '<div class="ach-icon">' + esc(a.icon) + '</div>';
+      html += '<div class="ach-name">' + esc(a.name) + '</div>';
+      html += '<div class="ach-desc">' + esc(a.desc) + '</div>';
       html += '</div>';
     }
     document.getElementById('achievementShowcase').innerHTML = html || '<em>None</em>';
@@ -751,7 +751,7 @@ function renderChallenges(challenges) {
         const e = ch.top3[i];
         const score = typeof e.score === 'number' ? (e.score >= 1 ? e.score.toLocaleString() : e.score.toFixed(2)) : e.score;
         top += '<div style="display:flex;justify-content:space-between;font-size:0.8rem;padding:2px 0">' +
-          '<span>' + medals[i] + ' ' + (e.display_name || e.node_id.slice(0,8)) + '</span>' +
+          '<span>' + medals[i] + ' ' + esc(e.display_name || (e.node_id||'').slice(0,8)) + '</span>' +
           '<span style="color:var(--green);font-weight:600">' + score + '</span></div>';
       }
     } else {
@@ -762,8 +762,8 @@ function renderChallenges(challenges) {
       : '<span style="background:var(--orange);color:var(--bg);font-size:0.65rem;padding:1px 6px;border-radius:6px;font-weight:700">MONTHLY</span>';
     h += '<div style="flex:1;min-width:220px;max-width:320px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:1rem">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">' +
-      '<strong style="font-size:0.9rem">' + ch.title + '</strong>' + periodBadge + '</div>' +
-      '<div style="font-size:0.75rem;color:var(--dim);margin-bottom:0.5rem">' + ch.description +
+      '<strong style="font-size:0.9rem">' + esc(ch.title) + '</strong>' + periodBadge + '</div>' +
+      '<div style="font-size:0.75rem;color:var(--dim);margin-bottom:0.5rem">' + esc(ch.description) +
       ' · <span style="color:var(--accent)">' + (ch.remaining_human || '') + ' left</span>' +
       ' · ' + (ch.participants || 0) + ' participants</div>' +
       top + '</div>';
@@ -1124,13 +1124,18 @@ function sensorLabel(col) {
     .replace(/landsat-(.+)/i, (_, rest) => 'Landsat ' + rest.toUpperCase());
 }
 
+// Helper: escape HTML entities to prevent XSS
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
 function fmtBytes(b) { return b >= 1e12 ? (b/1e12).toFixed(1)+' TB' : (b/1e9).toFixed(1)+' GB'; }
 function fmtGB(gb) { return gb >= 1000 ? (gb/1000).toFixed(1)+' TB' : gb.toFixed(0)+' GB'; }
 function fmtKm2(k) { return k >= 1e6 ? (k/1e6).toFixed(1)+'M' : k >= 1000 ? (k/1000).toFixed(0)+'k' : k.toFixed(0); }
 
 function renderNodes(nodes) {
+  const grid = document.getElementById('nodesGrid');
+  if (!grid) return; // element doesn't exist on this page — skip silently
   if (!nodes || nodes.length === 0) {
-    document.getElementById('nodesGrid').innerHTML = '<em style="color:var(--dim)">No nodes registered</em>';
+    grid.innerHTML = '<em style="color:var(--dim)">No nodes registered</em>';
     return;
   }
   // Sort: alive first, then by stored bytes desc
@@ -1148,10 +1153,10 @@ function renderNodes(nodes) {
     const chunks = n.chunks ? n.chunks.toLocaleString() + ' chunks' : '';
     const cols = (n.collections || []).join(', ') || '—';
     const seen = n.last_seen ? fmtTime(n.last_seen) : '—';
-    const pubUrl = n.public_url ? '<a href="' + n.public_url + '" target="_blank">' + n.public_url + '</a>' : '';
+    const pubUrl = n.public_url ? '<a href="' + esc(n.public_url) + '" target="_blank">' + esc(n.public_url) + '</a>' : '';
     html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem">';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">';
-    html += '<strong style="font-size:1.1rem">' + (n.node_name || n.node_id || 'Unknown') + '</strong>';
+    html += '<strong style="font-size:1.1rem">' + esc(n.node_name || n.node_id || 'Unknown') + '</strong>';
     html += status + '</div>';
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;font-size:0.85rem">';
     html += '<div><span style="color:var(--dim)">Stored:</span> ' + stored + '</div>';
@@ -1163,11 +1168,10 @@ function renderNodes(nodes) {
     if (pubUrl) html += '<div style="grid-column:1/-1"><span style="color:var(--dim)">URL:</span> ' + pubUrl + '</div>';
     html += '</div></div>';
   }
-  document.getElementById('nodesGrid').innerHTML = html;
+  grid.innerHTML = html;
 }
 
 async function load() {
-  console.log('EARTHGRID_API =', EARTHGRID_API); document.title = 'EG:' + EARTHGRID_API;
   const api = EARTHGRID_API || '';
 
   // Helper to fetch JSON without throwing
