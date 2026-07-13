@@ -1148,7 +1148,7 @@ pub async fn serve(
                     NetworkEvent::InboundRequest { peer: _, request, channel } => {
                         let response = match request {
                             EarthGridRequest::GetChunk { hash } => {
-                                let mut store = p2p_store.lock().await;
+                                let store = p2p_store.lock().await;
                                 match store.get(&hash) {
                                     Ok(Some(data)) => EarthGridResponse::Chunk {
                                         hash: hash.clone(),

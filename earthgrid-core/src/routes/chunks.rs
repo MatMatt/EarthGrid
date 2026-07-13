@@ -53,7 +53,7 @@ pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str) -> Optio
 pub(crate) async fn get_chunk(State(state): State<AppState>, Path(sha): Path<String>) -> impl IntoResponse {
     // 1. Try local store first
     {
-        let mut store = state.store.lock().await;
+        let store = state.store.lock().await;
         match store.get(&sha) {
             Ok(Some(data)) => return (StatusCode::OK, data).into_response(),
             Ok(None) => {} // Fall through to peer lookup
@@ -393,7 +393,7 @@ pub(crate) async fn point_extract(
         return err(StatusCode::INTERNAL_SERVER_ERROR, "Tile index out of range").into_response();
     }
     let sha = &item.chunk_hashes[tile_idx];
-    let mut store = state.store.lock().await;
+    let store = state.store.lock().await;
     let chunk_data = match store.get(sha) {
         Ok(Some(d)) => d,
         Ok(None) => return err(StatusCode::NOT_FOUND, "Chunk not found").into_response(),

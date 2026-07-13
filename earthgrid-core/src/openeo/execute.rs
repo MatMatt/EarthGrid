@@ -392,7 +392,7 @@ pub async fn execute_sync(
         }
         _ => {
             let first = &items[0];
-            let mut store = store.lock().await;
+            let store = store.lock().await;
             let mut raw = Vec::new();
             for hash in &first.chunk_hashes {
                 if let Ok(Some(chunk)) = store.get(hash) {
