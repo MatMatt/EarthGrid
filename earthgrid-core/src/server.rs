@@ -969,13 +969,20 @@ pub async fn serve(
                         };
                         let catalog = evict_catalog.lock().await;
                         let mut store = evict_store.lock().await;
-                        match crate::eviction::evict_with_beacon_url(
-                            &catalog,
-                            &mut store,
-                            limit_gb,
-                            beacon_db.as_deref(),
-                            evict_beacon_url.as_deref(),
-                        ) {
+                        // Eviction is synchronous and slow: an HTTP call to the
+                        // beacon plus SQLite writes and per-chunk file deletes.
+                        // `block_in_place` hands the work to a blocking thread
+                        // instead of stalling an async worker, while keeping the
+                        // two lock guards in scope.
+                        match tokio::task::block_in_place(|| {
+                            crate::eviction::evict_with_beacon_url(
+                                &catalog,
+                                &mut store,
+                                limit_gb,
+                                beacon_db.as_deref(),
+                                evict_beacon_url.as_deref(),
+                            )
+                        }) {
                             Ok(result) => {
                                 if result.items_deleted > 0 {
                                     eprintln!(

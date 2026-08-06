@@ -148,6 +148,19 @@ pub fn reconstruct_cog(
     store: &mut ChunkStore,
     bands: Option<&[String]>,
 ) -> Result<Vec<u8>> {
+    // Items produced by `ingest::ingest_file` — which is every item this node
+    // can currently create, since `ingest_raster` is not wired to any caller —
+    // carry no tile metadata: no `earthgrid:width`, `tile_size`, `tile_cols`.
+    // The tiled path below would fail them all with "Missing: earthgrid:width",
+    // which is why `GET /api/download/...` returned 500 for every item.
+    //
+    // `ingest_file` splits the source file into sequential raw byte chunks, so
+    // concatenating them in order reproduces the original COG byte-for-byte.
+    // Serve that directly.
+    if props_u32(&item.properties, "earthgrid:width").is_err() {
+        return reconstruct_raw(item, store);
+    }
+
     let band_data = reconstruct_bands(item, store, bands)?;
     if band_data.is_empty() {
         return Err(crate::error::EarthGridError::Other(
@@ -174,6 +187,50 @@ pub fn reconstruct_cog(
         &crs, &geotransform,
         &band_names_ordered, &band_data,
     )
+}
+
+/// Reassemble an item stored as sequential raw byte chunks (the `ingest_file`
+/// layout) by concatenating its chunks in order.
+///
+/// When the item records `earthgrid:file_hash` — which `ingest_file` always
+/// writes — the result is checked against it, so a missing or corrupted chunk
+/// surfaces as an integrity error instead of a silently truncated download.
+pub fn reconstruct_raw(item: &StacItem, store: &mut ChunkStore) -> Result<Vec<u8>> {
+    if item.chunk_hashes.is_empty() {
+        return Err(crate::error::EarthGridError::Other(format!(
+            "Item {} has no chunks",
+            item.id
+        )));
+    }
+
+    let mut out = Vec::new();
+    for sha in &item.chunk_hashes {
+        match store.get(sha)? {
+            Some(data) => out.extend_from_slice(&data),
+            None => {
+                return Err(crate::error::EarthGridError::ChunkNotFound(format!(
+                    "{} (item {})",
+                    sha, item.id
+                )))
+            }
+        }
+    }
+
+    if let Some(expected) = item
+        .properties
+        .get("earthgrid:file_hash")
+        .and_then(|v| v.as_str())
+    {
+        let actual = ChunkStore::hash_bytes(&out);
+        if actual != expected {
+            return Err(crate::error::EarthGridError::IntegrityViolation {
+                expected: expected.to_string(),
+                actual,
+            });
+        }
+    }
+
+    Ok(out)
 }
 
 /// Compute NDVI and return as COG.
@@ -355,5 +412,63 @@ fn dtype_size(dtype: &str) -> usize {
         "uint32" | "u32" | "int32" | "i32" | "float32" | "f32" => 4,
         "float64" | "f64" => 8,
         _ => 2,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ingest;
+
+    /// End-to-end: an item ingested the way `/api/fetch` ingests one must be
+    /// downloadable again, byte-for-byte.
+    ///
+    /// Regression for `GET /api/download/{collection}/{item}` returning 500 on
+    /// every item. `ingest_file` writes no `earthgrid:width`, so `reconstruct_cog`
+    /// hit `props_u32(..., "earthgrid:width")?` and bailed with
+    /// "Missing: earthgrid:width" — there was no item in existence it could serve.
+    #[test]
+    fn reconstruct_roundtrips_ingest_file_items() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        // Multi-chunk payload so ordering is actually exercised.
+        let original: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let src = dir.path().join("scene.tif");
+        std::fs::write(&src, &original).unwrap();
+
+        let item = ingest::ingest_file(&src, "test-collection", 64 * 1024, &mut store).unwrap();
+        assert!(item.chunk_hashes.len() > 1, "expected a multi-chunk item");
+        assert!(
+            item.properties.get("earthgrid:width").is_none(),
+            "ingest_file is not expected to record tile metadata"
+        );
+
+        let rebuilt = reconstruct_cog(&item, &mut store, None).unwrap();
+        assert_eq!(rebuilt, original, "download must return the original bytes");
+    }
+
+    /// A missing chunk must be a hard error, never a truncated file.
+    #[test]
+    fn reconstruct_raw_rejects_missing_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        let original: Vec<u8> = (0..200_000u32).map(|i| (i % 197) as u8).collect();
+        let src = dir.path().join("scene.tif");
+        std::fs::write(&src, &original).unwrap();
+        let item = ingest::ingest_file(&src, "c", 64 * 1024, &mut store).unwrap();
+
+        store.delete(&item.chunk_hashes[1]).unwrap();
+
+        let err = reconstruct_cog(&item, &mut store, None).unwrap_err();
+        assert!(
+            matches!(err, crate::error::EarthGridError::ChunkNotFound(_)),
+            "expected ChunkNotFound, got {err:?}"
+        );
     }
 }

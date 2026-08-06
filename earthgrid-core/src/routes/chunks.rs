@@ -1,13 +1,15 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::net::SocketAddr;
 
-use crate::server::{AppState, api_key, err, LimitQuery};
+use crate::auth::AccessLevel;
+use crate::server::{AppState, api_key, authorize, err, LimitQuery};
 use crate::replication::Replicator;
 
 
@@ -143,8 +145,25 @@ pub struct ReplicateQuery {
 
 pub(crate) async fn replicate(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<ReplicateQuery>,
 ) -> impl IntoResponse {
+    // The caller picks `peer_url` and this node then fetches it and stores the
+    // response. Unauthenticated, that is both a server-side request forgery
+    // primitive (probe any host the node can reach) and a way to fill the store
+    // with arbitrary attacker-supplied content.
+    if let Err(e) = authorize(
+        &state.auth,
+        state.user_auth.as_deref(),
+        &headers,
+        addr,
+        AccessLevel::Write,
+        &state.data_dir,
+    ) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
     if q.peer_url.is_empty() {
         return err(StatusCode::BAD_REQUEST, "peer_url is required").into_response();
     }
