@@ -1,5 +1,5 @@
 use axum::{
-    extract::{ConnectInfo, Path, Query, State},
+    extract::{ConnectInfo, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse},
     Json,
@@ -443,17 +443,37 @@ pub(crate) async fn openeo_result(
 // Session-based UI authentication
 // ---------------------------------------------------------------------------
 
+/// Relative `Location` for the login page that is correct from both `/ui` and
+/// `/ui/`, without hardcoding any reverse-proxy prefix.
+///
+/// A browser resolves a relative `Location` against the *directory* of the
+/// current URL. At `/ui` that directory is `/`, so the target must be
+/// `ui/login`; at `/ui/` it is already `/ui/`, so the target must be `login`.
+/// Using `ui/login` for both — as this did — sends anyone who visits `/ui/`
+/// (or `https://host/earthgrid/ui/` behind a proxy) to `/ui/ui/login`, which
+/// 404s. That is why signing in appeared to be broken.
+fn login_redirect(path: &str, query: &str) -> String {
+    if path.ends_with('/') {
+        format!("login{query}")
+    } else {
+        format!("ui/login{query}")
+    }
+}
+
 /// GET /ui, GET /dashboard — serve UI if session valid, else redirect to login.
 pub(crate) async fn dashboard_auth(
     State(state): State<AppState>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    OriginalUri(uri): OriginalUri,
 ) -> impl IntoResponse {
     let secret = crate::session::session_secret(&state.data_dir);
+    let path = uri.path();
 
     // Check if user_auth is configured; if not, redirect to login with hint
     if state.user_auth.is_none() {
-        return axum::response::Redirect::temporary("ui/login?no_users").into_response();
+        return axum::response::Redirect::temporary(&login_redirect(path, "?no_users"))
+            .into_response();
     }
 
     // Localhost: skip auth (shell access = full access)
@@ -470,7 +490,7 @@ pub(crate) async fn dashboard_auth(
         }
     }
 
-    axum::response::Redirect::temporary("ui/login").into_response()
+    axum::response::Redirect::temporary(&login_redirect(path, "")).into_response()
 }
 
 /// GET /ui/login — serve login page.
@@ -616,11 +636,14 @@ pub(crate) async fn ui_dispatch(
     State(state): State<AppState>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    OriginalUri(uri): OriginalUri,
 ) -> impl IntoResponse {
     if !state.ui_enabled {
         return ui_disabled_response();
     }
-    dashboard_auth(State(state), headers, ConnectInfo(addr)).await.into_response()
+    dashboard_auth(State(state), headers, ConnectInfo(addr), OriginalUri(uri))
+        .await
+        .into_response()
 }
 
 /// GET /ui/login
@@ -673,4 +696,42 @@ pub(crate) async fn session_me_dispatch(
         return ui_disabled_response();
     }
     session_me(State(state), headers, ConnectInfo(addr)).await.into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::login_redirect;
+
+    /// Regression: signing in was impossible for anyone who landed on `/ui/`.
+    ///
+    /// The redirect was the fixed string `ui/login`. A browser resolves a
+    /// relative `Location` against the directory of the current URL, so from
+    /// `/ui/` that became `/ui/ui/login` — a 404. Behind a reverse proxy
+    /// (`https://host/earthgrid/ui/`) it became `/earthgrid/ui/ui/login`, same
+    /// result. Only the exact URL `/ui`, with no trailing slash, worked.
+    #[test]
+    fn login_redirect_resolves_correctly_from_both_url_forms() {
+        // From `/ui` the browser's base is `/`, so the target needs the `ui/`.
+        assert_eq!(login_redirect("/ui", ""), "ui/login");
+        // From `/ui/` the base is already `/ui/`, so it must not repeat it.
+        assert_eq!(login_redirect("/ui/", ""), "login");
+    }
+
+    #[test]
+    fn login_redirect_keeps_the_query_string() {
+        assert_eq!(login_redirect("/ui", "?no_users"), "ui/login?no_users");
+        assert_eq!(login_redirect("/ui/", "?no_users"), "login?no_users");
+    }
+
+    /// The same logic has to hold under a reverse-proxy prefix, which is why
+    /// the target stays relative rather than being rooted at `/ui/login`.
+    #[test]
+    fn login_redirect_is_prefix_independent() {
+        assert_eq!(login_redirect("/earthgrid/ui", ""), "ui/login");
+        assert_eq!(login_redirect("/earthgrid/ui/", ""), "login");
+    }
 }
