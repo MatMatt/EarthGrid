@@ -94,6 +94,40 @@ pub(crate) fn is_localhost(addr: std::net::SocketAddr) -> bool {
     addr.ip().is_loopback()
 }
 
+/// Whether this request was issued by a browser acting for a *different* site.
+///
+/// This is what separates "the operator running curl on the box" from "a page
+/// on evil.com that the operator happened to visit". Both arrive over the same
+/// loopback socket, so `is_localhost` alone cannot tell them apart — which is
+/// what made every implicit-trust path below reachable by any website the
+/// operator visited (classic localhost CSRF / DNS rebinding).
+///
+/// `Sec-Fetch-Site` is set by the browser and is forbidden to page script, so
+/// it cannot be spoofed from JS. `none` means a direct navigation (typed URL,
+/// bookmark) and `same-origin` means our own UI — both are the operator acting
+/// deliberately. Anything else is another site driving the request.
+///
+/// Non-browser clients send neither header and are unaffected.
+pub(crate) fn is_cross_origin_browser_request(headers: &HeaderMap) -> bool {
+    if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+        return !matches!(site, "same-origin" | "none");
+    }
+
+    // Fallback for browsers predating Sec-Fetch-Site: compare Origin to Host.
+    // A cross-origin `Origin` (including the literal "null" from a sandboxed
+    // frame) will not match, so it is treated as cross-origin.
+    if let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) {
+        let host = headers
+            .get("host")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        let origin_host = origin.split_once("://").map_or(origin, |(_, rest)| rest);
+        return origin_host != host;
+    }
+
+    false
+}
+
 /// Unified authorization entry point.
 ///
 /// Checks in order: localhost → env grid key → per-user key → session cookie.
@@ -106,8 +140,14 @@ pub(crate) fn authorize(
     level: crate::auth::AccessLevel,
     data_dir: &std::path::Path,
 ) -> Result<crate::auth::Identity, crate::error::EarthGridError> {
-    // 1. Localhost — full trust
-    if is_localhost(addr) {
+    // Implicit trust — by source address (1) or by open mode (5) — is granted
+    // on the strength of *how* the request arrived rather than any credential.
+    // A browser driving the request on another site's behalf must never get it,
+    // or every website the operator visits can administer the node.
+    let cross_origin = is_cross_origin_browser_request(headers);
+
+    // 1. Localhost — full trust, unless another site is behind the request
+    if is_localhost(addr) && !cross_origin {
         return Ok(crate::auth::Identity::Localhost);
     }
 
@@ -157,8 +197,10 @@ pub(crate) fn authorize(
         }
     }
 
-    // 5. Open mode fallback — no key, no session, auth not enabled
-    if !auth.is_enabled() {
+    // 5. Open mode fallback — no key, no session, auth not enabled.
+    //    Still refused for cross-origin browser requests: "no auth configured"
+    //    is an invitation to the operator, not to every site they browse.
+    if !auth.is_enabled() && !cross_origin {
         return Ok(crate::auth::Identity::Localhost); // open mode = localhost-equivalent
     }
 
@@ -317,8 +359,46 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             perf_middleware,
         ))
+        .layer(axum::middleware::from_fn(csrf_guard))
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+/// Refuse state-changing requests that a browser issued on another site's behalf.
+///
+/// `authorize()` covers the handlers that call it, but most write endpoints still
+/// use `check_write`/`check_admin`, which return Ok for everyone when no API key
+/// is configured — the default. Without this guard, any website the operator
+/// visits could POST to `/api/fetch`, `/api/replicate`, `/api/resize`, the fetch
+/// queue, and so on.
+///
+/// Reads are deliberately left alone: this is a public data grid, and the
+/// GitHub Pages dashboard legitimately reads a node's API cross-origin.
+/// Sensitive reads (`/api/audit`, `/api/admin/*`) go through `authorize()`,
+/// which applies the same check.
+///
+/// OPTIONS is excluded so CORS preflight still works; the preflighted request
+/// itself is then caught here.
+pub(crate) async fn csrf_guard(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::Method;
+    use axum::response::IntoResponse;
+
+    let is_read = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+    if !is_read && is_cross_origin_browser_request(req.headers()) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "cross-origin request refused",
+                "detail": "state-changing requests must originate from this node's own UI or a non-browser client",
+            })),
+        )
+            .into_response();
+    }
+
+    next.run(req).await
 }
 
 /// Axum middleware: record latency + response size per endpoint.
@@ -1475,4 +1555,187 @@ pub async fn serve(
 
     axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::{AccessLevel, AuthConfig, Identity};
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                v.parse().unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn non_browser_clients_are_not_cross_origin() {
+        // curl, the CLI, a peer node: no Sec-Fetch-Site, no Origin.
+        assert!(!is_cross_origin_browser_request(&headers(&[])));
+        assert!(!is_cross_origin_browser_request(&headers(&[(
+            "user-agent",
+            "curl/8.5.0"
+        )])));
+    }
+
+    #[test]
+    fn own_ui_and_direct_navigation_are_not_cross_origin() {
+        assert!(!is_cross_origin_browser_request(&headers(&[(
+            "sec-fetch-site",
+            "same-origin"
+        )])));
+        // "none" = typed URL or bookmark — the operator acting deliberately.
+        assert!(!is_cross_origin_browser_request(&headers(&[(
+            "sec-fetch-site",
+            "none"
+        )])));
+        assert!(!is_cross_origin_browser_request(&headers(&[
+            ("origin", "http://127.0.0.1:8400"),
+            ("host", "127.0.0.1:8400"),
+        ])));
+    }
+
+    #[test]
+    fn another_site_is_cross_origin() {
+        assert!(is_cross_origin_browser_request(&headers(&[(
+            "sec-fetch-site",
+            "cross-site"
+        )])));
+        assert!(is_cross_origin_browser_request(&headers(&[(
+            "sec-fetch-site",
+            "same-site"
+        )])));
+        // Older browsers: Origin that does not match Host.
+        assert!(is_cross_origin_browser_request(&headers(&[
+            ("origin", "https://evil.example"),
+            ("host", "127.0.0.1:8400"),
+        ])));
+        // Sandboxed iframe sends the opaque origin "null".
+        assert!(is_cross_origin_browser_request(&headers(&[
+            ("origin", "null"),
+            ("host", "127.0.0.1:8400"),
+        ])));
+    }
+
+    #[test]
+    fn sec_fetch_site_wins_over_a_forged_origin() {
+        // Origin looks same-origin but the browser says otherwise; trust the
+        // browser-controlled header.
+        assert!(is_cross_origin_browser_request(&headers(&[
+            ("sec-fetch-site", "cross-site"),
+            ("origin", "http://127.0.0.1:8400"),
+            ("host", "127.0.0.1:8400"),
+        ])));
+    }
+
+    // -- authorize() ---------------------------------------------------------
+
+    fn loopback() -> std::net::SocketAddr {
+        "127.0.0.1:54321".parse().unwrap()
+    }
+
+    fn open_mode() -> AuthConfig {
+        AuthConfig {
+            api_key: String::new(),
+            admin_key: String::new(),
+        }
+    }
+
+    /// The regression: a page on another site fetching a loopback admin
+    /// endpoint used to be granted `Identity::Localhost` — full trust — because
+    /// the TCP connection came from 127.0.0.1.
+    #[test]
+    fn cross_origin_page_is_denied_localhost_trust() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = headers(&[("sec-fetch-site", "cross-site"), ("origin", "https://evil.example")]);
+
+        let result = authorize(
+            &open_mode(),
+            None,
+            &h,
+            loopback(),
+            AccessLevel::Admin,
+            dir.path(),
+        );
+        assert!(
+            result.is_err(),
+            "a cross-origin browser request must not get admin over loopback"
+        );
+    }
+
+    #[test]
+    fn operator_on_the_box_still_trusted() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = authorize(
+            &open_mode(),
+            None,
+            &headers(&[]),
+            loopback(),
+            AccessLevel::Admin,
+            dir.path(),
+        );
+        assert!(
+            matches!(result, Ok(Identity::Localhost)),
+            "curl on the node itself must keep working, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn own_ui_over_loopback_still_trusted() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = authorize(
+            &open_mode(),
+            None,
+            &headers(&[("sec-fetch-site", "same-origin")]),
+            loopback(),
+            AccessLevel::Admin,
+            dir.path(),
+        );
+        assert!(matches!(result, Ok(Identity::Localhost)), "got {result:?}");
+    }
+
+    /// Open mode is an invitation to the operator, not to every site they visit.
+    #[test]
+    fn open_mode_does_not_extend_to_cross_origin_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        let remote: std::net::SocketAddr = "203.0.113.9:44444".parse().unwrap();
+        let result = authorize(
+            &open_mode(),
+            None,
+            &headers(&[("sec-fetch-site", "cross-site")]),
+            remote,
+            AccessLevel::Admin,
+            dir.path(),
+        );
+        assert!(result.is_err(), "got {result:?}");
+    }
+
+    /// A real credential still works from a cross-origin context — the guard
+    /// removes *implicit* trust only.
+    #[test]
+    fn explicit_key_still_works_cross_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let auth = AuthConfig {
+            api_key: "write-key".to_string(),
+            admin_key: "admin-key".to_string(),
+        };
+        let result = authorize(
+            &auth,
+            None,
+            &headers(&[("sec-fetch-site", "cross-site"), ("x-api-key", "admin-key")]),
+            loopback(),
+            AccessLevel::Admin,
+            dir.path(),
+        );
+        assert!(matches!(result, Ok(Identity::GridKey)), "got {result:?}");
+    }
 }

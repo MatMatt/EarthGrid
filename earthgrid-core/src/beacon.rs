@@ -1201,6 +1201,11 @@ pub fn beacon_router(state: BeaconState) -> Router {
         .route("/api/beacon/metrics", get(grid_metrics))
         .route("/api/beacon/grid-stats", get(grid_node_stats))
         .route("/api/beacon/ws", axum::routing::any(crate::beacon_federation::ws_handler))
+        // Beacon routes are merged into the app *after* the main router's
+        // layers, so they need their own CSRF guard. Without it, a page on
+        // another site could DELETE /api/beacon/nodes/{id} — which in open mode
+        // takes no credential at all — and evict nodes from the registry.
+        .layer(axum::middleware::from_fn(crate::server::csrf_guard))
         .with_state(state)
 }
 
