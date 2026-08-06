@@ -703,6 +703,7 @@ pub async fn serve(
                     registry: Arc::new(Mutex::new(registry)),
                     federation: Some(federation),
                     auth: auth.clone(),
+                    federation_auth: crate::beacon_federation::FederationAuth::from_env(),
                 };
                 app = app.merge(beacon_router(beacon_state.clone()));
                 println!("🔦 Beacon registry enabled ({}) [beacon_id={}]", beacon_db_path.display(), &beacon_id[..8]);

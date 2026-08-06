@@ -83,7 +83,7 @@ impl AuthConfig {
 }
 
 /// Constant-time string comparison to prevent timing attacks on key checks.
-fn constant_time_eq_str(a: &str, b: &str) -> bool {
+pub(crate) fn constant_time_eq_str(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }

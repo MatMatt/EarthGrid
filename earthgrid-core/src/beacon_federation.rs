@@ -85,37 +85,85 @@ impl FederationState {
 // WebSocket handler (inbound connections from peer beacons)
 // ---------------------------------------------------------------------------
 
+/// Header carrying the federation credential on the WebSocket handshake.
+pub const FEDERATION_KEY_HEADER: &str = "x-earthgrid-federation-key";
+
+/// The credential two beacons share in order to federate.
+///
+/// Deliberately *not* the node's `EARTHGRID_API_KEY`. A federated peer needs
+/// exactly one capability — beacon registry sync — and nothing else. Reusing
+/// the grid key would hand every peer write access to the whole node API
+/// (`/api/fetch`, `/api/replicate`, the fetch queue, …), because the dialer
+/// must transmit whatever key the listener checks.
+#[derive(Debug, Clone, Default)]
+pub struct FederationAuth {
+    key: String,
+}
+
+impl FederationAuth {
+    /// Read `EARTHGRID_FEDERATION_KEY` from the environment.
+    pub fn from_env() -> Self {
+        Self {
+            key: std::env::var("EARTHGRID_FEDERATION_KEY").unwrap_or_default(),
+        }
+    }
+
+    /// Whether a federation key has been configured.
+    pub fn is_configured(&self) -> bool {
+        !self.key.is_empty()
+    }
+
+    /// The configured key, for the outbound dialer.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Whether `presented` matches the configured key.
+    ///
+    /// Returns false when nothing is configured: federation **fails closed**,
+    /// so an unconfigured beacon refuses to federate rather than accepting
+    /// everyone. Comparison is constant-time.
+    pub fn verify(&self, presented: Option<&str>) -> bool {
+        if !self.is_configured() {
+            return false;
+        }
+        presented.is_some_and(|p| crate::auth::constant_time_eq_str(p, &self.key))
+    }
+}
+
 /// GET /beacon/ws — upgrade to WebSocket for federation sync.
 ///
-/// Requires the shared grid key when one is configured. The peer that opens
-/// this socket is not a passive reader: `apply_remote_event` lets it upsert
-/// nodes into the registry and, via `NodePruned`, **delete** any node by ID.
-/// Without a check, anyone who can reach the port could wipe a beacon's
-/// registry or fill it with fabricated nodes.
+/// A peer on this socket is not a passive reader: `apply_remote_event` lets it
+/// upsert nodes into the registry and, via `NodePruned`, **delete** any node by
+/// ID. Previously the upgrade was unauthenticated, so anyone who could reach
+/// the port could wipe a beacon's registry or fill it with fabricated nodes.
 ///
-/// When no key is configured the socket stays open, matching the rest of the
-/// node's open-mode behaviour — so set `EARTHGRID_API_KEY` on federated
-/// beacons, and set it to the *same* value on each, or they cannot peer.
+/// Fails closed. With no `EARTHGRID_FEDERATION_KEY` configured the endpoint is
+/// disabled outright — an unconfigured beacon federates with nobody instead of
+/// with everybody.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<BeaconState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if state.auth.is_enabled() {
-        let key = headers
-            .get("x-api-key")
-            .and_then(|v| v.to_str().ok())
-            .or_else(|| {
-                headers
-                    .get("authorization")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.strip_prefix("Bearer "))
-            });
-        if state.auth.check_write(key).is_err() {
-            warn!("Federation: rejecting unauthenticated WebSocket upgrade");
-            return (StatusCode::UNAUTHORIZED, "federation key required").into_response();
-        }
+    if !state.federation_auth.is_configured() {
+        warn!("Federation: WS refused — EARTHGRID_FEDERATION_KEY is not set");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "beacon federation is disabled: set EARTHGRID_FEDERATION_KEY to enable it",
+        )
+            .into_response();
     }
+
+    let presented = headers
+        .get(FEDERATION_KEY_HEADER)
+        .and_then(|v| v.to_str().ok());
+
+    if !state.federation_auth.verify(presented) {
+        warn!("Federation: rejecting WS upgrade with missing or invalid federation key");
+        return (StatusCode::UNAUTHORIZED, "invalid federation key").into_response();
+    }
+
     ws.on_upgrade(move |socket| handle_peer_connection(socket, state))
         .into_response()
 }
@@ -250,6 +298,15 @@ fn upsert_if_newer(registry: &crate::beacon::BeaconRegistry, node: &BeaconNode) 
 
 /// Spawn background tasks that connect to each peer beacon via WebSocket.
 pub fn spawn_peer_connections(state: BeaconState, peer_urls: Vec<String>) {
+    if !state.federation_auth.is_configured() {
+        warn!(
+            "Federation: {} peer(s) configured but EARTHGRID_FEDERATION_KEY is not set — \
+             not connecting. Set the same key on every federated beacon.",
+            peer_urls.len()
+        );
+        return;
+    }
+
     for url in peer_urls {
         let state = state.clone();
         tokio::spawn(async move {
@@ -259,23 +316,25 @@ pub fn spawn_peer_connections(state: BeaconState, peer_urls: Vec<String>) {
 }
 
 /// Build the WebSocket handshake request for a peer beacon, attaching the
-/// shared grid key as `x-api-key` when one is configured.
+/// shared federation key.
 fn build_federation_request(
     ws_url: &str,
-    api_key: &str,
+    federation_key: &str,
 ) -> std::result::Result<tokio_tungstenite::tungstenite::handshake::client::Request, String> {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    if federation_key.is_empty() {
+        return Err("no federation key configured".to_string());
+    }
 
     let mut request = ws_url
         .into_client_request()
         .map_err(|e| format!("invalid websocket url: {e}"))?;
 
-    if !api_key.is_empty() {
-        let value = api_key
-            .parse()
-            .map_err(|_| "grid key is not a valid header value".to_string())?;
-        request.headers_mut().insert("x-api-key", value);
-    }
+    let value = federation_key
+        .parse()
+        .map_err(|_| "federation key is not a valid header value".to_string())?;
+    request.headers_mut().insert(FEDERATION_KEY_HEADER, value);
 
     Ok(request)
 }
@@ -294,9 +353,9 @@ async fn connect_to_peer_loop(state: BeaconState, peer_url: String) {
     loop {
         info!("Federation: connecting to peer {}", ws_url);
 
-        // Present the shared grid key so the peer's `ws_handler` accepts us.
-        // Rebuilt each attempt because `connect_async` consumes the request.
-        let request = match build_federation_request(&ws_url, &state.auth.api_key) {
+        // Present the shared federation key so the peer's `ws_handler` accepts
+        // us. Rebuilt each attempt because `connect_async` consumes the request.
+        let request = match build_federation_request(&ws_url, state.federation_auth.key()) {
             Ok(r) => r,
             Err(e) => {
                 warn!("Federation: cannot build request for {}: {}", ws_url, e);
@@ -478,28 +537,57 @@ mod tests {
     }
 
     #[test]
-    fn federation_request_carries_grid_key() {
-        let req = build_federation_request("ws://beacon.example/api/beacon/ws", "grid-secret")
+    fn federation_request_carries_federation_key() {
+        let req = build_federation_request("ws://beacon.example/api/beacon/ws", "fed-secret")
             .expect("request should build");
         assert_eq!(
-            req.headers().get("x-api-key").map(|v| v.to_str().unwrap()),
-            Some("grid-secret"),
-            "dialer must present the key the peer's ws_handler now requires"
+            req.headers()
+                .get(FEDERATION_KEY_HEADER)
+                .map(|v| v.to_str().unwrap()),
+            Some("fed-secret"),
+            "dialer must present the key the peer's ws_handler requires"
+        );
+        assert!(
+            req.headers().get("x-api-key").is_none(),
+            "the node's grid API key must never be sent to a federated peer"
         );
     }
 
     #[test]
-    fn federation_request_omits_empty_key() {
-        let req = build_federation_request("ws://beacon.example/api/beacon/ws", "")
-            .expect("request should build");
+    fn federation_request_requires_a_key() {
         assert!(
-            req.headers().get("x-api-key").is_none(),
-            "keyless deployments must dial exactly as before"
+            build_federation_request("ws://beacon.example/api/beacon/ws", "").is_err(),
+            "dialing without a federation key must fail rather than connect anonymously"
         );
     }
 
     #[test]
     fn federation_request_rejects_bad_url() {
         assert!(build_federation_request("not a url", "k").is_err());
+    }
+
+    /// Federation must fail closed: an unconfigured beacon federates with
+    /// nobody, rather than accepting every anonymous client.
+    #[test]
+    fn unconfigured_federation_auth_rejects_everything() {
+        let auth = FederationAuth::default();
+        assert!(!auth.is_configured());
+        assert!(!auth.verify(None));
+        assert!(!auth.verify(Some("")));
+        assert!(!auth.verify(Some("anything")));
+    }
+
+    #[test]
+    fn configured_federation_auth_accepts_only_the_key() {
+        let auth = FederationAuth { key: "correct-horse".to_string() };
+        assert!(auth.is_configured());
+        assert!(auth.verify(Some("correct-horse")));
+
+        assert!(!auth.verify(None));
+        assert!(!auth.verify(Some("")));
+        assert!(!auth.verify(Some("wrong")));
+        assert!(!auth.verify(Some("correct-horse ")), "no trimming");
+        assert!(!auth.verify(Some("correct-hors")), "prefix must not pass");
+        assert!(!auth.verify(Some("correct-horse-battery")), "extension must not pass");
     }
 }

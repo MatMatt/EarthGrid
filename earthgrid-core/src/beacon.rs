@@ -975,6 +975,9 @@ pub struct BeaconState {
     pub registry: Arc<Mutex<BeaconRegistry>>,
     pub federation: Option<FederationState>,
     pub auth: AuthConfig,
+    /// Credential for beacon-to-beacon federation. Separate from `auth` on
+    /// purpose: a federated peer gets registry sync only, not the node API.
+    pub federation_auth: crate::beacon_federation::FederationAuth,
 }
 
 async fn register_node(

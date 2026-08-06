@@ -88,13 +88,37 @@ curl http://<your-public-ip>:8400/node-info
 
 Beacons federate with each other via **real-time WebSocket connections** — sharing their node registries so every beacon has the complete grid view.
 
+Federation requires a shared secret, `EARTHGRID_FEDERATION_KEY`. **Every beacon
+that federates must set the same value.**
+
 ```bash
+# Generate one secret and copy it to every federated beacon
+openssl rand -hex 32
+
+# On each beacon:
+export EARTHGRID_FEDERATION_KEY=<the same value everywhere>
+
 # Add a peer beacon
-export EARTHGRID_BEACON_PEERS=http://other-beacon.example.com:8400
+export EARTHGRID_BEACON_PEERS=https://other-beacon.example.com:8400
 
 # Or add multiple (comma-separated)
-export EARTHGRID_BEACON_PEERS=http://beacon1.example.com:8400,http://beacon2.example.com:8400
+export EARTHGRID_BEACON_PEERS=https://beacon1.example.com:8400,https://beacon2.example.com:8400
 ```
+
+Notes:
+
+- **Without the key, federation is off.** `/api/beacon/ws` returns 503 and no
+  outbound connections are attempted. This is deliberate: a peer on that socket
+  can add nodes to your registry *and delete them*, so an unconfigured beacon
+  federates with nobody rather than with anybody.
+- **The federation key is separate from `EARTHGRID_API_KEY` on purpose.** A
+  federated peer gets registry sync and nothing else — it cannot write to your
+  node's API. Do not reuse your grid key here.
+- **Use `https://` peer URLs.** The key travels in a request header on the
+  WebSocket handshake; over plain `http://` it is sent in the clear.
+- Mismatched keys are not silent: the dialer logs
+  `Federation: failed to connect to <url>` once a minute and retries with
+  backoff.
 
 ### How it works
 
