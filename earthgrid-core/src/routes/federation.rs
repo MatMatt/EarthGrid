@@ -1,12 +1,14 @@
 use axum::{
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
+use std::net::SocketAddr;
 
-use crate::server::{AppState, api_key, err};
+use crate::auth::AccessLevel;
+use crate::server::{AppState, api_key, authorize, err};
 use crate::peers::NodeInfo;
 
 
@@ -46,8 +48,25 @@ pub(crate) async fn list_peers(State(state): State<AppState>) -> Json<serde_json
 /// POST /peers?url=...&node_id=...&node_name=... — register a peer
 pub(crate) async fn register_peer(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<RegisterPeerQuery>,
 ) -> impl IntoResponse {
+    // A registered peer is not passive: the heartbeat/gossip loop contacts it
+    // every 60s and the auto-replication loop pulls items and chunks from it
+    // every 5 minutes. Letting anyone register a URL turns one unauthenticated
+    // request into a standing data-ingestion channel from an attacker's server.
+    if let Err(e) = authorize(
+        &state.auth,
+        state.user_auth.as_deref(),
+        &headers,
+        addr,
+        AccessLevel::Write,
+        &state.data_dir,
+    ) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
     if q.url.is_empty() {
         return err(StatusCode::BAD_REQUEST, "url is required").into_response();
     }

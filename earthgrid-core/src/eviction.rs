@@ -204,23 +204,29 @@ fn build_replica_map_from_beacon(beacon_url: &str) -> std::collections::HashMap<
     let mut map = std::collections::HashMap::new();
     let url = format!("{}/api/beacon/nodes", beacon_url.trim_end_matches('/'));
 
-    // Blocking HTTP request (eviction runs in a background task)
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build();
-    let Ok(client) = client else { return map };
-
-    let resp = match client.get(&url).send() {
-        Ok(r) if r.status().is_success() => r,
-        _ => {
+    // Synchronous HTTP via ureq, NOT reqwest::blocking.
+    //
+    // `evict_with_beacon_url` is called from both sync contexts (the CLI) and
+    // from inside a `tokio::spawn` (the auto-eviction loop in server.rs).
+    // `reqwest::blocking` builds and drops its own runtime, which panics with
+    // "Cannot drop a runtime in a context where blocking is not allowed" when
+    // called from an async context — killing the auto-eviction task on its
+    // first run, so nodes silently grew past their storage limit forever.
+    // ureq is genuinely synchronous and safe from either context.
+    let body: serde_json::Value = match ureq::get(&url)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .build()
+        .call()
+    {
+        Ok(mut resp) => match resp.body_mut().read_json() {
+            Ok(v) => v,
+            Err(_) => return map,
+        },
+        Err(_) => {
             eprintln!("⚠️  Eviction: could not reach beacon at {}", url);
             return map;
         }
-    };
-
-    let body: serde_json::Value = match resp.json() {
-        Ok(v) => v,
-        Err(_) => return map,
     };
 
     // Count how many nodes have each collection
@@ -284,4 +290,56 @@ fn now_ts() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: eviction must be callable from inside an async task.
+    ///
+    /// `build_replica_map_from_beacon` used `reqwest::blocking`, which builds
+    /// and drops its own runtime. Called from the `tokio::spawn` auto-eviction
+    /// loop in `server.rs`, that panicked with "Cannot drop a runtime in a
+    /// context where blocking is not allowed", so the task died on its first
+    /// run and nodes never evicted anything — they just grew past their limit.
+    ///
+    /// The beacon URL points at a closed port: we are asserting that the call
+    /// *returns* (a failed lookup yields an empty replica map) rather than
+    /// unwinding.
+    #[test]
+    fn evict_from_async_context_does_not_panic() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let joined = rt.block_on(async {
+            tokio::spawn(async {
+                let dir = tempfile::tempdir().unwrap();
+                let catalog = Catalog::new(&dir.path().join("catalog.db")).unwrap();
+                let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+                store.put(b"some bytes worth evicting").unwrap();
+
+                // target_gb below current usage forces the eviction path,
+                // which reaches out to the beacon for the replica map.
+                evict_with_beacon_url(
+                    &catalog,
+                    &mut store,
+                    0.0000000001,
+                    None,
+                    Some("http://127.0.0.1:1"),
+                )
+                .map(|r| r.items_deleted)
+            })
+            .await
+        });
+
+        assert!(
+            joined.is_ok(),
+            "eviction panicked inside a tokio task: {:?}",
+            joined.err()
+        );
+        assert!(joined.unwrap().is_ok(), "eviction returned an error");
+    }
 }

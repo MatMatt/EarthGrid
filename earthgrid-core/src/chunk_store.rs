@@ -171,14 +171,34 @@ impl ChunkStore {
         hex::encode(hasher.finalize())
     }
 
+    /// Whether `hash` is a canonical SHA-256 digest: exactly 64 lowercase hex
+    /// characters, the form `hash_bytes` produces.
+    ///
+    /// Uppercase is rejected on purpose. Content addresses have one canonical
+    /// spelling, and on case-insensitive filesystems accepting both would let
+    /// two distinct hash strings resolve to the same file.
+    pub fn is_valid_hash(hash: &str) -> bool {
+        hash.len() == 64
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+
     /// Store a chunk. Returns its SHA-256 hash.
     ///
     /// If the chunk already exists, this is a no-op (content-addressed dedup).
     pub fn put(&mut self, data: &[u8]) -> Result<String> {
         let hash = Self::hash_bytes(data);
 
-        // Fast dedup check via chunk path
-        let path = self.chunk_path(&hash);
+        // Fast dedup check via chunk path.
+        // `hash` comes from `hash_bytes`, so it is canonical by construction and
+        // `chunk_path` cannot reject it — but degrade rather than panic if that
+        // ever stops holding.
+        let Some(path) = self.chunk_path(&hash) else {
+            return Err(EarthGridError::Other(format!(
+                "computed hash is not a canonical digest: {hash}"
+            )));
+        };
         if path.exists() {
             return Ok(hash);
         }
@@ -226,7 +246,9 @@ impl ChunkStore {
     ///
     /// Returns `None` if the chunk doesn't exist.
     pub fn get(&self, hash: &str) -> Result<Option<Vec<u8>>> {
-        let path = self.chunk_path(hash);
+        let Some(path) = self.chunk_path(hash) else {
+            return Ok(None); // Malformed hash — treat as "not found", never touch the FS
+        };
         if !path.exists() {
             return Ok(None);
         }
@@ -242,7 +264,7 @@ impl ChunkStore {
 
     /// Check if a chunk exists.
     pub fn has(&self, hash: &str) -> bool {
-        self.chunk_path(hash).exists()
+        self.chunk_path(hash).is_some_and(|p| p.exists())
     }
 
     /// Get the size in bytes of a single chunk from the DB index.
@@ -259,7 +281,9 @@ impl ChunkStore {
     ///
     /// Returns `Ok(true)` if valid, `Err(IntegrityViolation)` if corrupted.
     pub fn verify(&self, hash: &str) -> Result<bool> {
-        let path = self.chunk_path(hash);
+        let Some(path) = self.chunk_path(hash) else {
+            return Err(EarthGridError::ChunkNotFound(hash.to_string()));
+        };
         if !path.exists() {
             return Err(EarthGridError::ChunkNotFound(hash.to_string()));
         }
@@ -276,7 +300,9 @@ impl ChunkStore {
 
     /// Delete a chunk by hash. Returns `true` if it was deleted.
     pub fn delete(&mut self, hash: &str) -> Result<bool> {
-        let path = self.chunk_path(hash);
+        let Some(path) = self.chunk_path(hash) else {
+            return Ok(false); // Malformed hash — nothing to delete
+        };
         if path.exists() {
             let size = self.chunk_size(hash).unwrap_or(0);
             fs::remove_file(&path)?;
@@ -339,11 +365,25 @@ impl ChunkStore {
 
     // --- Private ---
 
-    fn chunk_path(&self, hash: &str) -> PathBuf {
-        self.store_path
-            .join(&hash[..2])
-            .join(&hash[2..4])
-            .join(hash)
+    /// Build the on-disk path for a chunk, or `None` if `hash` is not a
+    /// canonical SHA-256 digest.
+    ///
+    /// Validation is mandatory, not cosmetic: `hash` reaches this function
+    /// straight from URL path segments (`GET /api/chunks/{sha}`). Without the
+    /// check, `hash[2..4]` of `../../../etc/passwd` is `"/."`, and `PathBuf::join`
+    /// on an absolute component *discards* `store_path` entirely — turning the
+    /// chunk endpoint into an arbitrary-file read. Short or non-ASCII input
+    /// would also panic on the byte slices.
+    fn chunk_path(&self, hash: &str) -> Option<PathBuf> {
+        if !Self::is_valid_hash(hash) {
+            return None;
+        }
+        Some(
+            self.store_path
+                .join(&hash[..2])
+                .join(&hash[2..4])
+                .join(hash),
+        )
     }
 
     fn db_chunk_count(db: &Connection) -> usize {
@@ -405,8 +445,10 @@ impl ChunkStore {
         {
             if entry.file_type().is_file() {
                 if let Some(name) = entry.path().file_name().and_then(|n| n.to_str()) {
-                    // Skip non-hash files (tmp files, etc.)
-                    if name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit()) {
+                    // Skip non-hash files (tmp files, etc.). Uses the same
+                    // validator as `chunk_path`, so we never index a name that
+                    // could not later be read back.
+                    if Self::is_valid_hash(name) {
                         let size = entry.metadata().map(|m| m.len()).unwrap_or(0) as i64;
                         tx.execute(
                             "INSERT OR IGNORE INTO chunks (hash, size_bytes, created_at) VALUES (?1, ?2, ?3)",
@@ -522,13 +564,63 @@ mod tests {
     }
 
     #[test]
+    fn test_is_valid_hash() {
+        let valid = "a".repeat(64);
+        assert!(ChunkStore::is_valid_hash(&valid));
+        assert!(ChunkStore::is_valid_hash(&ChunkStore::hash_bytes(b"anything")));
+
+        assert!(!ChunkStore::is_valid_hash(""));
+        assert!(!ChunkStore::is_valid_hash("abc"));
+        assert!(!ChunkStore::is_valid_hash(&"a".repeat(63)));
+        assert!(!ChunkStore::is_valid_hash(&"a".repeat(65)));
+        assert!(!ChunkStore::is_valid_hash(&"A".repeat(64)), "uppercase is not canonical");
+        assert!(!ChunkStore::is_valid_hash(&"g".repeat(64)), "non-hex rejected");
+    }
+
+    /// A hash from a URL path segment must never escape the store directory.
+    /// `"../../../etc/passwd"` splits to `".."` / `"/."`; because `"/."` is
+    /// absolute, `PathBuf::join` used to drop `store_path` and resolve to
+    /// `/etc/passwd`.
+    #[test]
+    fn test_traversal_rejected() {
+        let dir = tempdir().unwrap();
+        let store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        for evil in [
+            "../../../etc/passwd",
+            "..%2F..%2Fetc%2Fpasswd",
+            "/etc/passwd",
+            "....//....//etc/passwd",
+        ] {
+            assert!(store.chunk_path(evil).is_none(), "chunk_path accepted {evil:?}");
+            assert_eq!(store.get(evil).unwrap(), None, "get() served {evil:?}");
+            assert!(!store.has(evil));
+        }
+    }
+
+    /// Short or non-ASCII hashes used to panic on the `hash[..2]` byte slice,
+    /// killing the connection for `GET /api/chunks/a`.
+    #[test]
+    fn test_malformed_hash_does_not_panic() {
+        let dir = tempdir().unwrap();
+        let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        for bad in ["", "a", "ab", "abc", "é", "aé", "日本語"] {
+            assert_eq!(store.get(bad).unwrap(), None);
+            assert!(!store.has(bad));
+            assert!(!store.delete(bad).unwrap());
+            assert!(store.verify(bad).is_err());
+        }
+    }
+
+    #[test]
     fn test_atomic_write() {
         let dir = tempdir().unwrap();
         let store_path = dir.path().join("store");
         let mut store = ChunkStore::new(&store_path, 0.0).unwrap();
 
         let hash = store.put(b"atomic write").unwrap();
-        let path = store.chunk_path(&hash);
+        let path = store.chunk_path(&hash).unwrap();
         let tmp = path.with_extension("tmp");
         // Temp file should not exist after put (renamed)
         assert!(!tmp.exists());
