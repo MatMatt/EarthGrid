@@ -1209,6 +1209,18 @@ pub fn beacon_router(state: BeaconState) -> Router {
         .with_state(state)
 }
 
+/// Apply the node-wide open-mode guard to the beacon routes.
+///
+/// Kept separate from `beacon_router` because it needs `AppState`, which the
+/// beacon router does not carry. Without it, `DELETE /api/beacon/nodes/{id}`
+/// takes no credential at all on a keyless node.
+pub fn with_open_mode_guard(router: Router, app_state: crate::server::AppState) -> Router {
+    router.layer(axum::middleware::from_fn_with_state(
+        app_state,
+        crate::server::open_mode_guard,
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

@@ -197,12 +197,15 @@ pub(crate) fn authorize(
         }
     }
 
-    // 5. Open mode fallback — no key, no session, auth not enabled.
-    //    Still refused for cross-origin browser requests: "no auth configured"
-    //    is an invitation to the operator, not to every site they browse.
-    if !auth.is_enabled() && !cross_origin {
-        return Ok(crate::auth::Identity::Localhost); // open mode = localhost-equivalent
-    }
+    // 5. Open mode used to grant full trust here to *any* caller, from any
+    //    address, whenever no API key was configured — the default. Combined
+    //    with `--host 0.0.0.0` (also the default), that handed the admin API to
+    //    anyone who could reach the port.
+    //
+    //    Open mode now means "no credential needed *locally*": loopback is
+    //    already handled by step 1, so a remote caller with no valid credential
+    //    falls through to the error below. `docker exec` + curl on 127.0.0.1
+    //    stays trusted, so there is always a recovery path.
 
     Err(crate::error::EarthGridError::AuthRequired)
 }
@@ -359,6 +362,10 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             perf_middleware,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            open_mode_guard,
+        ))
         .layer(axum::middleware::from_fn(csrf_guard))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -379,6 +386,106 @@ pub fn router(state: AppState) -> Router {
 ///
 /// OPTIONS is excluded so CORS preflight still works; the preflighted request
 /// itself is then caught here.
+/// Whether the request carries a credential that actually validates — a live
+/// per-user key from `users.db`, or a correctly signed session cookie.
+///
+/// Deliberately does not consult the env grid keys: this is only called when
+/// none are configured.
+fn has_valid_credential(state: &AppState, headers: &HeaderMap) -> bool {
+    let key = api_key(headers).or_else(|| {
+        headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+    });
+    if let (Some(k), Some(ua)) = (key, state.user_auth.as_deref()) {
+        if matches!(ua.validate_key(k), Ok(Some(_))) {
+            return true;
+        }
+    }
+
+    if let Some(cookie) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
+        if let Some(token) = crate::session::extract_cookie(cookie) {
+            let secret = crate::session::session_secret(&state.data_dir);
+            if crate::session::validate_token(&token, &secret).is_some() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Endpoints that must stay reachable without a credential, because they are
+/// how a credential is obtained or discarded.
+fn is_auth_bootstrap_path(path: &str) -> bool {
+    matches!(
+        path.trim_end_matches('/'),
+        "/ui/login" | "/ui/logout" | "/api/ui/login" | "/api/ui/logout"
+    )
+}
+
+/// On a node with no API key configured, require a real credential before any
+/// remote client may change state.
+///
+/// `authorize()` covers the handlers that call it, but most write endpoints use
+/// `check_write`/`check_admin`, and those return Ok for *everyone* when no key
+/// is set. With `--host 0.0.0.0` and no `EARTHGRID_API_KEY` — both defaults —
+/// that left `/api/fetch`, `/api/replicate`, `/api/resize`, the fetch queue and
+/// the rest open to anyone who could reach the port.
+///
+/// Loopback is exempt, so the CLI on the host (or `docker exec` inside the
+/// container) always works and the operator can never be locked out. Reads are
+/// untouched — this is a public data grid.
+pub(crate) async fn open_mode_guard(
+    State(state): State<AppState>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::Method;
+    use axum::response::IntoResponse;
+
+    // A configured key means the handlers' own checks are already meaningful.
+    if state.auth.is_enabled() {
+        return next.run(req).await;
+    }
+
+    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+        return next.run(req).await;
+    }
+
+    // Sign-in is how a remote user *obtains* a credential, so it cannot be made
+    // to require one — that would lock every remote operator out of the web UI.
+    // It is safe to exempt: `login_handler` validates the username and API key
+    // itself and issues nothing without them.
+    if is_auth_bootstrap_path(req.uri().path()) {
+        return next.run(req).await;
+    }
+
+    let is_loopback = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| is_localhost(ci.0))
+        .unwrap_or(false);
+    if is_loopback {
+        return next.run(req).await;
+    }
+
+    if has_valid_credential(&state, req.headers()) {
+        return next.run(req).await;
+    }
+
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({
+            "error": "Authentication required",
+            "detail": "this node has no EARTHGRID_API_KEY set, so remote clients must \
+                       authenticate with a user API key or a session cookie",
+        })),
+    )
+        .into_response()
+}
+
 pub(crate) async fn csrf_guard(
     req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
@@ -770,6 +877,9 @@ pub async fn serve(
     let evict_data_dir_c = data_dir.clone();
     let evict_is_beacon_c = beacon_enabled;
 
+    // Kept for the beacon router, which is merged after `router()` has already
+    // consumed `state` and therefore needs its own copy for the open-mode guard.
+    let state_for_guard = state.clone();
     let mut app = router(state);
 
     // Mount beacon routes if enabled
@@ -785,7 +895,10 @@ pub async fn serve(
                     auth: auth.clone(),
                     federation_auth: crate::beacon_federation::FederationAuth::from_env(),
                 };
-                app = app.merge(beacon_router(beacon_state.clone()));
+                app = app.merge(crate::beacon::with_open_mode_guard(
+                    beacon_router(beacon_state.clone()),
+                    state_for_guard.clone(),
+                ));
                 println!("🔦 Beacon registry enabled ({}) [beacon_id={}]", beacon_db_path.display(), &beacon_id[..8]);
 
                 // Self-registration: register this node in its own beacon DB
@@ -900,6 +1013,21 @@ pub async fn serve(
                 }
             }
         });
+    }
+
+    // Tell the operator plainly when the node is reachable from off-box with no
+    // key set. Remote writes are refused in this state, so the node is not
+    // wide open — but read endpoints are public and the UI needs a login.
+    let binds_publicly = host != "127.0.0.1" && host != "localhost" && host != "::1";
+    if binds_publicly && !state_for_guard.auth.is_enabled() {
+        eprintln!(
+            "\n⚠️  No EARTHGRID_API_KEY set and listening on {host}.\n\
+             \x20   Remote clients cannot write to this node: they must present a user API key\n\
+             \x20   or sign in to the web UI. Local access (this host, or `docker exec`) is\n\
+             \x20   unrestricted.\n\
+             \x20   To allow remote automation, set EARTHGRID_API_KEY and restart.\n\
+             \x20   To create a UI login:  earthgrid admin add-user <name> --role admin\n"
+        );
     }
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -1737,5 +1865,23 @@ mod tests {
             dir.path(),
         );
         assert!(matches!(result, Ok(Identity::GridKey)), "got {result:?}");
+    }
+
+    /// Regression: `/ui/login` must never require a credential.
+    ///
+    /// The open-mode guard initially covered it, which made remote sign-in
+    /// impossible — you needed a session cookie to reach the endpoint that
+    /// issues session cookies, locking every remote operator out of the UI.
+    #[test]
+    fn login_is_exempt_from_the_open_mode_guard() {
+        assert!(is_auth_bootstrap_path("/ui/login"));
+        assert!(is_auth_bootstrap_path("/ui/login/"));
+        assert!(is_auth_bootstrap_path("/ui/logout"));
+
+        // Everything else stays guarded.
+        assert!(!is_auth_bootstrap_path("/api/resize"));
+        assert!(!is_auth_bootstrap_path("/api/admin/users"));
+        assert!(!is_auth_bootstrap_path("/ui"));
+        assert!(!is_auth_bootstrap_path("/ui/login/../api/resize"));
     }
 }
