@@ -1,7 +1,7 @@
 {
   "bootstrap_peers": [
     {
-      "url": "https://mattiuzzi.zapto.org/earthgrid",
+      "url": "https://earthgrid.mattiuzzi.com",
       "name": "node-alpha",
       "region": "eu-central"
     }
