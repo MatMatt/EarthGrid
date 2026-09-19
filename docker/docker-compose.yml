@@ -32,7 +32,7 @@ services:
       - EARTHGRID_BEACON_DB=/data/beacon.db
       # Uncomment to also run as beacon:
       - EARTHGRID_ALSO_BEACON=true
-      - EARTHGRID_PUBLIC_URL=https://mattiuzzi.zapto.org/earthgrid
+      - EARTHGRID_PUBLIC_URL=https://earthgrid.mattiuzzi.com
     env_file:
       - .env
     restart: unless-stopped
