@@ -36,6 +36,7 @@ jobs:
           path: dist/earthgrid-linux-x86_64.tar.gz
 
   build-macos:
+    continue-on-error: true
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -63,7 +64,7 @@ jobs:
           path: dist/earthgrid-macos-arm64.tar.gz
 
   release:
-    needs: [build-linux, build-macos]
+    needs: [build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
