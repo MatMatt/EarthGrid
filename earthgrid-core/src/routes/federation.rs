@@ -70,6 +70,13 @@ pub(crate) async fn register_peer(
     if q.url.is_empty() {
         return err(StatusCode::BAD_REQUEST, "url is required").into_response();
     }
+    // Outbound URL policy: the heartbeat and replication loops will fetch this
+    // URL, so it is checked before it is stored. A private address is accepted
+    // only if the operator configured its host as a peer.
+    let known_hosts = crate::url_policy::operator_hosts();
+    if let Err(e) = crate::url_policy::validate_outbound_url_async(&q.url, known_hosts).await {
+        return err(StatusCode::BAD_REQUEST, &e.to_string()).into_response();
+    }
     let mut registry = state.peers.lock().await;
     let peer = registry.add(
         &q.url,
@@ -107,16 +114,28 @@ pub(crate) async fn federation_sync(
         registry.list().into_iter().map(|p| p.url.clone()).collect()
     };
 
-    let client = reqwest::Client::builder()
+    // No fallback to `Client::default()`: that client follows redirects.
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
-        .unwrap_or_default();
+    {
+        Ok(c) => c,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    };
 
     let mut synced = 0usize;
     let mut failed = 0usize;
     let mut results = vec![];
 
+    let known_hosts = crate::url_policy::operator_hosts();
     for url in &peer_urls {
+        // Outbound URL policy — before any request is made to this peer.
+        if crate::url_policy::validate_outbound_url_async(url, known_hosts).await.is_err() {
+            results.push(serde_json::json!({"url": url, "status": "blocked"}));
+            failed += 1;
+            continue;
+        }
         // Try /node-info first, then fall back to /
         let info_url = format!("{}/api/node-info", url);
         match client.get(&info_url).send().await {
@@ -179,10 +198,20 @@ pub(crate) async fn federation_search(
             .collect()
     };
 
-    let client = reqwest::Client::builder()
+    // No fallback to `Client::default()`: that client follows redirects.
+    let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
-        .unwrap_or_default();
+    else {
+        return Json(serde_json::json!({
+            "type": "FeatureCollection",
+            "numberMatched": 0,
+            "numberReturned": 0,
+            "features": [],
+            "context": {"source": "federation"},
+        }));
+    };
 
     let mut all_items: Vec<serde_json::Value> = local_items
         .into_iter()
@@ -203,6 +232,10 @@ pub(crate) async fn federation_search(
         let q_col = q.collection.clone().or(q.collections.clone());
         let q_dt = q.datetime.clone();
         handles.push(tokio::spawn(async move {
+            // Outbound URL policy — before any request is made to this peer.
+            if crate::url_policy::validate_outbound_url_async(&url, crate::url_policy::operator_hosts()).await.is_err() {
+                return vec![];
+            }
             let mut params = vec![("limit", limit.to_string())];
             if let Some(c) = &q_col { params.push(("collections", c.clone())); }
             if let Some(b) = &q_bbox { params.push(("bbox", b.clone())); }

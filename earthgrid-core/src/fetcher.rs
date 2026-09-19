@@ -841,12 +841,32 @@ async fn delegate_fetch_to_node(
     bands: &[String],
     limit: usize,
     collection: &str,
-    admin_key: &str,
+    federation_key: &str,
+    offering_node_id: &str,
+    job_id: &str,
 ) -> FetchResult {
-    let client = reqwest::Client::builder()
+    let rejected = |why: String| FetchResult {
+        items_searched: 0, items_downloaded: 0, items_skipped: 0, bytes_downloaded: 0,
+        errors: vec![format!("{}: {}", node.node_name, why)],
+    };
+
+    // Outbound URL policy — before any request is made. `node.url` comes from
+    // the open beacon registry, where any keypair can register.
+    if let Err(e) = crate::url_policy::validate_outbound_url_async(&node.url, crate::url_policy::operator_hosts()).await {
+        warn!("Delegate to {} skipped: {}", node.node_name, e);
+        return rejected(e.to_string());
+    }
+
+    // This request carries a credential: never follow a node's redirect with
+    // it, and never fall back to `Client::default()`, which does follow them.
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
-        .unwrap_or_default();
+    {
+        Ok(c) => c,
+        Err(e) => return rejected(format!("HTTP client could not be built: {e}")),
+    };
 
     let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
     let bands_str = bands.join(",");
@@ -857,10 +877,21 @@ async fn delegate_fetch_to_node(
 
     info!("Delegating fetch to {} ({}): {} items max", node.node_name, node.url, limit);
 
-    // `admin_key` carries the grid key (EARTHGRID_API_KEY) — never send the admin key to remote nodes
+    // The node URL is registry-selected, so no reusable credential ever goes
+    // to it — not EARTHGRID_API_KEY, not EARTHGRID_ADMIN_KEY, and not the
+    // federation key either, which authorises registry writes: a
+    // self-registered node would simply harvest it. The delegated fetch
+    // presents a short-lived HMAC token derived from the federation key and
+    // bound to this beacon, this target node, this job and an expiry (format:
+    // see beacon_federation::DELEGATED_FETCH_HEADER), which the receiver
+    // accepts for this path only. Without a federation key nothing is sent.
     let mut req = client.post(&url);
-    if !admin_key.is_empty() {
-        req = req.header("x-api-key", admin_key);
+    match crate::beacon_federation::delegated_fetch_token(federation_key, offering_node_id, &node.node_id, job_id) {
+        Some(token) => req = req.header(crate::beacon_federation::DELEGATED_FETCH_HEADER, token),
+        None if !federation_key.is_empty() => {
+            warn!("Delegate to {}: node ids cannot be carried in a token, sending no credential", node.node_name);
+        }
+        None => {}
     }
     let resp = req.send().await;
 
@@ -911,7 +942,10 @@ pub async fn fetch_distributed(
     tile_filter: Option<&str>,
     beacon_url: &str,
     local_node_id: &str,
-    grid_key: &str,
+    // EARTHGRID_FEDERATION_KEY — never the grid or admin key. It stays on this
+    // beacon: only a short-lived token derived from it goes to node URLs taken
+    // from the open registry.
+    federation_key: &str,
 ) -> FetchResult {
     // Get alive nodes from beacon
     let mut nodes = get_grid_nodes(beacon_url).await;
@@ -964,6 +998,9 @@ pub async fn fetch_distributed(
         assignments.len(),
         assignments.iter().map(|(n, s)| format!("{}={}", n.node_name, s)).collect::<Vec<_>>());
 
+    // One id per distributed fetch, bound into every delegated-fetch token
+    let job_id = uuid::Uuid::new_v4().simple().to_string();
+
     // Execute in parallel: local node uses fetch_and_ingest, remote nodes get /fetch
     let mut handles = vec![];
     for (node, share) in assignments {
@@ -982,11 +1019,13 @@ pub async fn fetch_distributed(
             let n = node.clone();
             let b = bands.to_vec();
             let coll = collection.to_string();
-            let ak = grid_key.to_string();
+            let ak = federation_key.to_string();
+            let from = local_node_id.to_string();
+            let job = job_id.clone();
             let sd = start_date.to_string();
             let ed = end_date.to_string();
             handles.push(tokio::spawn(async move {
-                delegate_fetch_to_node(&n, bbox, &sd, &ed, cloud_cover, &b, share, &coll, &ak).await
+                delegate_fetch_to_node(&n, bbox, &sd, &ed, cloud_cover, &b, share, &coll, &ak, &from, &job).await
             }));
         }
     }

@@ -122,10 +122,26 @@ pub(crate) async fn fetch_handler(
     headers: HeaderMap,
     Query(q): Query<FetchQuery>,
 ) -> impl IntoResponse {
-    let key = api_key(&headers);
-    if let Err(e) = state.auth.check_write(key) {
-        state.audit.log("fetch", "auth_fail", "", false);
-        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    // A beacon delegating part of a distributed fetch (`local_only=true`)
+    // presents neither the grid key nor the federation key — no reusable
+    // credential may travel to a registry-selected node — but a short-lived
+    // token in `x-earthgrid-delegated-fetch`:
+    //   v1;<offering_node_id>;<job_id>;<expiry_unix_secs>;<hex HMAC-SHA256>
+    // an HMAC under the federation key over the domain tag, the offering node
+    // id, this node's id as the target, the job id and the expiry (see
+    // beacon_federation::DELEGATED_FETCH_HEADER). It is honoured for the
+    // delegated path only, only on the node it names, only until it expires
+    // (FederationAuth fails closed when no key is configured), and a raw
+    // federation key in its place is refused; every other request goes
+    // through the normal grid-key / admin-key check.
+    let federation_auth = crate::beacon_federation::FederationAuth::from_env();
+    let delegated = federation_auth.accepts_delegated_fetch(q.local_only.unwrap_or(false), &state.node_id, &headers);
+    if !delegated {
+        let key = api_key(&headers);
+        if let Err(e) = state.auth.check_write(key) {
+            state.audit.log("fetch", "auth_fail", "", false);
+            return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+        }
     }
 
     state.active_requests.fetch_add(1, Ordering::Relaxed);
@@ -179,7 +195,9 @@ pub(crate) async fn fetch_handler(
             tile_filter.as_deref(),
             &beacon_url,
             &state.node_id,
-            &state.auth.api_key,
+            // Delegation: nodes get a short-lived token derived from the
+            // federation key — never that key itself, nor the grid key
+            federation_auth.key(),
         )
         .await
     } else if !local_only {
@@ -190,12 +208,15 @@ pub(crate) async fn fetch_handler(
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                 .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
         });
-        if let Some(ref bu) = beacon_url {
+        // Forwarding client: no redirects, and no fallback to `Client::default()`
+        // (which follows them) — without a client the fetch simply runs locally.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .ok();
+        if let (Some(bu), Some(client)) = (beacon_url.as_ref(), client) {
             // Forward the fetch request to the beacon
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(600))
-                .build()
-                .unwrap_or_default();
             let bbox_str = format!("{},{},{},{}", bbox[0], bbox[1], bbox[2], bbox[3]);
             let bands_str = bands.join(",");
             let mut url = format!(

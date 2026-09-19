@@ -97,19 +97,20 @@ impl std::fmt::Debug for NetworkCommand {
 
 /// Load or generate an Ed25519 keypair.
 /// Stored at `data_dir/node.key` (raw 64-byte secret + public).
+///
+/// An existing `node.key` is never truncated or replaced: the file is created
+/// atomically and exclusively (mode 0600), and a process that loses the
+/// creation race loads the winner's key. A file that stays unparsable is left
+/// untouched and the generated key is used unpersisted.
 fn load_or_generate_keypair(data_dir: &Path) -> libp2p::identity::Keypair {
     let key_path = data_dir.join("node.key");
 
     if key_path.exists() {
-        if let Ok(bytes) = std::fs::read(&key_path) {
-            // ed25519_from_bytes expects exactly 32-byte secret key
-            let secret = if bytes.len() == 64 { bytes[..32].to_vec() } else { bytes };
-            if let Ok(kp) = libp2p::identity::Keypair::ed25519_from_bytes(secret) {
-                info!("Loaded keypair from {}", key_path.display());
-                return kp;
-            }
-            warn!("Failed to parse keypair from {}, generating new", key_path.display());
+        if let Some(kp) = read_keypair(&key_path) {
+            info!("Loaded keypair from {}", key_path.display());
+            return kp;
         }
+        warn!("Failed to parse keypair from {}, generating new", key_path.display());
     }
 
     let kp = libp2p::identity::Keypair::generate_ed25519();
@@ -117,11 +118,37 @@ fn load_or_generate_keypair(data_dir: &Path) -> libp2p::identity::Keypair {
     if let Ok(ed_kp) = kp.clone().try_into_ed25519() {
         let _ = std::fs::create_dir_all(data_dir);
         // Store full 64 bytes; on reload we extract the 32-byte secret
-        if std::fs::write(&key_path, ed_kp.to_bytes()).is_ok() {
-            info!("Generated new keypair, saved to {}", key_path.display());
+        match crate::auth::write_new_private_file(&key_path, &ed_kp.to_bytes()) {
+            Ok(()) => info!("Generated new keypair, saved to {}", key_path.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Another process created it first (possibly still writing):
+                // its key is this node's key.
+                for attempt in 0..10 {
+                    if attempt > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    if let Some(winner) = read_keypair(&key_path) {
+                        info!("Loaded keypair from {}", key_path.display());
+                        return winner;
+                    }
+                }
+                warn!(
+                    "{} exists but is not a valid keypair — left untouched, using an unpersisted key",
+                    key_path.display()
+                );
+            }
+            Err(e) => warn!("Could not save keypair to {}: {}", key_path.display(), e),
         }
     }
     kp
+}
+
+/// Parse `node.key`. `None` if it cannot be read or is not an Ed25519 key.
+fn read_keypair(key_path: &Path) -> Option<libp2p::identity::Keypair> {
+    let bytes = std::fs::read(key_path).ok()?;
+    // ed25519_from_bytes expects exactly 32-byte secret key
+    let secret = if bytes.len() == 64 { bytes[..32].to_vec() } else { bytes };
+    libp2p::identity::Keypair::ed25519_from_bytes(secret).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +439,17 @@ mod tests {
         let kp2 = load_or_generate_keypair(dir.path());
         let id2 = PeerId::from(kp2.public());
         assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_existing_key_file_is_never_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("node.key");
+        std::fs::write(&key_path, b"not a key").unwrap();
+
+        // An unparsable file yields a usable key, and is left as it was
+        let _ = load_or_generate_keypair(dir.path());
+        assert_eq!(std::fs::read(&key_path).unwrap(), b"not a key");
     }
 
     #[test]

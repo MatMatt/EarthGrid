@@ -252,10 +252,15 @@ pub(crate) async fn stac_search(State(state): State<AppState>, Query(q): Query<S
                 return (StatusCode::OK, Json(body)).into_response();
             }
 
-            let client = reqwest::Client::builder()
+            // No fallback to `Client::default()`: that client follows redirects.
+            let Ok(client) = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .unwrap_or_default();
+            else {
+                let body = build_search_response(vec![], 0, limit, 0, "/stac/search");
+                return (StatusCode::OK, Json(body)).into_response();
+            };
 
             let mut all_features: Vec<serde_json::Value> = Vec::new();
             let mut handles = vec![];
@@ -265,6 +270,10 @@ pub(crate) async fn stac_search(State(state): State<AppState>, Query(q): Query<S
                 let q_col = q.collection.clone().or(q.collections.clone());
                 let q_dt = q.datetime.clone();
                 handles.push(tokio::spawn(async move {
+                    // Outbound URL policy — before any request is made to this peer.
+                    if crate::url_policy::validate_outbound_url_async(&url, crate::url_policy::operator_hosts()).await.is_err() {
+                        return vec![];
+                    }
                     let mut params = vec![("limit", limit.to_string())];
                     if let Some(c) = &q_col { params.push(("collections", c.clone())); }
                     if let Some(b) = &q_bbox { params.push(("bbox", b.clone())); }

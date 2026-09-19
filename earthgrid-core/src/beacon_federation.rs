@@ -15,7 +15,9 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
@@ -88,6 +90,104 @@ impl FederationState {
 /// Header carrying the federation credential on the WebSocket handshake.
 pub const FEDERATION_KEY_HEADER: &str = "x-earthgrid-federation-key";
 
+/// Header carrying a delegated-fetch token on `POST /api/fetch?local_only=true`.
+///
+/// The federation key authorises registry writes (the WebSocket above), so it
+/// must never travel to a registry-selected node. A delegating beacon sends a
+/// short-lived token derived from it instead — one `;`-delimited value:
+///
+/// ```text
+/// v1;<offering_node_id>;<job_id>;<expiry_unix_secs>;<hex HMAC-SHA256>
+/// ```
+///
+/// The HMAC is keyed with `EARTHGRID_FEDERATION_KEY` and covers, in this order,
+/// the domain tag `earthgrid-delegated-fetch-v1`, the offering node id, the
+/// **target** node id, the job id and the expiry — each on its own line, ids
+/// length-prefixed (see `delegated_fetch_mac`). The target id is not
+/// transmitted: the receiver fills in its own, so a token verifies on the one
+/// node it was minted for. Ids are 1–128 visible ASCII characters without `;`.
+///
+/// The token buys the delegated-fetch path and nothing else. It is not the
+/// federation key (the WebSocket check compares against the raw key) and not
+/// an `x-api-key`; conversely the raw key is not a token and is refused here.
+pub const DELEGATED_FETCH_HEADER: &str = "x-earthgrid-delegated-fetch";
+
+/// Domain tag of the delegated-fetch HMAC. Bump on any format change.
+const DELEGATED_FETCH_DOMAIN: &str = "earthgrid-delegated-fetch-v1";
+
+/// Lifetime of a delegated-fetch token, from the moment it is minted.
+const DELEGATED_FETCH_TTL_SECS: u64 = 120;
+
+/// A receiver refuses an expiry further ahead than this: the lifetime plus
+/// room for clock skew. Bounds how long-lived a token anyone can mint.
+const DELEGATED_FETCH_MAX_AHEAD_SECS: u64 = 300;
+
+/// Whether `s` can be a token field: 1–128 visible ASCII characters, no `;`.
+fn delegated_fetch_field_ok(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_graphic() && b != b';')
+}
+
+/// The HMAC behind a delegated-fetch token (see [`DELEGATED_FETCH_HEADER`]).
+fn delegated_fetch_mac(
+    federation_key: &str,
+    offering_node_id: &str,
+    target_node_id: &str,
+    job_id: &str,
+    expiry: u64,
+) -> Hmac<Sha256> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(federation_key.as_bytes())
+        .expect("HMAC accepts any key length");
+    mac.update(
+        format!(
+            "{}\nfrom={}:{}\nto={}:{}\njob={}:{}\nexp={}\n",
+            DELEGATED_FETCH_DOMAIN,
+            offering_node_id.len(), offering_node_id,
+            target_node_id.len(), target_node_id,
+            job_id.len(), job_id,
+            expiry,
+        )
+        .as_bytes(),
+    );
+    mac
+}
+
+fn delegated_fetch_token_at(
+    federation_key: &str,
+    offering_node_id: &str,
+    target_node_id: &str,
+    job_id: &str,
+    expiry: u64,
+) -> Option<String> {
+    if federation_key.is_empty()
+        || ![offering_node_id, target_node_id, job_id].iter().all(|f| delegated_fetch_field_ok(f))
+    {
+        return None;
+    }
+    let mac = delegated_fetch_mac(federation_key, offering_node_id, target_node_id, job_id, expiry);
+    Some(format!(
+        "v1;{};{};{};{}",
+        offering_node_id,
+        job_id,
+        expiry,
+        hex::encode(mac.finalize().into_bytes())
+    ))
+}
+
+/// Beacon side: mint the [`DELEGATED_FETCH_HEADER`] value for one delegated
+/// fetch to `target_node_id`, valid for `DELEGATED_FETCH_TTL_SECS`.
+///
+/// `None` when no federation key is configured (or an id cannot be carried):
+/// the caller then sends no credential at all — never the raw key.
+pub fn delegated_fetch_token(
+    federation_key: &str,
+    offering_node_id: &str,
+    target_node_id: &str,
+    job_id: &str,
+) -> Option<String> {
+    let expiry = now_ts() as u64 + DELEGATED_FETCH_TTL_SECS;
+    delegated_fetch_token_at(federation_key, offering_node_id, target_node_id, job_id, expiry)
+}
+
 /// The credential two beacons share in order to federate.
 ///
 /// Deliberately *not* the node's `EARTHGRID_API_KEY`. A federated peer needs
@@ -128,6 +228,49 @@ impl FederationAuth {
             return false;
         }
         presented.is_some_and(|p| crate::auth::constant_time_eq_str(p, &self.key))
+    }
+
+    /// Whether a `/api/fetch` request is a delegated fetch from a federated
+    /// beacon: it must be the delegated form (`local_only=true`) **and** carry
+    /// a valid token in [`DELEGATED_FETCH_HEADER`] —
+    /// `v1;<offering_node_id>;<job_id>;<expiry_unix_secs>;<hex HMAC-SHA256>`.
+    ///
+    /// Valid means: the HMAC recomputed with this node's federation key and
+    /// `own_node_id` as the target matches (constant-time), and the expiry is
+    /// in the future but no further than `DELEGATED_FETCH_MAX_AHEAD_SECS`.
+    /// The raw federation key is not a token and is refused, in this header or
+    /// in [`FEDERATION_KEY_HEADER`]. Anything else is left to the normal
+    /// grid-key / admin-key check. Fails closed like [`verify`](Self::verify).
+    pub fn accepts_delegated_fetch(&self, local_only: bool, own_node_id: &str, headers: &HeaderMap) -> bool {
+        if !local_only || !self.is_configured() || !delegated_fetch_field_ok(own_node_id) {
+            return false;
+        }
+        let Some(value) = headers.get(DELEGATED_FETCH_HEADER).and_then(|v| v.to_str().ok()) else {
+            return false;
+        };
+        let parts: Vec<&str> = value.split(';').collect();
+        let &[version, offering_node_id, job_id, expiry, signature] = parts.as_slice() else {
+            return false;
+        };
+        if version != "v1" || !delegated_fetch_field_ok(offering_node_id) || !delegated_fetch_field_ok(job_id) {
+            return false;
+        }
+        if !expiry.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        let Ok(expiry) = expiry.parse::<u64>() else {
+            return false;
+        };
+        let now = now_ts() as u64;
+        if expiry <= now || expiry > now + DELEGATED_FETCH_MAX_AHEAD_SECS {
+            return false;
+        }
+        let Ok(signature) = hex::decode(signature) else {
+            return false;
+        };
+        delegated_fetch_mac(&self.key, offering_node_id, own_node_id, job_id, expiry)
+            .verify_slice(&signature)
+            .is_ok()
     }
 }
 
@@ -272,7 +415,9 @@ async fn apply_remote_event(state: &BeaconState, event: BeaconEvent) {
         }
         BeaconEvent::NodePruned { node_id, beacon_origin, .. } => {
             debug!("Federation prune from {}: {}", beacon_origin, node_id);
-            let _ = registry.remove(&node_id);
+            // Retire the row only. A peer's prune must not release the pin
+            // that binds this node_id to its key — only the admin delete does.
+            let _ = registry.retire(&node_id);
         }
     }
 }
@@ -286,7 +431,9 @@ fn upsert_if_newer(registry: &crate::beacon::BeaconRegistry, node: &BeaconNode) 
         }
     }
 
-    // Use federated_upsert to bypass the URL-conflict check
+    // Use federated_upsert to bypass the URL-conflict check. It never changes
+    // the url or node_name of a pinned node, nor creates a row that takes a
+    // pinned node's id or name (see BeaconRegistry::federated_upsert).
     if let Err(e) = registry.federated_upsert(node) {
         warn!("Federation upsert failed for {}: {}", node.node_id, e);
     }
@@ -589,5 +736,88 @@ mod tests {
         assert!(!auth.verify(Some("correct-horse ")), "no trimming");
         assert!(!auth.verify(Some("correct-hors")), "prefix must not pass");
         assert!(!auth.verify(Some("correct-horse-battery")), "extension must not pass");
+    }
+
+    fn header(name: &'static str, value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(name, value.parse().unwrap());
+        headers
+    }
+
+    #[test]
+    fn delegated_fetch_needs_a_valid_token_and_the_delegated_form() {
+        let auth = FederationAuth { key: "fed-secret".to_string() };
+        let token = delegated_fetch_token("fed-secret", "beacon-1", "node-a", "job-1").unwrap();
+        let good = header(DELEGATED_FETCH_HEADER, &token);
+        assert!(auth.accepts_delegated_fetch(true, "node-a", &good));
+
+        // The token buys the delegated path only, never a distributing fetch
+        assert!(!auth.accepts_delegated_fetch(false, "node-a", &good));
+        // ...and only on the node it was minted for
+        assert!(!auth.accepts_delegated_fetch(true, "node-b", &good));
+        // ...and only under the same federation key
+        let other = FederationAuth { key: "other-secret".to_string() };
+        assert!(!other.accepts_delegated_fetch(true, "node-a", &good));
+
+        // Any transmitted field changed breaks the HMAC
+        let parts: Vec<&str> = token.split(';').collect();
+        for (i, replacement) in [(1, "beacon-2".to_string()), (2, "job-2".to_string()), (3, (parts[3].parse::<u64>().unwrap() + 1).to_string())] {
+            let mut tampered: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+            tampered[i] = replacement;
+            assert!(!auth.accepts_delegated_fetch(true, "node-a", &header(DELEGATED_FETCH_HEADER, &tampered.join(";"))));
+        }
+
+        // Expired, and an expiry too far ahead — both correctly signed
+        let now = now_ts() as u64;
+        let expired = delegated_fetch_token_at("fed-secret", "beacon-1", "node-a", "job-1", now - 1).unwrap();
+        assert!(!auth.accepts_delegated_fetch(true, "node-a", &header(DELEGATED_FETCH_HEADER, &expired)));
+        let far = delegated_fetch_token_at("fed-secret", "beacon-1", "node-a", "job-1", now + DELEGATED_FETCH_MAX_AHEAD_SECS + 60).unwrap();
+        assert!(!auth.accepts_delegated_fetch(true, "node-a", &header(DELEGATED_FETCH_HEADER, &far)));
+
+        // Malformed values, and no header at all
+        for bad in ["", "v1", "v1;beacon-1;job-1;123", "v2;beacon-1;job-1;99999999999;00", "nope"] {
+            assert!(!auth.accepts_delegated_fetch(true, "node-a", &header(DELEGATED_FETCH_HEADER, bad)));
+        }
+        assert!(!auth.accepts_delegated_fetch(true, "node-a", &HeaderMap::new()));
+
+        // Fails closed when no federation key is configured, on both sides
+        assert!(!FederationAuth::default().accepts_delegated_fetch(true, "node-a", &good));
+        assert!(delegated_fetch_token("", "beacon-1", "node-a", "job-1").is_none());
+        // An id that cannot be carried yields no token rather than a broken one
+        assert!(delegated_fetch_token("fed-secret", "beacon;1", "node-a", "job-1").is_none());
+        assert!(delegated_fetch_token("fed-secret", "beacon-1", "", "job-1").is_none());
+    }
+
+    /// The raw federation key authorises registry writes: it must never be
+    /// what a delegated fetch presents, and it must not pass as a token.
+    #[test]
+    fn raw_federation_key_is_not_a_delegated_fetch_credential() {
+        let auth = FederationAuth { key: "fed-secret".to_string() };
+        assert!(!auth.accepts_delegated_fetch(true, "node-a", &header(DELEGATED_FETCH_HEADER, "fed-secret")));
+        assert!(!auth.accepts_delegated_fetch(true, "node-a", &header(FEDERATION_KEY_HEADER, "fed-secret")));
+        assert!(!auth.accepts_delegated_fetch(true, "node-a", &header("x-api-key", "fed-secret")));
+
+        let token = delegated_fetch_token("fed-secret", "beacon-1", "node-a", "job-1").unwrap();
+        assert!(!token.contains("fed-secret"));
+    }
+
+    /// The token buys the delegated-fetch path only: not the WebSocket
+    /// registry-write check, not check_write, not check_admin.
+    #[test]
+    fn delegated_fetch_token_is_accepted_nowhere_else() {
+        let auth = FederationAuth { key: "fed-secret".to_string() };
+        let token = delegated_fetch_token("fed-secret", "beacon-1", "node-a", "job-1").unwrap();
+
+        // ws_handler checks `verify` against FEDERATION_KEY_HEADER
+        assert!(!auth.verify(Some(&token)));
+        // Presented in the WebSocket header it is not a delegated fetch either
+        assert!(!auth.accepts_delegated_fetch(true, "node-a", &header(FEDERATION_KEY_HEADER, &token)));
+
+        let node_auth = crate::auth::AuthConfig {
+            api_key: "grid-key".to_string(),
+            admin_key: "admin-key".to_string(),
+        };
+        assert!(node_auth.check_write(Some(&token)).is_err());
+        assert!(node_auth.check_admin(Some(&token)).is_err());
     }
 }

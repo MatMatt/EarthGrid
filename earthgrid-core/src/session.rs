@@ -89,18 +89,87 @@ pub fn clear_cookie() -> String {
 ///
 /// Looks for `data_dir/.session_secret` first. If it doesn't exist, generates
 /// 32 random bytes, writes them (mode 0600), and uses those. Never falls back
-/// to env vars or hardcoded defaults — the secret is always a persisted
-/// random value independent of API keys.
+/// to env vars or hardcoded defaults — the secret is a random value
+/// independent of API keys.
+///
+/// An existing secret file is never deleted or overwritten. The file is
+/// created atomically and exclusively; a process that loses the creation race
+/// reads the file back and uses the winner's value, so two processes never
+/// sign with different secrets. If the file exists but stays invalid, or
+/// cannot be read or created, the secret is an in-memory random one for this
+/// process only (sessions then do not survive a restart) and the file is left
+/// exactly as it was.
 pub fn session_secret(data_dir: &Path) -> Vec<u8> {
     let secret_path = data_dir.join(".session_secret");
 
-    if let Ok(existing) = std::fs::read(&secret_path) {
-        if existing.len() >= 32 {
-            return existing;
+    match std::fs::read(&secret_path) {
+        Ok(existing) if existing.len() >= 32 => return existing,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        // Exists, but short or unreadable. Short may be a writer still
+        // finishing: re-read briefly. It is not ours to remove or replace.
+        _ => {
+            if let Some(existing) = read_secret_with_retry(&secret_path) {
+                return existing;
+            }
+            tracing::warn!(
+                "Session secret {} exists but is invalid or unreadable — left untouched; \
+                 using an in-memory secret (sessions will not survive a restart)",
+                secret_path.display()
+            );
+            return random_secret();
         }
     }
 
-    // Generate new secret from OS randomness
+    let secret = random_secret();
+    if let Some(parent) = secret_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // Created 0o600 up front — never world-readable, even briefly — and
+    // atomically, never replacing a file another process created first.
+    match crate::auth::write_new_private_file(&secret_path, &secret) {
+        Ok(()) => secret,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Lost the creation race: the winner's value is the secret.
+            read_secret_with_retry(&secret_path).unwrap_or_else(|| {
+                tracing::warn!(
+                    "Session secret {} was created concurrently but is invalid or unreadable — \
+                     left untouched; using an in-memory secret (sessions will not survive a restart)",
+                    secret_path.display()
+                );
+                secret
+            })
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Session secret {} could not be persisted ({}) — using an in-memory secret \
+                 (sessions will not survive a restart)",
+                secret_path.display(),
+                e
+            );
+            secret
+        }
+    }
+}
+
+/// Read an existing secret file, retrying for a short bounded time while a
+/// concurrent writer finishes. `None` if it never becomes a valid secret.
+/// Read-only: the file is not touched.
+fn read_secret_with_retry(secret_path: &Path) -> Option<Vec<u8>> {
+    for attempt in 0..10 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if let Ok(existing) = std::fs::read(secret_path) {
+            if existing.len() >= 32 {
+                return Some(existing);
+            }
+        }
+    }
+    None
+}
+
+/// 32 random bytes from the OS.
+fn random_secret() -> Vec<u8> {
     let mut secret = vec![0u8; 32];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut secret))
@@ -115,17 +184,6 @@ pub fn session_secret(data_dir: &Path) -> Vec<u8> {
                 secret[i] = ((hash >> ((i % 8) * 8)) & 0xFF) as u8;
             }
         });
-
-    if let Some(parent) = secret_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&secret_path, &secret);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600));
-    }
-
     secret
 }
 
@@ -225,5 +283,32 @@ mod tests {
         // Second call returns the same secret
         let secret2 = session_secret(dir.path());
         assert_eq!(secret, secret2);
+    }
+
+    #[test]
+    fn test_invalid_secret_file_is_never_deleted_or_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".session_secret");
+        std::fs::write(&path, b"too short").unwrap();
+
+        // Falls back to an in-memory secret and leaves the file as it was
+        let secret = session_secret(dir.path());
+        assert_eq!(secret.len(), 32);
+        assert_eq!(std::fs::read(&path).unwrap(), b"too short");
+    }
+
+    #[test]
+    fn test_loser_of_the_creation_race_uses_the_winners_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".session_secret");
+        // Another process won: its file is there when ours tries to create one
+        let winner = vec![7u8; 32];
+        crate::auth::write_new_private_file(&path, &winner).unwrap();
+        let e = crate::auth::write_new_private_file(&path, &[9u8; 32]).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
+
+        assert_eq!(read_secret_with_retry(&path), Some(winner.clone()));
+        assert_eq!(session_secret(dir.path()), winner);
+        assert_eq!(std::fs::read(&path).unwrap(), winner);
     }
 }
