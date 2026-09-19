@@ -85,7 +85,23 @@ pub(crate) async fn register_peer(
 
 
 /// POST /federation/sync — sync with all known peers (fetch their node-info)
-pub(crate) async fn federation_sync(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn federation_sync(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    // Iterates peer URLs and pulls their node-info: without a key, anyone can
+    // make this node talk to arbitrary hosts on demand.
+    if let Err(e) = authorize(
+        &state.auth,
+        state.user_auth.as_deref(),
+        &headers,
+        addr,
+        AccessLevel::Write,
+        &state.data_dir,
+    ) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
     let peer_urls: Vec<String> = {
         let registry = state.peers.lock().await;
         registry.list().into_iter().map(|p| p.url.clone()).collect()
@@ -132,6 +148,7 @@ pub(crate) async fn federation_sync(State(state): State<AppState>) -> impl IntoR
         "failed": failed,
         "peers": results,
     }))
+        .into_response()
 }
 
 

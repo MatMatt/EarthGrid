@@ -87,29 +87,19 @@ pub(crate) fn api_key(headers: &HeaderMap) -> Option<&str> {
     headers.get("x-api-key").and_then(|v| v.to_str().ok())
 }
 
-/// Check if the request originates from localhost using the real peer socket address.
-/// Uses axum's `ConnectInfo<SocketAddr>` (set via `into_make_service_with_connect_info`).
-/// Does NOT trust `X-Forwarded-For` — that header is client-controlled and spoofable.
-pub(crate) fn is_localhost(addr: std::net::SocketAddr) -> bool {
-    addr.ip().is_loopback()
-}
-
 /// Unified authorization entry point.
 ///
-/// Checks in order: localhost → env grid key → per-user key → session cookie.
+/// Checks in order: per-user key → env grid key → session cookie.
+/// Loopback peers get no special trust (the node may sit behind a same-host proxy).
 /// Returns the authenticated identity and the level of access granted.
 pub(crate) fn authorize(
     auth: &crate::auth::AuthConfig,
     user_auth: Option<&crate::user_auth::UserAuth>,
     headers: &HeaderMap,
-    addr: std::net::SocketAddr,
+    _addr: std::net::SocketAddr,
     level: crate::auth::AccessLevel,
     data_dir: &std::path::Path,
 ) -> Result<crate::auth::Identity, crate::error::EarthGridError> {
-    // 1. Localhost — full trust
-    if is_localhost(addr) {
-        return Ok(crate::auth::Identity::Localhost);
-    }
 
     // 2. API key from header (x-api-key or Bearer)
     let key = api_key(headers)
@@ -1397,7 +1387,7 @@ pub async fn serve(
                                         bbox, &start_date, &end_date, job.cloud_cover,
                                         &bands, limit, &collection, None,
                                         &self_url, &fq_node_id,
-                                        &std::env::var("EARTHGRID_ADMIN_KEY").unwrap_or_default(),
+                                        &std::env::var("EARTHGRID_API_KEY").unwrap_or_default(),
                                     ).await
                                 } else {
                                     crate::fetcher::fetch_and_ingest(

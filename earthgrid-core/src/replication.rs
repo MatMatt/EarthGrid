@@ -141,6 +141,15 @@ impl Replicator {
                     }
                 };
 
+                // Reject items with invalid chunk hashes — peer data is untrusted
+                if let Some(bad) = item.chunk_hashes.iter().find(|h| !ChunkStore::is_valid_hash(h)) {
+                    result.errors.push(format!(
+                        "Collection {}: item {} has invalid chunk hash: {}",
+                        collection_id, item.id, bad
+                    ));
+                    continue;
+                }
+
                 // Collect missing chunk hashes
                 let missing_hashes: Vec<String> = {
                     let store = self.store.lock().await;

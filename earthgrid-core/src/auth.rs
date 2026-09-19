@@ -5,7 +5,7 @@
 //! - **Humans**: per-user keys from `users.db` (roles admin/user/readonly),
 //!   presented as `x-api-key`/Bearer on API calls, or exchanged for a session cookie.
 //! - **Nodes**: shared grid key (`EARTHGRID_API_KEY`) for peer coordination.
-//! - **Localhost**: trusted bypass for direct shell access.
+//! - **Localhost**: no bypass - loopback connections authenticate like any other.
 //!
 //! The `authorize()` function is the single entry point for all auth checks.
 
@@ -22,7 +22,7 @@ pub enum AccessLevel {
 /// Who was authenticated and how.
 #[derive(Debug, Clone)]
 pub enum Identity {
-    /// Request from loopback — full trust.
+    /// Open mode (auth not enabled) - full trust. Loopback peers are NOT trusted.
     Localhost,
     /// Authenticated via shared grid key (EARTHGRID_API_KEY / EARTHGRID_ADMIN_KEY).
     GridKey,

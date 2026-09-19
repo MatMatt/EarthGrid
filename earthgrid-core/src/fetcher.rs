@@ -857,10 +857,12 @@ async fn delegate_fetch_to_node(
 
     info!("Delegating fetch to {} ({}): {} items max", node.node_name, node.url, limit);
 
-    let resp = client.post(&url)
-        .header("x-api-key", admin_key)
-        .send()
-        .await;
+    // `admin_key` carries the grid key (EARTHGRID_API_KEY) — never send the admin key to remote nodes
+    let mut req = client.post(&url);
+    if !admin_key.is_empty() {
+        req = req.header("x-api-key", admin_key);
+    }
+    let resp = req.send().await;
 
     match resp {
         Ok(r) if r.status().is_success() => {
@@ -909,7 +911,7 @@ pub async fn fetch_distributed(
     tile_filter: Option<&str>,
     beacon_url: &str,
     local_node_id: &str,
-    admin_key: &str,
+    grid_key: &str,
 ) -> FetchResult {
     // Get alive nodes from beacon
     let mut nodes = get_grid_nodes(beacon_url).await;
@@ -980,7 +982,7 @@ pub async fn fetch_distributed(
             let n = node.clone();
             let b = bands.to_vec();
             let coll = collection.to_string();
-            let ak = admin_key.to_string();
+            let ak = grid_key.to_string();
             let sd = start_date.to_string();
             let ed = end_date.to_string();
             handles.push(tokio::spawn(async move {

@@ -244,7 +244,18 @@ pub(crate) async fn admin_delete_user(
     }
     match &state.user_auth {
         Some(ua) => {
-            match ua.revoke_user(&user_id) {
+            // Path parameter may be a user_id or a username; revoke_user() matches on username
+            let users = match ua.list_users() {
+                Ok(users) => users,
+                Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+            };
+            let user = match users.iter().find(|u| u.user_id == user_id)
+                .or_else(|| users.iter().find(|u| u.username == user_id))
+            {
+                Some(u) => u,
+                None => return err(StatusCode::NOT_FOUND, "User not found").into_response(),
+            };
+            match ua.revoke_user(&user.username) {
                 Ok(true) => {
                     state.audit.log("user_delete", &user_id, "", true);
                     (StatusCode::OK, Json(serde_json::json!({

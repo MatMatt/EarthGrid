@@ -166,7 +166,6 @@ pub(crate) async fn fetch_handler(
         // Beacon mode: distribute across grid nodes
         let port = std::env::var("EARTHGRID_PORT").unwrap_or_else(|_| "8400".to_string());
         let beacon_url = format!("http://127.0.0.1:{}", port);
-        let admin_key = state.auth.admin_key.clone();
         fetcher::fetch_distributed(
             state.store.clone(),
             state.catalog.clone(),
@@ -180,7 +179,7 @@ pub(crate) async fn fetch_handler(
             tile_filter.as_deref(),
             &beacon_url,
             &state.node_id,
-            &admin_key,
+            &state.auth.api_key,
         )
         .await
     } else if !local_only {

@@ -7,7 +7,7 @@ use axum::{
 use std::net::SocketAddr;
 
 use crate::auth::AccessLevel;
-use crate::server::{AppState, err, authorize, is_localhost, LimitQuery};
+use crate::server::{AppState, err, authorize, LimitQuery};
 
 
 // ---------------------------------------------------------------------------
@@ -447,18 +447,13 @@ pub(crate) async fn openeo_result(
 pub(crate) async fn dashboard_auth(
     State(state): State<AppState>,
     headers: HeaderMap,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     let secret = crate::session::session_secret(&state.data_dir);
 
     // Check if user_auth is configured; if not, redirect to login with hint
     if state.user_auth.is_none() {
         return axum::response::Redirect::temporary("ui/login?no_users").into_response();
-    }
-
-    // Localhost: skip auth (shell access = full access)
-    if is_localhost(addr) {
-        return Html(include_str!("../../assets/ui.html")).into_response();
     }
 
     // Extract and validate session cookie
@@ -543,20 +538,8 @@ pub(crate) async fn logout_handler() -> impl IntoResponse {
 pub(crate) async fn session_me(
     State(state): State<AppState>,
     headers: HeaderMap,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
-    // Localhost gets admin access without session
-    if is_localhost(addr) {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "username": "localhost",
-                "role": "admin",
-                "authenticated": true,
-            })),
-        ).into_response();
-    }
-
     let secret = crate::session::session_secret(&state.data_dir);
     if let Some(cookie_header) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
         if let Some(token) = crate::session::extract_cookie(cookie_header) {
