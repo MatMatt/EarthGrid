@@ -236,7 +236,7 @@ function renderCoverageMap(data) {
       shape.on('click', () => showCoverageDetail(colId, cell));
 
       shape.bindTooltip(
-        sensorLabel(colId) + (cell.tile_id ? ' · Tile ' + cell.tile_id : '') + '<br>' +
+        sensorLabel(colId) + (cell.tile_id ? ' · Tile ' + esc(cell.tile_id) : '') + '<br>' +
         pct.toFixed(1) + '% of archive · ' + cell.date_count + ' dates',
         {className:'', sticky:true}
       );
@@ -306,7 +306,7 @@ function showCoverageDetail(colId, cell) {
   for (const m of allMonths) {
     const h = m.count > 0 ? Math.max(4, (m.count / maxCount) * 56) : 0;
     const color = m.count > 0 ? covColor(m.count * 3) : 'var(--border)';
-    const qLabel = m.month + ' (Q' + (Math.ceil(parseInt(m.month.split('-')[1]) / 3)) + ')';
+    const qLabel = esc(m.month) + ' (Q' + (Math.ceil(parseInt(m.month.split('-')[1]) / 3)) + ')';
     barsHtml += '<div class="bar" style="height:' + (h || 2) + 'px;background:' + color +
       ';opacity:' + (m.count > 0 ? '0.8' : '0.2') + '" title="' + qLabel + ': ' + m.count + ' acquisitions"></div>';
   }
@@ -331,7 +331,7 @@ function showCoverageDetail(colId, cell) {
 
   const bands = cell.bands || [];
   const bandsHtml = bands.length > 0
-    ? bands.map(b => '<code style="margin:0 3px;font-size:0.8rem">' + b + '</code>').join('')
+    ? bands.map(b => '<code style="margin:0 3px;font-size:0.8rem">' + esc(b) + '</code>').join('')
     : '<em style="color:var(--dim)">unknown</em>';
 
   // Compute bbox from polygon if needed
@@ -345,7 +345,7 @@ function showCoverageDetail(colId, cell) {
   panel.innerHTML =
     '<div style="display:flex;justify-content:space-between;align-items:start">' +
     '<div><h3 style="margin:0 0 4px;font-size:1.1rem">' + sensorLabel(colId) +
-    (cell.tile_id ? ' · ' + cell.tile_id : '') + '</h3>' +
+    (cell.tile_id ? ' · ' + esc(cell.tile_id) : '') + '</h3>' +
     '<div style="font-size:0.8rem;color:var(--dim)">' +
     coordsInfo.map(v => v.toFixed(1) + '°').join(', ') + '</div></div>' +
     '<button onclick="document.getElementById(\'coverageDetail\').style.display=\'none\'" ' +
@@ -353,14 +353,14 @@ function showCoverageDetail(colId, cell) {
     '<div style="display:flex;gap:2rem;margin:1rem 0;flex-wrap:wrap">' +
     '<div><div style="font-size:1.8rem;font-weight:700;color:' + covColor(cell.date_count, colId) + '">' + pct.toFixed(1) + '%</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">of archive</div></div>' +
-    (cell.tile_id ? '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:4px">Tile: <strong>' + cell.tile_id + '</strong></div>' : '') +
+    (cell.tile_id ? '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:4px">Tile: <strong>' + esc(cell.tile_id) + '</strong></div>' : '') +
     '<div><div style="font-size:1.8rem;font-weight:700;color:var(--text)">' + cell.date_count + '</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">dates</div></div>' +
     '<div><div style="font-size:1.8rem;font-weight:700;color:var(--accent)">' + (cell.item_count || (cell.date_count * Math.max((cell.bands||[]).length, 1))) + '</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">items (bands)</div></div>' +
     '<div><div style="font-size:0.85rem;color:var(--text)">' + meta.start + '</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">sensor start</div></div>' +
-    '<div><div style="font-size:0.85rem;color:var(--text)">' + lastDate + '</div>' +
+    '<div><div style="font-size:0.85rem;color:var(--text)">' + esc(lastDate) + '</div>' +
     '<div style="font-size:0.8rem;color:var(--dim)">last ingested</div></div></div>' +
     '<div style="font-size:0.85rem;margin-bottom:6px"><strong>Temporal Coverage</strong></div>' +
     barsHtml +
