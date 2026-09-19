@@ -575,6 +575,10 @@ async function apiFetch(path, opts={}) {
   return r.json();
 }
 
+function safeHref(u) { return /^https?:\/\//i.test(String(u)) ? esc(u) : '#'; }
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
 function setHtml(id, html) {
   const el = document.getElementById(id);
   if (el) el.innerHTML = html;
@@ -667,7 +671,7 @@ function renderBeaconInfo(info) {
     html = `
       <div class="status-row" style="margin-bottom:10px">
         <div class="dot green"></div>
-        <span>Beacon: <a href="${info.beacon_url}" target="_blank" style="color:var(--accent)">${info.beacon_url}</a></span>
+        <span>Beacon: <a href="${safeHref(info.beacon_url)}" target="_blank" style="color:var(--accent)">${esc(info.beacon_url)}</a></span>
       </div>`;
   } else {
     html = `
@@ -1163,17 +1167,17 @@ async function loadFetchQueue() {
       const sc = statusColor(j.status);
       html += '<tr style="border-bottom:1px solid #1f2937">';
       html += '<td style="padding:3px 6px;font-weight:600">#' + j.id + '</td>';
-      html += '<td style="padding:3px 6px;font-family:monospace;font-size:11px">' + j.collection + '</td>';
-      html += '<td style="padding:3px 6px;font-size:11px;color:var(--muted)">' + j.bbox + '</td>';
-      html += '<td style="padding:3px 6px"><span style="color:' + sc + '">' + j.status + '</span></td>';
+      html += '<td style="padding:3px 6px;font-family:monospace;font-size:11px">' + esc(j.collection) + '</td>';
+      html += '<td style="padding:3px 6px;font-size:11px;color:var(--muted)">' + esc(j.bbox) + '</td>';
+      html += '<td style="padding:3px 6px"><span style="color:' + sc + '">' + esc(j.status) + '</span></td>';
       html += '<td style="padding:3px 6px;min-width:120px">';
       if (j.status === 'running' || j.status === 'completed') {
         html += '<div style="background:var(--bg);border-radius:3px;height:4px;overflow:hidden;margin-bottom:2px">'
               + '<div style="background:' + sc + ';height:100%;width:' + Math.min(pct,100) + '%"></div></div>';
         html += '<span style="font-size:10px;color:var(--muted)">' + j.progress_done + '/' + j.progress_total + '</span>';
-        if (j.stage) html += ' <span style="font-size:10px;color:var(--accent)">' + j.stage + '</span>';
+        if (j.stage) html += ' <span style="font-size:10px;color:var(--accent)">' + esc(j.stage) + '</span>';
       } else if (j.error) {
-        html += '<span style="font-size:10px;color:var(--red)" title="' + j.error.replace(/"/g,"'") + '">' + j.error.substring(0,40) + (j.error.length > 40 ? '…' : '') + '</span>';
+        html += '<span style="font-size:10px;color:var(--red)" title="' + esc(j.error) + '">' + esc(j.error.substring(0,40)) + (j.error.length > 40 ? '…' : '') + '</span>';
       } else {
         html += '<span style="font-size:10px;color:var(--muted)">—</span>';
       }
@@ -1306,8 +1310,8 @@ async function loadNetwork() {
       html += `<div class="node-card" style="${isMe ? 'border-color:var(--accent)' : ''}">
         <div class="node-card-header">
           <div>
-            <div class="node-name">${n.node_name || n.url || 'Unknown'} ${isMe ? '<span class="tag" style="font-size:10px">This node</span>' : ''}</div>
-            <div class="node-id">${n.node_id || '—'}</div>
+            <div class="node-name">${esc(n.node_name || n.url || 'Unknown')} ${isMe ? '<span class="tag" style="font-size:10px">This node</span>' : ''}</div>
+            <div class="node-id">${esc(n.node_id || '—')}</div>
           </div>
           <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
             ${isAlive ? '<span class="dot green"></span>' : '<span class="dot red"></span>'}
@@ -1318,10 +1322,10 @@ async function loadNetwork() {
           <div class="node-stat">Items: <span>${fmt_num(n.item_count)}</span></div>
           <div class="node-stat">Chunks: <span>${fmt_num(n.chunk_count || n.chunks)}</span></div>
           <div class="node-stat">Storage: <span>${fmt_bytes(n.chunks_bytes)}</span></div>
-          ${n.url ? `<div class="node-stat">URL: <span><a href="${n.url}" target="_blank">${n.url}</a></span></div>` : ''}
+          ${n.url ? `<div class="node-stat">URL: <span><a href="${safeHref(n.url)}" target="_blank">${esc(n.url)}</a></span></div>` : ''}
         </div>
         ${collections.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap">
-          ${collections.map(c => `<span class="tag">${c}</span>`).join('')}
+          ${collections.map(c => `<span class="tag">${esc(c)}</span>`).join('')}
           ${extraCols > 0 ? `<span class="tag">+${extraCols} more</span>` : ''}
         </div>` : ''}
       </div>`;
