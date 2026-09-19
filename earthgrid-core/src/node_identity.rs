@@ -61,17 +61,11 @@ impl NodeIdentity {
                 .map_err(|e| anyhow::anyhow!("keypair to ed25519: {e:?}"))?
                 .to_bytes();
             let b64 = base64_encode(&raw_bytes);
-            std::fs::write(key_path, &b64)
+            // Created 0o600 up front — never world-readable, even briefly.
+            let mut key_file = crate::auth::create_private_file(key_path)
+                .with_context(|| format!("creating key file {}", key_path.display()))?;
+            std::io::Write::write_all(&mut key_file, b64.as_bytes())
                 .with_context(|| format!("writing key file {}", key_path.display()))?;
-            // chmod 0o600 — best effort
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    key_path,
-                    std::fs::Permissions::from_mode(0o600),
-                );
-            }
 
             warn!("Generated new node identity: {}…", &identity.public_key_b64()[..16]);
             Ok(identity)
@@ -118,6 +112,35 @@ impl NodeIdentity {
             Err(_) => return false,
         };
         let sig_bytes = match base64_decode(signature_b64) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+
+        let pub_key = match libp2p::identity::ed25519::PublicKey::try_from_bytes(&pub_bytes) {
+            Ok(k) => k,
+            Err(_) => return false,
+        };
+
+        pub_key.verify(message.as_bytes(), &sig_bytes)
+    }
+
+    /// Sign a UTF-8 message; returns hex-encoded Ed25519 signature.
+    pub fn sign_hex(&self, message: &str) -> String {
+        let sig = self
+            .keypair
+            .sign(message.as_bytes())
+            .expect("ed25519 signing never fails");
+        hex::encode(sig)
+    }
+
+    /// Hex counterpart of [`verify_request`](Self::verify_request):
+    /// `public_key_hex` is 32 bytes, `signature_hex` is 64 bytes.
+    pub fn verify_hex(public_key_hex: &str, signature_hex: &str, message: &str) -> bool {
+        let pub_bytes = match hex::decode(public_key_hex) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let sig_bytes = match hex::decode(signature_hex) {
             Ok(b) => b,
             Err(_) => return false,
         };
@@ -283,6 +306,18 @@ mod tests {
             !NodeIdentity::verify_request(&id.public_key_b64(), &sig, "tampered"),
             "tampered message should not verify"
         );
+    }
+
+    #[test]
+    fn sign_and_verify_hex() {
+        let (id, _dir) = make_identity();
+        let (other, _dir2) = make_identity();
+        let sig = id.sign_hex("hello earthgrid");
+        assert_eq!(sig.len(), 128, "ed25519 signature is 64 bytes = 128 hex chars");
+        assert!(NodeIdentity::verify_hex(&id.public_key_hex(), &sig, "hello earthgrid"));
+        assert!(!NodeIdentity::verify_hex(&id.public_key_hex(), &sig, "tampered"));
+        assert!(!NodeIdentity::verify_hex(&other.public_key_hex(), &sig, "hello earthgrid"));
+        assert!(!NodeIdentity::verify_hex("zz", &sig, "hello earthgrid"));
     }
 
     #[test]

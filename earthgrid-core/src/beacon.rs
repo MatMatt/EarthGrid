@@ -28,6 +28,7 @@ use tokio::sync::Mutex;
 
 use crate::error::Result;
 use crate::beacon_federation::FederationState;
+use crate::node_identity::NodeIdentity;
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -74,6 +75,15 @@ pub struct RegisterRequest {
     pub node_url: Option<String>,
     pub group: Option<String>,
     pub catalog_version: Option<u64>,
+    /// Hex Ed25519 public key of the registering node.
+    #[serde(default)]
+    pub public_key: Option<String>,
+    /// Hex Ed25519 signature over [`register_message`].
+    #[serde(default)]
+    pub signature: Option<String>,
+    /// Unix seconds at which the request was signed.
+    #[serde(default)]
+    pub timestamp: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -100,6 +110,15 @@ pub struct HeartbeatRequest {
     pub can_source: Option<bool>,
     pub storage_limit_gb: Option<f64>,
     pub catalog_version: Option<u64>,
+    /// Hex Ed25519 public key of the node.
+    #[serde(default)]
+    pub public_key: Option<String>,
+    /// Hex Ed25519 signature over [`heartbeat_message`].
+    #[serde(default)]
+    pub signature: Option<String>,
+    /// Unix seconds at which the request was signed.
+    #[serde(default)]
+    pub timestamp: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +139,164 @@ fn is_alive(last_seen: f64) -> bool {
 
 fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (status, Json(serde_json::json!({"error": msg})))
+}
+
+// ---------------------------------------------------------------------------
+// Signed registration
+// ---------------------------------------------------------------------------
+
+/// Signing domain of `/api/beacon/register`. Bump on any format change.
+pub const REGISTER_DOMAIN: &str = "earthgrid-beacon-register-v2";
+
+/// Signing domain of `/api/beacon/heartbeat`. Distinct from
+/// [`REGISTER_DOMAIN`], so a signature made for one endpoint never verifies on
+/// the other. Bump on any format change.
+pub const HEARTBEAT_DOMAIN: &str = "earthgrid-beacon-heartbeat-v2";
+
+/// Replay window: a signed register/heartbeat is accepted only if its
+/// timestamp is within this many seconds of the beacon's clock.
+pub const REPLAY_WINDOW_SECS: u64 = 300;
+
+/// Builder of the canonical signed message: the domain tag, then one
+/// `name=value` line per field.
+///
+/// An absent field is `~`, which no present value can render as. Strings are
+/// length-prefixed (`<byte length>:<value>`), so `None` and `Some("")` sign
+/// differently and no value can shift a field boundary to make two different
+/// requests produce the same message.
+struct SignedFields(String);
+
+impl SignedFields {
+    fn new(domain: &str) -> Self {
+        Self(format!("{}\n", domain))
+    }
+
+    fn text(mut self, name: &str, value: Option<&str>) -> Self {
+        match value {
+            Some(v) => self.0.push_str(&format!("{}={}:{}\n", name, v.len(), v)),
+            None => self.0.push_str(&format!("{}=~\n", name)),
+        }
+        self
+    }
+
+    /// Integers and booleans, in their decimal / `true`|`false` form.
+    fn value<T: std::fmt::Display>(mut self, name: &str, value: Option<T>) -> Self {
+        match value {
+            Some(v) => self.0.push_str(&format!("{}={}\n", name, v)),
+            None => self.0.push_str(&format!("{}=~\n", name)),
+        }
+        self
+    }
+
+    /// Fixed three decimals: the value crosses JSON between signer and
+    /// verifier, and must render identically on both sides.
+    fn float(self, name: &str, value: Option<f64>) -> Self {
+        self.value(name, value.map(signed_float_text))
+    }
+
+    /// `<count>` followed by each item length-prefixed.
+    fn list(mut self, name: &str, value: Option<&[String]>) -> Self {
+        match value {
+            Some(items) => {
+                self.0.push_str(&format!("{}={}", name, items.len()));
+                for item in items {
+                    self.0.push_str(&format!("[{}:{}]", item.len(), item));
+                }
+                self.0.push('\n');
+            }
+            None => self.0.push_str(&format!("{}=~\n", name)),
+        }
+        self
+    }
+}
+
+/// A float field as it appears in the signed message: fixed three decimals.
+fn signed_float_text(v: f64) -> String {
+    format!("{:.3}", v)
+}
+
+/// The number a signed float field actually commits to — the three-decimal
+/// rendering parsed back. This, not the received `f64`, is what gets stored:
+/// otherwise a value could move inside its rounding bucket under a signature
+/// that still verifies.
+fn signed_float(v: f64) -> f64 {
+    signed_float_text(v).parse().unwrap_or(v)
+}
+
+/// SHA-256 (hex) of a canonical signed message, kept with the last accepted
+/// timestamp to recognise an idempotent duplicate of the same request.
+fn message_digest(message: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(message.as_bytes()))
+}
+
+/// The canonical message a node signs for `/api/beacon/register`. It covers
+/// every field of the body: nothing a register can change is left unsigned.
+pub fn register_message(req: &RegisterRequest) -> String {
+    SignedFields::new(REGISTER_DOMAIN)
+        .text("node_id", Some(req.node_id.as_str()))
+        .text("node_name", req.node_name.as_deref())
+        .text("url", Some(req.url.as_str()))
+        .list("collections", req.collections.as_deref())
+        .value("item_count", req.item_count)
+        .value("chunk_count", req.chunk_count)
+        .value("chunks_bytes", req.chunks_bytes)
+        .value("can_source", req.can_source)
+        .float("storage_limit_gb", req.storage_limit_gb)
+        .text("sponsor_name", req.sponsor_name.as_deref())
+        .text("sponsor_url", req.sponsor_url.as_deref())
+        .text("node_url", req.node_url.as_deref())
+        .text("group", req.group.as_deref())
+        .value("catalog_version", req.catalog_version)
+        .value("timestamp", req.timestamp)
+        .0
+}
+
+/// The canonical message a node signs for `/api/beacon/heartbeat`. It covers
+/// every field of the body: nothing a heartbeat can change is left unsigned.
+pub fn heartbeat_message(req: &HeartbeatRequest) -> String {
+    SignedFields::new(HEARTBEAT_DOMAIN)
+        .text("node_id", Some(req.node_id.as_str()))
+        .text("url", req.url.as_deref())
+        .text("node_name", req.node_name.as_deref())
+        .value("item_count", req.item_count)
+        .value("chunk_count", req.chunk_count)
+        .value("chunks_bytes", req.chunks_bytes)
+        .value("uptime_seconds", req.uptime_seconds)
+        .list("collections", req.collections.as_deref())
+        .value("can_source", req.can_source)
+        .float("storage_limit_gb", req.storage_limit_gb)
+        .value("catalog_version", req.catalog_version)
+        .value("timestamp", req.timestamp)
+        .0
+}
+
+/// Sender side: sign a canonical message ([`register_message`] or
+/// [`heartbeat_message`]) with the node identity.
+/// Returns `(public_key_hex, signature_hex)`.
+pub fn sign_request(identity: &NodeIdentity, message: &str) -> (String, String) {
+    (identity.public_key_hex(), identity.sign_hex(message))
+}
+
+/// Beacon side: check that `message` — the canonical message rebuilt from the
+/// received body — is signed by the key the request presents, and is fresh.
+/// Fails closed — an unsigned request is an error, not a legacy client.
+pub fn verify_request(
+    message: &str,
+    timestamp: Option<u64>,
+    public_key: Option<&str>,
+    signature: Option<&str>,
+) -> std::result::Result<(), &'static str> {
+    let (Some(timestamp), Some(public_key), Some(signature)) = (timestamp, public_key, signature) else {
+        return Err("signed request required: public_key, signature and timestamp must be present");
+    };
+    if (now_ts() as u64).abs_diff(timestamp) > REPLAY_WINDOW_SECS {
+        return Err("timestamp outside the replay window");
+    }
+    if !NodeIdentity::verify_hex(public_key, signature, message) {
+        return Err("invalid signature");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +372,12 @@ impl BeaconRegistry {
             );
             CREATE INDEX IF NOT EXISTS idx_beacon_last_seen ON beacon_nodes(last_seen);
 
+            CREATE TABLE IF NOT EXISTS beacon_node_pins (
+                node_id TEXT PRIMARY KEY,
+                public_key TEXT NOT NULL,
+                last_timestamp INTEGER NOT NULL DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS grid_metrics (
                 ts REAL NOT NULL,
                 nodes_total INTEGER NOT NULL DEFAULT 0,
@@ -209,6 +392,17 @@ impl BeaconRegistry {
         // Safe migration: add catalog_version column if missing
         let _ = self.conn.execute_batch(
             "ALTER TABLE beacon_nodes ADD COLUMN catalog_version INTEGER NOT NULL DEFAULT 0;",
+        );
+        // Safe migration: pins used to live in a `public_key` column of
+        // beacon_nodes, where pruning or deduplicating the row destroyed them.
+        // Carry any such pin over; fails harmlessly where the column never existed.
+        let _ = self.conn.execute_batch(
+            "INSERT OR IGNORE INTO beacon_node_pins (node_id, public_key)
+             SELECT node_id, public_key FROM beacon_nodes WHERE public_key IS NOT NULL;",
+        );
+        // Safe migration: digest of the signed message behind last_timestamp
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_pins ADD COLUMN last_digest TEXT NOT NULL DEFAULT '';",
         );
         // Safe migration: add dates_json and bands_json to beacon_node_tiles
         let _ = self.conn.execute_batch(
@@ -284,6 +478,120 @@ impl BeaconRegistry {
         })
     }
 
+    /// The pin of a node: its public key, the timestamp of its last accepted
+    /// signed request and the digest of that request's signed message. Lives in
+    /// `beacon_node_pins`, not in the node's `beacon_nodes` row, so it outlives
+    /// pruning and deduplication of that row.
+    fn pin(&self, node_id: &str) -> Result<Option<(String, u64, String)>> {
+        match self.conn.query_row(
+            "SELECT public_key, last_timestamp, last_digest FROM beacon_node_pins WHERE node_id = ?1",
+            params![node_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64, row.get::<_, String>(2)?)),
+        ) {
+            Ok(pin) => Ok(Some(pin)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The public key pinned for a node, if any.
+    pub fn pinned_key(&self, node_id: &str) -> Result<Option<String>> {
+        Ok(self.pin(node_id)?.map(|(key, _, _)| key))
+    }
+
+    /// Pin a node's public key on its first signed contact. An existing pin is
+    /// never replaced, and it survives the node going stale — only the admin
+    /// delete ([`remove`](Self::remove)) releases it.
+    pub fn pin_public_key(&self, node_id: &str, public_key: &str) -> Result<()> {
+        if public_key.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT OR IGNORE INTO beacon_node_pins (node_id, public_key) VALUES (?1, ?2)",
+            params![node_id, public_key.to_ascii_lowercase()],
+        )?;
+        Ok(())
+    }
+
+    /// Record the timestamp of an accepted signed request, with the digest of
+    /// its signed `message`. The timestamp only moves forward;
+    /// [`authenticate`](Self::authenticate) refuses anything older, and an equal
+    /// timestamp unless it carries this very message.
+    pub fn record_accepted_timestamp(&self, node_id: &str, timestamp: u64, message: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE beacon_node_pins SET last_timestamp = ?1, last_digest = ?3
+             WHERE node_id = ?2 AND last_timestamp < ?1",
+            params![timestamp as i64, node_id, message_digest(message)],
+        )?;
+        Ok(())
+    }
+
+    /// Whether `node_name` is held by a pinned node other than `node_id`.
+    fn name_held_by_other_pinned_node(&self, node_name: &str, node_id: &str) -> Result<bool> {
+        if node_name.is_empty() {
+            return Ok(false);
+        }
+        let holders: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM beacon_nodes
+             WHERE node_name = ?1 AND node_id != ?2
+               AND node_id IN (SELECT node_id FROM beacon_node_pins)",
+            params![node_name, node_id],
+            |row| row.get(0),
+        )?;
+        Ok(holders > 0)
+    }
+
+    /// Refuse a register/heartbeat that takes the node_name of a different
+    /// pinned node: sharing a name is what made `dedup_by_name` delete the
+    /// other row.
+    fn reject_name_of_pinned_node(&self, node_name: Option<&str>, node_id: &str) -> Result<()> {
+        let name = node_name.unwrap_or("");
+        if self.name_held_by_other_pinned_node(name, node_id)? {
+            return Err(crate::error::EarthGridError::Other(format!(
+                "node_name '{}' belongs to another registered node. Choose a different name.",
+                name
+            )));
+        }
+        Ok(())
+    }
+
+    /// Authenticate a register/heartbeat request. `message` is the canonical
+    /// message rebuilt from the received body ([`register_message`] or
+    /// [`heartbeat_message`]). The request must carry a fresh, valid signature
+    /// over it (see [`verify_request`]); once a key is pinned for the node_id
+    /// it must be signed by exactly that key, with a timestamp newer than the
+    /// last one accepted — the replay window rests on the wall clock, and this
+    /// keeps an old signature dead even if that clock is moved back. Fails closed.
+    ///
+    /// One exception: an equal timestamp is accepted when the signed message is
+    /// byte-for-byte the one already accepted. A node that reaches this beacon
+    /// through two URLs sends the same signed request to both every cycle; the
+    /// second copy is an idempotent duplicate, not a replay of something older.
+    /// An equal timestamp with any other message is refused.
+    pub fn authenticate(
+        &self,
+        node_id: &str,
+        message: &str,
+        timestamp: Option<u64>,
+        public_key: Option<&str>,
+        signature: Option<&str>,
+    ) -> std::result::Result<(), &'static str> {
+        verify_request(message, timestamp, public_key, signature)?;
+        match self.pin(node_id) {
+            Ok(Some((pinned, _, _))) if !pinned.eq_ignore_ascii_case(public_key.unwrap_or("")) => {
+                Err("public key does not match the key pinned for this node_id")
+            }
+            Ok(Some((_, last, _))) if timestamp.unwrap_or(0) < last => {
+                Err("timestamp is older than the last accepted request for this node_id")
+            }
+            Ok(Some((_, last, digest))) if timestamp.unwrap_or(0) == last && digest != message_digest(message) => {
+                Err("timestamp equals the last accepted request for this node_id but the message differs")
+            }
+            Ok(_) => Ok(()),
+            Err(_) => Err("could not read the pinned key for this node_id"),
+        }
+    }
+
     /// Register or update a node.
     pub fn register(&self, req: &RegisterRequest) -> Result<BeaconNode> {
         // Reject if node_id already exists with a different URL
@@ -319,6 +627,9 @@ impl BeaconRegistry {
                 }
             }
         }
+        // The check above looks at one holder of the name; a pinned holder is
+        // refused explicitly, whichever row the lookup happened to return.
+        self.reject_name_of_pinned_node(req.node_name.as_deref(), &req.node_id)?;
 
         let collections_json = serde_json::to_string(
             &req.collections.clone().unwrap_or_default(),
@@ -352,7 +663,8 @@ impl BeaconRegistry {
                 req.chunk_count.unwrap_or(0),
                 req.chunks_bytes.unwrap_or(0),
                 req.can_source.unwrap_or(false) as i64,
-                req.storage_limit_gb.unwrap_or(0.0),
+                // Stored exactly as signed (three decimals), not as received
+                signed_float(req.storage_limit_gb.unwrap_or(0.0)),
                 now,
                 req.sponsor_name.as_deref(),
                 req.sponsor_url.as_deref(),
@@ -403,6 +715,9 @@ impl BeaconRegistry {
         let _ = self.dedup_by_name();
         // Record grid-wide metrics snapshot (max every 10 min)
         let _ = self.record_grid_snapshot();
+
+        // A heartbeat can rename the node: same rule as register.
+        self.reject_name_of_pinned_node(req.node_name.as_deref(), &req.node_id)?;
 
         let now = now_ts();
 
@@ -472,7 +787,8 @@ impl BeaconRegistry {
             param_values.push(Box::new(serde_json::to_string(v).unwrap_or_default()));
         }
         if let Some(v) = req.can_source { param_values.push(Box::new(v as i64)); }
-        if let Some(v) = req.storage_limit_gb { param_values.push(Box::new(v)); }
+        // Stored exactly as signed (three decimals), not as received
+        if let Some(v) = req.storage_limit_gb { param_values.push(Box::new(signed_float(v))); }
         if let Some(v) = req.catalog_version { param_values.push(Box::new(v as i64)); }
         if let Some(ref v) = req.url { param_values.push(Box::new(v.clone())); }
         if let Some(ref v) = req.node_name { param_values.push(Box::new(v.clone())); }
@@ -528,8 +844,21 @@ impl BeaconRegistry {
         Ok(nodes)
     }
 
-    /// Remove a node by ID. Returns true if it existed.
+    /// Remove a node by ID **and release its pinned key** — the admin delete
+    /// path, and the only way a pin is ever cleared. Returns true if it existed.
     pub fn remove(&self, node_id: &str) -> Result<bool> {
+        let affected = self
+            .conn
+            .execute("DELETE FROM beacon_nodes WHERE node_id = ?1", params![node_id])?;
+        let unpinned = self
+            .conn
+            .execute("DELETE FROM beacon_node_pins WHERE node_id = ?1", params![node_id])?;
+        Ok(affected > 0 || unpinned > 0)
+    }
+
+    /// Retire a node's registry row but keep its pin, so the node_id still
+    /// belongs to the same key when the node comes back. Returns true if it existed.
+    pub fn retire(&self, node_id: &str) -> Result<bool> {
         let affected = self
             .conn
             .execute("DELETE FROM beacon_nodes WHERE node_id = ?1", params![node_id])?;
@@ -537,6 +866,10 @@ impl BeaconRegistry {
     }
 
     /// Prune stale nodes that haven't sent a heartbeat in `max_age_secs`.
+    ///
+    /// Only the `beacon_nodes` row and the tiles go. The pin in
+    /// `beacon_node_pins` stays, so a node_id that went quiet cannot be claimed
+    /// afresh by another key.
     pub fn prune_stale(&self, max_age_secs: f64) -> Result<usize> {
         let threshold = now_ts() - max_age_secs;
         // Also clean up tiles for pruned nodes
@@ -555,11 +888,22 @@ impl BeaconRegistry {
     }
 
     /// Deduplicate: if a node_name is registered with multiple IDs, keep only the most recent.
+    ///
+    /// The row of a pinned node is never the one deleted: an unpinned row
+    /// sharing a pinned node's name goes instead, whatever its age, and two
+    /// pinned rows are both kept. Sharing a name must not evict a pinned node.
     pub fn dedup_by_name(&self) -> Result<usize> {
         let affected = self.conn.execute(
-            "DELETE FROM beacon_nodes WHERE rowid NOT IN (
-                SELECT MAX(rowid) FROM beacon_nodes GROUP BY node_name
-            ) AND node_name != ''",
+            "DELETE FROM beacon_nodes
+             WHERE node_name != ''
+               AND node_id NOT IN (SELECT node_id FROM beacon_node_pins)
+               AND (
+                    rowid NOT IN (SELECT MAX(rowid) FROM beacon_nodes GROUP BY node_name)
+                    OR node_name IN (
+                        SELECT node_name FROM beacon_nodes
+                        WHERE node_id IN (SELECT node_id FROM beacon_node_pins)
+                    )
+               )",
             [],
         )?;
         if affected > 0 {
@@ -870,9 +1214,44 @@ Ok(affected)
     }
 
     /// Federated upsert: insert or update a node from a remote beacon.
-    /// Bypasses URL-conflict checks (the remote beacon is authoritative).
+    /// Bypasses URL-conflict checks (the remote beacon is authoritative) — but
+    /// only for nodes this beacon holds no pin for. A federated event carries
+    /// no node signature, so for a pinned node_id it may refresh the counters
+    /// of an existing row and nothing else: url, node_name and the sponsor /
+    /// group fields change only through the node's own signed requests, and a
+    /// retired pinned node is not re-created from a peer's word. A row that
+    /// would take the node_name of a different pinned node is not created either.
     pub fn federated_upsert(&self, node: &BeaconNode) -> Result<()> {
         let collections_json = serde_json::to_string(&node.collections)?;
+        if self.pin(&node.node_id)?.is_some() {
+            self.conn.execute(
+                "UPDATE beacon_nodes SET
+                    collections_json = ?1,
+                    item_count = ?2,
+                    chunk_count = ?3,
+                    chunks_bytes = ?4,
+                    can_source = ?5,
+                    storage_limit_gb = ?6,
+                    last_seen = ?7,
+                    uptime_seconds = ?8
+                 WHERE node_id = ?9",
+                rusqlite::params![
+                    collections_json,
+                    node.item_count,
+                    node.chunk_count,
+                    node.chunks_bytes,
+                    node.can_source as i64,
+                    node.storage_limit_gb,
+                    node.last_seen,
+                    node.uptime_seconds,
+                    node.node_id,
+                ],
+            )?;
+            return Ok(());
+        }
+        if self.name_held_by_other_pinned_node(&node.node_name, &node.node_id)? {
+            return Ok(());
+        }
         self.conn.execute(
             "INSERT INTO beacon_nodes
                 (node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
@@ -991,8 +1370,31 @@ async fn register_node(
         return err(StatusCode::BAD_REQUEST, "url is required").into_response();
     }
     let registry = state.registry.lock().await;
+    // Fail closed: no signature, a bad signature, a stale timestamp or a key
+    // other than the pinned one all end here. Unsigned registration is what
+    // let anyone repoint a node_id at their own server.
+    // The signature covers the whole body under the register domain, so
+    // every field applied below is one the key holder signed.
+    let message = register_message(&req);
+    if let Err(msg) = registry.authenticate(
+        &req.node_id,
+        &message,
+        req.timestamp,
+        req.public_key.as_deref(),
+        req.signature.as_deref(),
+    ) {
+        return err(StatusCode::UNAUTHORIZED, msg).into_response();
+    }
     match registry.register(&req) {
         Ok(node) => {
+            // First signed contact pins the key to this node_id; every accepted
+            // request moves the node's last accepted timestamp forward.
+            if let Err(e) = registry
+                .pin_public_key(&node.node_id, req.public_key.as_deref().unwrap_or(""))
+                .and_then(|_| registry.record_accepted_timestamp(&node.node_id, req.timestamp.unwrap_or(0), &message))
+            {
+                return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+            }
             // First registration → fetch coverage
             let node_url = node.url.clone();
             let node_id = node.node_id.clone();
@@ -1019,8 +1421,30 @@ async fn heartbeat_node(
     let needs_coverage = true;
 
     let registry = state.registry.lock().await;
+    // Fail closed, as in register_node: a heartbeat can change url, node_name,
+    // collections and the counters, so all of them are under the signature —
+    // in the heartbeat domain, which a register signature does not satisfy. A
+    // different public key for an existing node_id is rejected.
+    let message = heartbeat_message(&req);
+    if let Err(msg) = registry.authenticate(
+        &req.node_id,
+        &message,
+        req.timestamp,
+        req.public_key.as_deref(),
+        req.signature.as_deref(),
+    ) {
+        return err(StatusCode::UNAUTHORIZED, msg).into_response();
+    }
     match registry.heartbeat(&req) {
         Ok(Some(node)) => {
+            // First signed contact pins the key (rows that predate signing);
+            // every accepted request moves the last accepted timestamp forward.
+            if let Err(e) = registry
+                .pin_public_key(&node.node_id, req.public_key.as_deref().unwrap_or(""))
+                .and_then(|_| registry.record_accepted_timestamp(&node.node_id, req.timestamp.unwrap_or(0), &message))
+            {
+                return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+            }
             // Spawn async coverage fetch if version changed or no tiles yet
             if needs_coverage {
                 let node_url = node.url.clone();
@@ -1104,10 +1528,26 @@ async fn fetch_and_store_coverage(
 ) {
     let base = node_url.trim_end_matches('/');
     let nid = &node_id[..8.min(node_id.len())];
-    let client = reqwest::Client::builder()
+
+    // Outbound URL policy — before any request is made. The node chose this
+    // URL, and any keypair can register: a private address is reachable only
+    // if the beacon's operator configured that host as a peer. A signed
+    // registration does not grant the exception to itself.
+    let known_hosts = crate::url_policy::operator_hosts();
+    if let Err(e) = crate::url_policy::validate_outbound_url_async(node_url, known_hosts).await {
+        eprintln!("⚠️  Coverage fetch skipped for {}: {}", nid, e);
+        return;
+    }
+
+    // No fallback to `Client::default()`: that client follows redirects.
+    let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
-        .unwrap_or_default();
+    else {
+        eprintln!("⚠️  Coverage fetch skipped for {}: HTTP client could not be built", nid);
+        return;
+    };
 
     // Fetch spatial coverage
     let coverage_url = format!("{}/api/coverage/spatial?source=local", base);
@@ -1231,6 +1671,9 @@ mod tests {
             node_url: None,
             group: None,
             catalog_version: None,
+            public_key: None,
+            signature: None,
+            timestamp: None,
         };
         let node = reg.register(&req).unwrap();
         assert_eq!(node.node_id, "node-1");
@@ -1259,6 +1702,9 @@ mod tests {
             node_url: None,
             group: None,
             catalog_version: None,
+            public_key: None,
+            signature: None,
+            timestamp: None,
         };
         reg.register(&req).unwrap();
 
@@ -1274,6 +1720,9 @@ mod tests {
             can_source: None,
             storage_limit_gb: None,
             catalog_version: None,
+            public_key: None,
+            signature: None,
+            timestamp: None,
         };
         let updated = reg.heartbeat(&hb).unwrap().unwrap();
         assert_eq!(updated.item_count, 42);
@@ -1299,6 +1748,9 @@ mod tests {
                 node_url: None,
                 group: None,
                 catalog_version: None,
+                public_key: None,
+                signature: None,
+                timestamp: None,
             }).unwrap();
         }
         let all = reg.list(false).unwrap();
@@ -1307,5 +1759,436 @@ mod tests {
         assert!(reg.remove("n-0").unwrap());
         assert_eq!(reg.list(false).unwrap().len(), 2);
         assert!(!reg.remove("n-0").unwrap()); // already gone
+    }
+
+    fn test_identity() -> (NodeIdentity, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let id = NodeIdentity::load_or_generate(&dir.path().join(".node_key")).unwrap();
+        (id, dir)
+    }
+
+    fn unsigned_register(node_id: &str, url: &str, name: Option<&str>, ts: u64) -> RegisterRequest {
+        RegisterRequest {
+            node_id: node_id.to_string(),
+            node_name: name.map(|n| n.to_string()),
+            url: url.to_string(),
+            collections: None,
+            item_count: None,
+            chunk_count: None,
+            chunks_bytes: None,
+            can_source: None,
+            storage_limit_gb: None,
+            sponsor_name: None,
+            sponsor_url: None,
+            node_url: None,
+            group: None,
+            catalog_version: None,
+            public_key: None,
+            signature: None,
+            timestamp: Some(ts),
+        }
+    }
+
+    fn unsigned_heartbeat(node_id: &str, ts: u64) -> HeartbeatRequest {
+        HeartbeatRequest {
+            node_id: node_id.to_string(),
+            url: None,
+            node_name: None,
+            item_count: None,
+            chunk_count: None,
+            chunks_bytes: None,
+            uptime_seconds: None,
+            collections: None,
+            can_source: None,
+            storage_limit_gb: None,
+            catalog_version: None,
+            public_key: None,
+            signature: None,
+            timestamp: Some(ts),
+        }
+    }
+
+    fn sign_register(id: &NodeIdentity, req: &mut RegisterRequest) {
+        let (public_key, signature) = sign_request(id, &register_message(req));
+        req.public_key = Some(public_key);
+        req.signature = Some(signature);
+    }
+
+    fn sign_heartbeat(id: &NodeIdentity, req: &mut HeartbeatRequest) {
+        let (public_key, signature) = sign_request(id, &heartbeat_message(req));
+        req.public_key = Some(public_key);
+        req.signature = Some(signature);
+    }
+
+    fn signed_register(id: &NodeIdentity, node_id: &str, url: &str, name: &str) -> RegisterRequest {
+        let mut req = unsigned_register(node_id, url, Some(name), now_ts() as u64);
+        sign_register(id, &mut req);
+        req
+    }
+
+    fn auth_register(reg: &BeaconRegistry, req: &RegisterRequest) -> std::result::Result<(), &'static str> {
+        reg.authenticate(&req.node_id, &register_message(req), req.timestamp, req.public_key.as_deref(), req.signature.as_deref())
+    }
+
+    fn auth_heartbeat(reg: &BeaconRegistry, req: &HeartbeatRequest) -> std::result::Result<(), &'static str> {
+        reg.authenticate(&req.node_id, &heartbeat_message(req), req.timestamp, req.public_key.as_deref(), req.signature.as_deref())
+    }
+
+    /// Register `req` the way the handler does: authenticate, apply, pin, record.
+    fn accept_register(reg: &BeaconRegistry, req: &RegisterRequest) {
+        auth_register(reg, req).unwrap();
+        reg.register(req).unwrap();
+        reg.pin_public_key(&req.node_id, req.public_key.as_deref().unwrap()).unwrap();
+        reg.record_accepted_timestamp(&req.node_id, req.timestamp.unwrap(), &register_message(req)).unwrap();
+    }
+
+    fn federated_node(node_id: &str, name: &str, url: &str) -> BeaconNode {
+        BeaconNode {
+            node_id: node_id.to_string(),
+            node_name: name.to_string(),
+            url: url.to_string(),
+            collections: vec![],
+            item_count: 7,
+            chunk_count: 0,
+            chunks_bytes: 0,
+            can_source: false,
+            storage_limit_gb: 0.0,
+            last_seen: now_ts() + 10.0,
+            sponsor_name: None,
+            sponsor_url: None,
+            node_url: None,
+            group_id: None,
+            uptime_seconds: 0,
+            catalog_version: 0,
+            alive: true,
+        }
+    }
+
+    #[test]
+    fn test_signed_message_has_no_field_boundary_confusion() {
+        let msg = |node_id: &str, url: &str, name: Option<&str>| register_message(&unsigned_register(node_id, url, name, 1));
+        assert_ne!(msg("ab", "c", Some("n")), msg("a", "bc", Some("n")));
+        assert_ne!(msg("a", "b\nnode_name=1:c", None), msg("a", "b", Some("c")));
+        assert!(msg("a", "b", Some("n")).starts_with(REGISTER_DOMAIN));
+
+        // An absent field and an explicit empty string are different messages
+        assert_ne!(msg("a", "b", None), msg("a", "b", Some("")));
+        let mut hb = unsigned_heartbeat("a", 1);
+        let absent = heartbeat_message(&hb);
+        hb.url = Some(String::new());
+        assert_ne!(absent, heartbeat_message(&hb));
+        assert!(absent.starts_with(HEARTBEAT_DOMAIN));
+
+        // Lists: absent, empty, and different splits of the same characters
+        let list = |c: Option<Vec<&str>>| {
+            let mut req = unsigned_register("a", "b", None, 1);
+            req.collections = c.map(|v| v.into_iter().map(String::from).collect());
+            register_message(&req)
+        };
+        assert_ne!(list(None), list(Some(vec![])));
+        assert_ne!(list(Some(vec!["ab"])), list(Some(vec!["a", "b"])));
+        assert_ne!(list(Some(vec!["a][1:b"])), list(Some(vec!["a", "b"])));
+    }
+
+    #[test]
+    fn test_verify_request_fails_closed() {
+        let (id, _dir) = test_identity();
+        let ts = now_ts() as u64;
+        let message = |node_id: &str, url: &str, name: &str, ts: u64| {
+            register_message(&unsigned_register(node_id, url, Some(name), ts))
+        };
+        let good = message("n1", "http://node.example:8400", "alpha", ts);
+        let (pk, sig) = sign_request(&id, &good);
+
+        assert!(verify_request(&good, Some(ts), Some(&pk), Some(&sig)).is_ok());
+
+        // Unsigned or partially signed
+        assert!(verify_request(&good, None, None, None).is_err());
+        assert!(verify_request(&good, Some(ts), Some(&pk), None).is_err());
+        assert!(verify_request(&good, Some(ts), None, Some(&sig)).is_err());
+        assert!(verify_request(&good, None, Some(&pk), Some(&sig)).is_err());
+
+        // Any signed field changed
+        assert!(verify_request(&message("n2", "http://node.example:8400", "alpha", ts), Some(ts), Some(&pk), Some(&sig)).is_err());
+        assert!(verify_request(&message("n1", "http://evil.example:8400", "alpha", ts), Some(ts), Some(&pk), Some(&sig)).is_err());
+        assert!(verify_request(&message("n1", "http://node.example:8400", "beta", ts), Some(ts), Some(&pk), Some(&sig)).is_err());
+        assert!(verify_request(&message("n1", "http://node.example:8400", "alpha", ts + 1), Some(ts + 1), Some(&pk), Some(&sig)).is_err());
+
+        // Validly signed but outside the replay window (both directions)
+        for stale in [ts - REPLAY_WINDOW_SECS - 5, ts + REPLAY_WINDOW_SECS + 5] {
+            let old = message("n1", "http://node.example:8400", "alpha", stale);
+            let (pk, sig) = sign_request(&id, &old);
+            assert!(verify_request(&old, Some(stale), Some(&pk), Some(&sig)).is_err());
+        }
+    }
+
+    #[test]
+    fn test_signature_covers_every_mutable_field() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        let (id, _dir) = test_identity();
+        let ts = now_ts() as u64;
+
+        let base = || {
+            let mut req = unsigned_register("n1", "http://node.example:8400", Some("alpha"), ts);
+            req.collections = Some(vec!["sentinel-2-l2a".to_string()]);
+            req.storage_limit_gb = Some(50.0);
+            req
+        };
+        let mut signed = base();
+        sign_register(&id, &mut signed);
+        assert!(auth_register(&reg, &signed).is_ok());
+
+        for i in 0..13 {
+            let mut req = base();
+            req.public_key = signed.public_key.clone();
+            req.signature = signed.signature.clone();
+            match i {
+                0 => req.collections = Some(vec!["everything".to_string()]),
+                1 => req.collections = None,
+                2 => req.item_count = Some(1_000_000),
+                3 => req.chunk_count = Some(1),
+                4 => req.chunks_bytes = Some(1),
+                5 => req.can_source = Some(true),
+                6 => req.storage_limit_gb = Some(9999.0),
+                7 => req.sponsor_name = Some("evil".to_string()),
+                8 => req.sponsor_url = Some("http://evil.example".to_string()),
+                9 => req.node_url = Some("http://evil.example".to_string()),
+                10 => req.group = Some("evil".to_string()),
+                11 => req.catalog_version = Some(99),
+                _ => req.node_name = None,
+            }
+            assert!(auth_register(&reg, &req).is_err(), "register tamper #{i} must break the signature");
+        }
+
+        let hb_base = || {
+            let mut req = unsigned_heartbeat("n1", ts);
+            req.item_count = Some(3);
+            req
+        };
+        let mut hb = hb_base();
+        sign_heartbeat(&id, &mut hb);
+        assert!(auth_heartbeat(&reg, &hb).is_ok());
+        for i in 0..10 {
+            let mut req = hb_base();
+            req.public_key = hb.public_key.clone();
+            req.signature = hb.signature.clone();
+            match i {
+                0 => req.url = Some("http://evil.example:8400".to_string()),
+                1 => req.node_name = Some("evil".to_string()),
+                2 => req.item_count = Some(4),
+                3 => req.chunk_count = Some(1),
+                4 => req.chunks_bytes = Some(1),
+                5 => req.uptime_seconds = Some(1),
+                6 => req.collections = Some(vec![]),
+                7 => req.can_source = Some(true),
+                8 => req.storage_limit_gb = Some(1.0),
+                _ => req.catalog_version = Some(1),
+            }
+            assert!(auth_heartbeat(&reg, &req).is_err(), "heartbeat tamper #{i} must break the signature");
+        }
+    }
+
+    #[test]
+    fn test_register_and_heartbeat_signatures_are_not_interchangeable() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        let (id, _dir) = test_identity();
+        let ts = now_ts() as u64;
+
+        // The same logical content, signed for the heartbeat endpoint...
+        let mut hb = unsigned_heartbeat("n1", ts);
+        hb.url = Some("http://node.example:8400".to_string());
+        hb.node_name = Some("alpha".to_string());
+        sign_heartbeat(&id, &mut hb);
+        assert!(auth_heartbeat(&reg, &hb).is_ok());
+
+        // ...replayed against register: rejected
+        let mut as_register = unsigned_register("n1", "http://node.example:8400", Some("alpha"), ts);
+        as_register.public_key = hb.public_key.clone();
+        as_register.signature = hb.signature.clone();
+        assert!(auth_register(&reg, &as_register).is_err());
+
+        // ...and the other way round
+        let register = signed_register(&id, "n1", "http://node.example:8400", "alpha");
+        let mut as_heartbeat = unsigned_heartbeat("n1", register.timestamp.unwrap());
+        as_heartbeat.url = Some(register.url.clone());
+        as_heartbeat.node_name = register.node_name.clone();
+        as_heartbeat.public_key = register.public_key.clone();
+        as_heartbeat.signature = register.signature.clone();
+        assert!(auth_heartbeat(&reg, &as_heartbeat).is_err());
+    }
+
+    #[test]
+    fn test_public_key_is_pinned_on_first_signed_contact() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        let (owner, _d1) = test_identity();
+        let (attacker, _d2) = test_identity();
+
+        let req = signed_register(&owner, "n1", "http://node.example:8400", "alpha");
+        assert!(auth_register(&reg, &req).is_ok());
+        reg.register(&req).unwrap();
+        reg.pin_public_key("n1", req.public_key.as_deref().unwrap()).unwrap();
+        assert_eq!(reg.pinned_key("n1").unwrap(), Some(owner.public_key_hex()));
+
+        // Another key, correctly signing a takeover of the same node_id: rejected
+        let evil = signed_register(&attacker, "n1", "http://evil.example:8400", "alpha");
+        assert!(auth_register(&reg, &evil).is_err());
+        // ...and the pin cannot be replaced
+        reg.pin_public_key("n1", &attacker.public_key_hex()).unwrap();
+        assert_eq!(reg.pinned_key("n1").unwrap(), Some(owner.public_key_hex()));
+
+        // The owner can still move its own URL
+        let moved = signed_register(&owner, "n1", "http://node2.example:8400", "alpha");
+        assert!(auth_register(&reg, &moved).is_ok());
+
+        // An unknown node_id has no pin yet
+        assert_eq!(reg.pinned_key("nope").unwrap(), None);
+    }
+
+    #[test]
+    fn test_name_collision_cannot_erase_a_pin() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        let (victim, _d1) = test_identity();
+        let (attacker, _d2) = test_identity();
+        accept_register(&reg, &signed_register(&victim, "victim", "http://node.example:8400", "alpha"));
+        accept_register(&reg, &signed_register(&attacker, "evil", "http://evil.example:8400", "beta"));
+
+        // Taking the victim's name is refused on both endpoints
+        assert!(reg.register(&signed_register(&attacker, "evil", "http://evil.example:8400", "alpha")).is_err());
+        let mut rename = unsigned_heartbeat("evil", now_ts() as u64 + 1);
+        rename.node_name = Some("alpha".to_string());
+        sign_heartbeat(&attacker, &mut rename);
+        assert!(auth_heartbeat(&reg, &rename).is_ok(), "validly signed — it is the registry that must refuse it");
+        assert!(reg.heartbeat(&rename).is_err());
+
+        // Even with the collision forced into the table (newer rows, pinned
+        // and unpinned), dedup never deletes the pinned victim
+        reg.conn.execute("UPDATE beacon_nodes SET node_name = 'alpha' WHERE node_id = 'evil'", []).unwrap();
+        reg.conn.execute(
+            "INSERT INTO beacon_nodes (node_id, node_name, url, last_seen) VALUES ('unpinned', 'alpha', 'http://x.example', ?1)",
+            params![now_ts()],
+        ).unwrap();
+        reg.dedup_by_name().unwrap();
+        assert!(reg.get("victim").unwrap().is_some(), "pinned row must survive dedup");
+        assert!(reg.get("unpinned").unwrap().is_none(), "the unpinned duplicate is the one that goes");
+        assert_eq!(reg.pinned_key("victim").unwrap(), Some(victim.public_key_hex()));
+
+        // So the attacker still cannot claim the victim's node_id
+        assert!(auth_register(&reg, &signed_register(&attacker, "victim", "http://evil.example:8400", "alpha")).is_err());
+    }
+
+    #[test]
+    fn test_pin_survives_pruning_and_only_remove_clears_it() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        let (owner, _d1) = test_identity();
+        let (attacker, _d2) = test_identity();
+        accept_register(&reg, &signed_register(&owner, "n1", "http://node.example:8400", "alpha"));
+
+        // The node goes quiet for more than an hour and is pruned
+        reg.conn.execute("UPDATE beacon_nodes SET last_seen = ?1", params![now_ts() - 7200.0]).unwrap();
+        assert_eq!(reg.prune_stale(3600.0).unwrap(), 1);
+        assert!(reg.get("n1").unwrap().is_none());
+        assert_eq!(reg.pinned_key("n1").unwrap(), Some(owner.public_key_hex()));
+
+        // The id cannot be claimed afresh by another key
+        let claim = signed_register(&attacker, "n1", "http://evil.example:8400", "alpha");
+        assert!(auth_register(&reg, &claim).is_err());
+
+        // Only the admin delete releases the pin
+        assert!(reg.remove("n1").unwrap());
+        assert_eq!(reg.pinned_key("n1").unwrap(), None);
+        assert!(auth_register(&reg, &claim).is_ok());
+    }
+
+    #[test]
+    fn test_federated_upsert_cannot_touch_a_pinned_identity() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        let (owner, _d1) = test_identity();
+        accept_register(&reg, &signed_register(&owner, "n1", "http://node.example:8400", "alpha"));
+
+        // Counters may be refreshed; url and node_name may not
+        reg.federated_upsert(&federated_node("n1", "renamed", "http://evil.example:8400")).unwrap();
+        let node = reg.get("n1").unwrap().unwrap();
+        assert_eq!(node.url, "http://node.example:8400");
+        assert_eq!(node.node_name, "alpha");
+        assert_eq!(node.item_count, 7);
+
+        // No new row may take a pinned node's name
+        reg.federated_upsert(&federated_node("shadow", "alpha", "http://evil.example:8400")).unwrap();
+        assert!(reg.get("shadow").unwrap().is_none());
+        // Unrelated unpinned nodes still federate
+        reg.federated_upsert(&federated_node("other", "gamma", "http://other.example:8400")).unwrap();
+        assert!(reg.get("other").unwrap().is_some());
+
+        // A retired pinned node is not re-created from a peer's word
+        assert!(reg.retire("n1").unwrap());
+        assert_eq!(reg.pinned_key("n1").unwrap(), Some(owner.public_key_hex()));
+        reg.federated_upsert(&federated_node("n1", "alpha", "http://evil.example:8400")).unwrap();
+        assert!(reg.get("n1").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_old_signature_cannot_be_replayed() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        let (owner, _dir) = test_identity();
+        let ts = now_ts() as u64;
+
+        let mut first = unsigned_register("n1", "http://node.example:8400", Some("alpha"), ts);
+        sign_register(&owner, &mut first);
+        accept_register(&reg, &first);
+
+        // The very same request again — the node reaching this beacon through
+        // a second URL — is an idempotent duplicate and is accepted
+        assert!(auth_register(&reg, &first).is_ok());
+        // The same timestamp carrying any other message is refused
+        let mut same_ts = unsigned_register("n1", "http://node.example:8400", Some("alpha"), ts);
+        same_ts.item_count = Some(1);
+        sign_register(&owner, &mut same_ts);
+        assert!(auth_register(&reg, &same_ts).is_err());
+        let mut same_ts_hb = unsigned_heartbeat("n1", ts);
+        sign_heartbeat(&owner, &mut same_ts_hb);
+        assert!(auth_heartbeat(&reg, &same_ts_hb).is_err());
+        // Anything older is refused — by the recorded timestamp, whatever the
+        // beacon's clock says
+        let mut older = unsigned_heartbeat("n1", ts - 1);
+        sign_heartbeat(&owner, &mut older);
+        assert!(auth_heartbeat(&reg, &older).is_err());
+
+        // A newer one is accepted, and moves the mark forward
+        let mut newer = unsigned_heartbeat("n1", ts + 1);
+        sign_heartbeat(&owner, &mut newer);
+        assert!(auth_heartbeat(&reg, &newer).is_ok());
+        reg.record_accepted_timestamp("n1", ts + 1, &heartbeat_message(&newer)).unwrap();
+        assert!(auth_heartbeat(&reg, &newer).is_ok(), "duplicate of the last accepted request");
+        // ...which kills the previous one, duplicate or not
+        assert!(auth_register(&reg, &first).is_err());
+        // The mark never moves backwards, and neither does its digest
+        reg.record_accepted_timestamp("n1", ts - 100, &heartbeat_message(&older)).unwrap();
+        assert!(auth_heartbeat(&reg, &older).is_err());
+        assert!(auth_heartbeat(&reg, &newer).is_ok());
+    }
+
+    #[test]
+    fn test_storage_limit_is_stored_as_signed() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        let (owner, _dir) = test_identity();
+        let ts = now_ts() as u64;
+
+        // Two values in the same three-decimal bucket sign identically...
+        let mut a = unsigned_register("n1", "http://node.example:8400", Some("alpha"), ts);
+        a.storage_limit_gb = Some(100.0004);
+        let mut b = unsigned_register("n1", "http://node.example:8400", Some("alpha"), ts);
+        b.storage_limit_gb = Some(100.00012345);
+        assert_eq!(register_message(&a), register_message(&b));
+
+        // ...so both must store the one number the signature commits to
+        sign_register(&owner, &mut a);
+        accept_register(&reg, &a);
+        assert_eq!(reg.get("n1").unwrap().unwrap().storage_limit_gb, 100.0);
+
+        let mut hb = unsigned_heartbeat("n1", ts + 1);
+        hb.storage_limit_gb = Some(250.12349);
+        sign_heartbeat(&owner, &mut hb);
+        assert!(auth_heartbeat(&reg, &hb).is_ok());
+        assert_eq!(reg.heartbeat(&hb).unwrap().unwrap().storage_limit_gb, 250.123);
     }
 }

@@ -102,7 +102,16 @@ async fn search_peer(
     query: &FederatedQuery,
     timeout: Duration,
 ) -> Vec<StacItem> {
-    let client = match reqwest::Client::builder().timeout(timeout).build() {
+    // Outbound URL policy — before any request is made to this peer.
+    if crate::url_policy::validate_outbound_url_async(base_url, crate::url_policy::operator_hosts()).await.is_err() {
+        return Vec::new();
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };

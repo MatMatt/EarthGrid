@@ -452,10 +452,12 @@ pub async fn serve(
                 .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
                 .and_then(|v| v["beacon_url"].as_str().map(|s| s.to_string()))
         });
-        let admin_key = env::var("EARTHGRID_ADMIN_KEY").unwrap_or_default();
+        // The grid key, not the admin key: the queue endpoints only need
+        // check_write, and this credential goes to a configured remote URL.
+        let grid_key = env::var("EARTHGRID_API_KEY").unwrap_or_default();
         if let Some(bu) = beacon_url {
             println!("📡 Fetch queue: proxying to beacon at {}", bu);
-            Arc::new(FetchQueueBackend::Remote(RemoteFetchQueue::new(&bu, &admin_key)))
+            Arc::new(FetchQueueBackend::Remote(RemoteFetchQueue::new(&bu, &grid_key)))
         } else {
             // No beacon configured: use local queue as fallback
             eprintln!("⚠️  No beacon URL configured, using local fetch queue");
@@ -659,6 +661,8 @@ pub async fn serve(
     let beacon_enabled = state.is_beacon;
 
     let hb_peers = state.peers.clone();
+    // Node identity: signs this node's beacon register/heartbeat requests
+    let hb_identity = state.node_identity.clone();
     // Clones for P2P handler
     let state_clone_store = state.store.clone();
     let state_clone_catalog = state.catalog.clone();
@@ -730,6 +734,10 @@ pub async fn serve(
                         node_url: None,
                         group: None,
                         catalog_version: None,
+                        // In-process call on our own registry: nothing to verify.
+                        public_key: None,
+                        signature: None,
+                        timestamp: None,
                     };
                     // Try heartbeat first (updates existing), fall back to register (creates new)
                     match reg.heartbeat(&crate::beacon::HeartbeatRequest {
@@ -744,6 +752,9 @@ pub async fn serve(
                         can_source: self_req.can_source,
                         storage_limit_gb: self_req.storage_limit_gb,
                         catalog_version: self_req.catalog_version.map(|v| v as u64),
+                        public_key: None,
+                        signature: None,
+                        timestamp: None,
                     }) {
                         Ok(Some(node)) => println!("✅ Beacon self-registered: {} ({})", node.node_name, &node.node_id[..8]),
                         Ok(None) => {
@@ -754,6 +765,11 @@ pub async fn serve(
                             }
                         }
                         Err(e) => eprintln!("⚠️  Beacon self-heartbeat failed: {}", e),
+                    }
+                    // Pin our own key to our own node_id right away, so nobody
+                    // can claim it with a first signed contact of their own.
+                    if let Some(ref identity) = hb_identity {
+                        let _ = reg.pin_public_key(&state_node_id, &identity.public_key_hex());
                     }
                 }
 
@@ -822,10 +838,15 @@ pub async fn serve(
     // Spawn heartbeat + gossip loop
     
     tokio::spawn(async move {
-        let client = reqwest::Client::builder()
+        // No fallback to `Client::default()`: that client follows redirects.
+        let Ok(client) = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_default();
+        else {
+            eprintln!("⚠️  Peer polling disabled: HTTP client could not be built");
+            return;
+        };
 
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -835,7 +856,18 @@ pub async fn serve(
                 reg.urls()
             };
 
+            // The only hosts allowed in a private range: operator-configured peers.
+            let known_hosts = crate::url_policy::operator_hosts();
+
             for url in &urls {
+                // Outbound URL policy — before any request is made to this peer.
+                // Checked on every round: the name may resolve elsewhere by now.
+                if crate::url_policy::validate_outbound_url_async(url, known_hosts).await.is_err() {
+                    let mut reg = hb_peers.lock().await;
+                    reg.record_failure(url);
+                    continue;
+                }
+
                 // 1. Sync node-info
                 let info_url = format!("{}/api/node-info", url);
                 match client.get(&info_url).send().await {
@@ -856,10 +888,24 @@ pub async fn serve(
                 if let Ok(resp) = client.get(&gossip_url).send().await {
                     if resp.status().is_success() {
                         if let Ok(gossip) = resp.json::<GossipPeerList>().await {
+                            // A gossiped URL is another node's claim, and this loop and
+                            // auto-replication will fetch it: apply the outbound URL policy
+                            // before adopting it. Private addresses pass only for
+                            // operator-configured hosts, so gossip cannot vouch for itself.
+                            let mut accepted: Vec<&str> = Vec::new();
+                            // Bounded: the registry holds at most MAX_PEERS anyway.
+                            for entry in gossip.peers.iter().take(crate::peers::MAX_PEERS) {
+                                if urls.iter().any(|u| u == entry.url.trim_end_matches('/')) {
+                                    continue; // already known
+                                }
+                                if crate::url_policy::validate_outbound_url_async(&entry.url, known_hosts).await.is_ok() {
+                                    accepted.push(&entry.url);
+                                }
+                            }
                             let mut reg = hb_peers.lock().await;
                             let before = reg.count();
-                            for entry in &gossip.peers {
-                                reg.add_if_new(&entry.url);
+                            for new_url in accepted {
+                                reg.add_if_new(new_url);
                             }
                             // Save to disk if new peers discovered
                             if reg.count() > before {
@@ -897,7 +943,10 @@ pub async fn serve(
                     if repl_active.load(Ordering::Relaxed) > 0 {
                         eprintln!("🔄 Auto-replication: skipping cycle — {} active request(s)", repl_active.load(Ordering::Relaxed));
                     } else {
-                        let replicator = Replicator::new(repl_store.clone(), repl_catalog.clone());
+                        // sync_from_peer applies the outbound URL policy; only
+                        // operator-configured hosts are allowed in private ranges.
+                        let replicator = Replicator::new(repl_store.clone(), repl_catalog.clone())
+                            .with_known_hosts(crate::url_policy::operator_hosts().clone());
                         for url in &urls {
                             // Check again before each peer (request may have started)
                             if repl_active.load(Ordering::Relaxed) > 0 {
@@ -1038,11 +1087,31 @@ pub async fn serve(
 
         if !initial_beacons.is_empty() {
             let beacon_cache_path_clone = beacon_cache_path.clone();
+            // Beacons the operator chose: this node's own beacon and the configured
+            // beacon URL. Everything else in the list was discovered — named by a
+            // beacon's response or read back from the cache — and goes through the
+            // outbound URL policy before each request.
+            let operator_beacons: Vec<String> = initial_beacons
+                .iter()
+                .filter(|b| {
+                    (beacon_enabled && **b == format!("http://127.0.0.1:{}", hb_port))
+                        || beacon_url_env.as_ref() == Some(*b)
+                })
+                .cloned()
+                .collect();
             tokio::spawn(async move {
-                let client = reqwest::Client::builder()
+                // No fallback to `Client::default()`: that client follows redirects.
+                let Ok(client) = reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(10))
+                    .redirect(reqwest::redirect::Policy::none())
                     .build()
-                    .unwrap_or_default();
+                else {
+                    eprintln!("⚠️  Beacon heartbeat disabled: HTTP client could not be built");
+                    return;
+                };
+                if hb_identity.is_none() {
+                    eprintln!("⚠️  No node identity: beacon register/heartbeat cannot be signed and will be rejected");
+                }
                 // Track all known beacons (grows over time via discovery)
                 let mut all_beacons: Vec<String> = initial_beacons;
                 loop {
@@ -1066,7 +1135,7 @@ pub async fn serve(
                     };
                     let public_url = std::env::var("EARTHGRID_PUBLIC_URL")
                         .unwrap_or_else(|_| format!("http://127.0.0.1:{}", hb_port));
-                    let body = serde_json::json!({
+                    let mut body = serde_json::json!({
                         "node_id": hb_node_id,
                         "node_name": hb_node_name,
                         "url": public_url,
@@ -1078,12 +1147,48 @@ pub async fn serve(
                         "storage_limit_gb": hb_storage_limit_gb,
                         "catalog_version": catalog_version,
                     });
+                    // Sign with the node identity. Heartbeat and register carry the
+                    // same fields but are signed in separate domains, so each gets
+                    // its own signature over the whole body. The body is parsed into
+                    // the beacon's request type to build the message, so both sides
+                    // canonicalize exactly the same thing.
+                    let mut register_body = body.clone();
+                    if let Some(ref identity) = hb_identity {
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        body["timestamp"] = serde_json::json!(timestamp);
+                        register_body["timestamp"] = serde_json::json!(timestamp);
+                        if let Ok(hb_req) = serde_json::from_value::<crate::beacon::HeartbeatRequest>(body.clone()) {
+                            let (public_key, signature) = crate::beacon::sign_request(
+                                identity, &crate::beacon::heartbeat_message(&hb_req),
+                            );
+                            body["public_key"] = serde_json::json!(public_key);
+                            body["signature"] = serde_json::json!(signature);
+                        }
+                        if let Ok(reg_req) = serde_json::from_value::<crate::beacon::RegisterRequest>(register_body.clone()) {
+                            let (public_key, signature) = crate::beacon::sign_request(
+                                identity, &crate::beacon::register_message(&reg_req),
+                            );
+                            register_body["public_key"] = serde_json::json!(public_key);
+                            register_body["signature"] = serde_json::json!(signature);
+                        }
+                    }
 
                     let mut any_success = false;
                     let mut discovered_beacons: Vec<String> = Vec::new();
 
                     // Send heartbeat to ALL known beacons
                     for beacon_base in &all_beacons {
+                        // Outbound URL policy for discovered beacons — before any
+                        // request. A beacon's response must not be able to aim this
+                        // node's signed heartbeat at an internal address.
+                        if !operator_beacons.contains(beacon_base)
+                            && crate::url_policy::validate_outbound_url_async(beacon_base, crate::url_policy::operator_hosts()).await.is_err()
+                        {
+                            continue;
+                        }
                         let hb_url = format!("{}/api/beacon/heartbeat", beacon_base.trim_end_matches('/'));
                         match client.post(&hb_url).json(&body).send().await {
                             Ok(r) => {
@@ -1091,7 +1196,7 @@ pub async fn serve(
                                 if status == reqwest::StatusCode::NOT_FOUND {
                                     // Not registered — register first
                                     let reg_url = hb_url.replace("/api/beacon/heartbeat", "/api/beacon/register");
-                                    if let Ok(rr) = client.post(&reg_url).json(&body).send().await {
+                                    if let Ok(rr) = client.post(&reg_url).json(&register_body).send().await {
                                         // Try to extract known_beacons from register response too
                                         if let Ok(resp_body) = rr.json::<serde_json::Value>().await {
                                             if let Some(kb) = resp_body.get("known_beacons").and_then(|v| v.as_array()) {
@@ -1375,6 +1480,10 @@ pub async fn serve(
 
                         let _ = fq_queue.update_progress(job_id, 0, 0, Some("searching..."));
 
+                        // Delegation: nodes get a short-lived token derived from the
+                        // federation key — never that key itself, nor the grid key
+                        let fq_federation_auth = crate::beacon_federation::FederationAuth::from_env();
+
                         // 10-minute timeout on fetch to prevent worker hanging
                         let result = tokio::time::timeout(
                             std::time::Duration::from_secs(600),
@@ -1387,7 +1496,7 @@ pub async fn serve(
                                         bbox, &start_date, &end_date, job.cloud_cover,
                                         &bands, limit, &collection, None,
                                         &self_url, &fq_node_id,
-                                        &std::env::var("EARTHGRID_API_KEY").unwrap_or_default(),
+                                        fq_federation_auth.key(),
                                     ).await
                                 } else {
                                     crate::fetcher::fetch_and_ingest(

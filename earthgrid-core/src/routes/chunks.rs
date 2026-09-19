@@ -27,6 +27,7 @@ pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str) -> Optio
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?;
 
@@ -38,6 +39,10 @@ pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str) -> Optio
         let sha = sha.to_string();
         let tx = tx.clone();
         tokio::spawn(async move {
+            // Outbound URL policy — before any request is made to this peer.
+            if crate::url_policy::validate_outbound_url_async(&url, crate::url_policy::operator_hosts()).await.is_err() {
+                return;
+            }
             let resp = client.get(format!("{}/api/chunks/{}", url, sha)).send().await;
             if let Ok(r) = resp {
                 if r.status().is_success() {
@@ -168,6 +173,14 @@ pub(crate) async fn replicate(
         return err(StatusCode::BAD_REQUEST, "peer_url is required").into_response();
     }
 
+    // Outbound URL policy — before any request is made. Private addresses are
+    // only reachable for operator-configured peer hosts, never for hosts that
+    // merely appear in the peer registry.
+    let known_hosts = crate::url_policy::operator_hosts().clone();
+    if let Err(e) = crate::url_policy::validate_outbound_url_async(&q.peer_url, &known_hosts).await {
+        return err(StatusCode::BAD_REQUEST, &e.to_string()).into_response();
+    }
+
     let collections: Vec<String> = q
         .collections
         .as_deref()
@@ -180,7 +193,8 @@ pub(crate) async fn replicate(
     let max_items = q.max_items.unwrap_or(0);
     let dry_run = q.dry_run.unwrap_or(false);
 
-    let replicator = Replicator::new(state.store.clone(), state.catalog.clone());
+    let replicator = Replicator::new(state.store.clone(), state.catalog.clone())
+        .with_known_hosts(known_hosts);
     let result = replicator
         .sync_from_peer(&q.peer_url, &collections, max_items, dry_run)
         .await;

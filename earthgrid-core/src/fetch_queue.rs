@@ -409,19 +409,26 @@ impl LocalFetchQueue {
 
 pub struct RemoteFetchQueue {
     beacon_url: String,
-    admin_key: String,
+    /// The grid key (`EARTHGRID_API_KEY`) — every fetch-queue endpoint is a
+    /// `check_write`, so the admin key never needs to leave this node.
+    grid_key: String,
     client: reqwest::Client,
 }
 
 impl RemoteFetchQueue {
-    pub fn new(beacon_url: &str, admin_key: &str) -> Self {
+    pub fn new(beacon_url: &str, grid_key: &str) -> Self {
+        // Every call carries `x-api-key`, and reqwest does not strip that
+        // header on a cross-host redirect: never follow one. No fallback to
+        // `Client::default()` either — it follows redirects (and panics on the
+        // same build failure anyway).
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_default();
+            .expect("fetch-queue HTTP client could not be built");
         Self {
             beacon_url: beacon_url.trim_end_matches('/').to_string(),
-            admin_key: admin_key.to_string(),
+            grid_key: grid_key.to_string(),
             client,
         }
     }
@@ -438,7 +445,7 @@ impl RemoteFetchQueue {
         if let Some(l) = job.limit_count { params.push(("limit_count", l.to_string())); }
 
         let resp = self.client.post(format!("{}/api/fetch/queue", self.beacon_url))
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .query(&params)
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon enqueue: {}", e)))?;
@@ -451,7 +458,7 @@ impl RemoteFetchQueue {
 
     async fn claim_next(&self, node_id: &str) -> Result<Option<FetchJob>, EarthGridError> {
         let resp = self.client.post(format!("{}/api/fetch/queue/claim", self.beacon_url))
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .query(&[("node_id", node_id)])
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon claim: {}", e)))?;
@@ -474,7 +481,7 @@ impl RemoteFetchQueue {
 
     async fn update_progress(&self, job_id: i64, done: i64, total: i64, stage: Option<&str>) -> Result<(), EarthGridError> {
         let _ = self.client.post(format!("{}/api/fetch/queue/{}/progress", self.beacon_url, job_id))
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .json(&serde_json::json!({"done": done, "total": total, "stage": stage}))
             .send().await;
         Ok(()) // progress updates are best-effort
@@ -482,7 +489,7 @@ impl RemoteFetchQueue {
 
     async fn complete(&self, job_id: i64) -> Result<(), EarthGridError> {
         self.client.post(format!("{}/api/fetch/queue/{}/complete", self.beacon_url, job_id))
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon complete: {}", e)))?;
         Ok(())
@@ -490,7 +497,7 @@ impl RemoteFetchQueue {
 
     async fn fail(&self, job_id: i64, error: &str) -> Result<(), EarthGridError> {
         self.client.post(format!("{}/api/fetch/queue/{}/fail", self.beacon_url, job_id))
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .json(&serde_json::json!({"error": error}))
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon fail: {}", e)))?;
@@ -503,7 +510,7 @@ impl RemoteFetchQueue {
             url.push_str(&format!("?status={}", s));
         }
         let resp = self.client.get(&url)
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon list: {}", e)))?;
 
@@ -517,7 +524,7 @@ impl RemoteFetchQueue {
 
     async fn get(&self, job_id: i64) -> Result<Option<FetchJob>, EarthGridError> {
         let resp = self.client.get(format!("{}/api/fetch/queue/{}", self.beacon_url, job_id))
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon get: {}", e)))?;
 
@@ -532,7 +539,7 @@ impl RemoteFetchQueue {
 
     async fn cancel(&self, job_id: i64) -> Result<bool, EarthGridError> {
         let resp = self.client.delete(format!("{}/api/fetch/queue/{}", self.beacon_url, job_id))
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon cancel: {}", e)))?;
         Ok(resp.status().is_success())
@@ -540,7 +547,7 @@ impl RemoteFetchQueue {
 
     async fn retry(&self, job_id: i64) -> Result<bool, EarthGridError> {
         let resp = self.client.post(format!("{}/api/fetch/queue/{}/retry", self.beacon_url, job_id))
-            .header("x-api-key", &self.admin_key)
+            .header("x-api-key", &self.grid_key)
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon retry: {}", e)))?;
         Ok(resp.status().is_success())

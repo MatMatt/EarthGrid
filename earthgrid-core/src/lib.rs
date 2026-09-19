@@ -33,4 +33,5 @@ pub mod smart_replication;
 pub mod source_users;
 pub mod stats;
 pub mod transport;
+pub mod url_policy;
 pub mod user_auth;

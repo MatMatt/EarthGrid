@@ -60,6 +60,8 @@ pub struct Replicator {
     store: Arc<Mutex<ChunkStore>>,
     catalog: Arc<Mutex<Catalog>>,
     client: reqwest::Client,
+    /// Operator-configured peer hosts — the only ones allowed in private ranges.
+    known_hosts: std::collections::HashSet<String>,
 }
 
 impl Replicator {
@@ -67,9 +69,19 @@ impl Replicator {
     pub fn new(store: Arc<Mutex<ChunkStore>>, catalog: Arc<Mutex<Catalog>>) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
+            // A permitted peer URL must not redirect us into a blocked address.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_default();
-        Self { store, catalog, client }
+            // No fallback to `Client::default()`: it follows redirects (and
+            // panics on the same build failure anyway).
+            .expect("building the replication HTTP client");
+        Self { store, catalog, client, known_hosts: Default::default() }
+    }
+
+    /// Set the hosts allowed in private ranges (see `url_policy::operator_hosts`).
+    pub fn with_known_hosts(mut self, known_hosts: std::collections::HashSet<String>) -> Self {
+        self.known_hosts = known_hosts;
+        self
     }
 
     /// Sync items (and their chunks) from a remote EarthGrid peer.
@@ -91,6 +103,12 @@ impl Replicator {
             dry_run,
             ..Default::default()
         };
+
+        // Outbound URL policy — before any request goes to the peer.
+        if let Err(e) = crate::url_policy::validate_outbound_url_async(peer_url, &self.known_hosts).await {
+            result.errors.push(format!("Peer URL rejected: {}", e));
+            return result;
+        }
 
         // 1. Fetch remote collections
         let remote_collections = match self.fetch_collections(peer_url).await {
