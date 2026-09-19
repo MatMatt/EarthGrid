@@ -165,7 +165,7 @@ function initCoverageMap() {
   const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
   });
-  darkLayer.addTo(covMap);
+  osmLayer.addTo(covMap);
   L.control.layers({'Dark': darkLayer, 'Light': lightLayer, 'OSM': osmLayer}, null, {position: 'topright'}).addTo(covMap);
 
   // Legend

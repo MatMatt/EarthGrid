@@ -930,7 +930,7 @@ function initFetchMap() {
   const osmTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '\u00a9 OSM', maxZoom: 19
   });
-  darkTile.addTo(_fetchMap);
+  osmTile.addTo(_fetchMap);
   L.control.layers({'Dark': darkTile, 'Light': lightTile, 'OSM': osmTile}, null, {position: 'topright'}).addTo(_fetchMap);
 
   const drawnItems = new L.FeatureGroup();
