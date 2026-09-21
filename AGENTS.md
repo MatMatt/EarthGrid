@@ -1,6 +1,6 @@
 # AGENTS.md — AI Contributor Guide
 
-> Context for AI coding tools (Claude Code, Codex, Cursor, etc.)
+> Context for AI coding tools.
 > Read this before making any changes.
 
 ## Definition of done
@@ -10,10 +10,9 @@ A change is done only when all of these hold, and you report the evidence rather
 - `cargo build --release` is clean, and the `cargo test` counts are quoted from the actual run.
 - `ui.html` and `beacon.html` are embedded assets, so a JavaScript change there is only really checked by extracting each `<script>` block and running `node --check` on it.
 - A second pass has tried to refute the change and nothing stands.
-- Anything user-facing is verified on the running node, not just in the repo: for the nucleus beacon that means the MD5 of `~/.cargo/bin/earthgrid` matching the build, `/health`, `/dashboard`, and the node still present in `/api/beacon/nodes`.
+- Anything user-facing is verified on the running node, not just in the repo: for a beacon node that means the MD5 of `~/.cargo/bin/earthgrid` matching the build, `/health`, `/dashboard`, and the node still present in `/api/beacon/nodes`.
 - Every result states the commit hash it came from.
 
-Slash commands for this: `/gate`, `/verify`, `/deploy`.
 
 Reviewers, human or model, must name the branch and commit they read. A review of a stale worktree on this project produced two false critical findings, and the fix cost more than the review.
 

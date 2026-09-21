@@ -323,10 +323,10 @@ mod tests {
     #[test]
     fn private_ranges_only_for_known_peers() {
         let lan = [
-            "http://192.168.188.219:8400",
-            "http://10.0.0.5:8400",
+            "http://192.168.100.10:8400",
+            "http://10.20.30.40:8400",
             "http://172.16.3.4:8400",
-            "http://100.64.0.7:8400",
+            "http://100.64.0.9:8400",
             "http://[fd12:3456::1]:8400",
         ];
         for url in lan {
@@ -335,27 +335,27 @@ mod tests {
             assert!(validate_outbound_url(url, &known).is_ok(), "{url} must work for a known peer");
         }
         // A different private host is not covered by someone else's entry.
-        let known = known_hosts(["http://192.168.188.219:8400"]);
-        assert!(validate_outbound_url("http://192.168.188.1/", &known).is_err());
+        let known = known_hosts(["http://192.168.100.10:8400"]);
+        assert!(validate_outbound_url("http://192.168.100.1/", &known).is_err());
         // Known by host: a different port or path on the same host is fine.
-        assert!(validate_outbound_url("http://192.168.188.219:9000/api", &known).is_ok());
+        assert!(validate_outbound_url("http://192.168.100.10:9000/api", &known).is_ok());
     }
 
     #[test]
     fn private_exception_comes_from_operator_multiaddrs() {
         let hosts = hosts_from_peer_list(
-            "/ip4/192.168.188.219/tcp/4001/p2p/12D3KooWExample, /ip6/fd12:3456::1/tcp/4001,\
-             /dns4/Peer.Example/tcp/4001,http://10.0.0.5:8400,/p2p/12D3KooWExample,garbage,",
+            "/ip4/192.168.100.10/tcp/4001/p2p/12D3KooWExample, /ip6/fd12:3456::1/tcp/4001,\
+             /dns4/Peer.Example/tcp/4001,http://10.20.30.40:8400,/p2p/12D3KooWExample,garbage,",
         );
-        let expected: HashSet<String> = ["192.168.188.219", "fd12:3456::1", "peer.example", "10.0.0.5"]
+        let expected: HashSet<String> = ["192.168.100.10", "fd12:3456::1", "peer.example", "10.20.30.40"]
             .iter()
             .map(|s| s.to_string())
             .collect();
         assert_eq!(hosts, expected);
 
         // The bootstrap peer keeps working over HTTP; its LAN neighbours do not.
-        assert!(validate_outbound_url("http://192.168.188.219:8400", &hosts).is_ok());
-        assert!(validate_outbound_url("http://192.168.188.1:8400", &hosts).is_err());
+        assert!(validate_outbound_url("http://192.168.100.10:8400", &hosts).is_ok());
+        assert!(validate_outbound_url("http://192.168.100.1:8400", &hosts).is_err());
         // An operator entry never unblocks loopback or metadata addresses.
         let bad = hosts_from_peer_list("/ip4/127.0.0.1/tcp/4001,/ip4/169.254.169.254/tcp/80");
         assert!(validate_outbound_url("http://127.0.0.1:8400", &bad).is_err());
