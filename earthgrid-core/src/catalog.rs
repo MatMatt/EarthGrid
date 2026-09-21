@@ -134,6 +134,7 @@ impl Catalog {
                 chunk_hashes_json TEXT NOT NULL DEFAULT '[]',
                 created_at REAL DEFAULT (strftime('%s','now')),
                 geometry_json TEXT,
+                origin TEXT NOT NULL DEFAULT 'local',
                 FOREIGN KEY (collection) REFERENCES collections(id)
             );
             CREATE INDEX IF NOT EXISTS idx_items_collection ON items(collection);
@@ -149,6 +150,25 @@ impl Catalog {
         let _ = self.conn.execute_batch(
             "ALTER TABLE items ADD COLUMN geometry_json TEXT;",
         );
+        // Safe migration: add origin column if missing. It goes at the END of the
+        // table (same position as in CREATE TABLE above), so the explicit column
+        // lists and positional `row.get(n)` reads below keep their indexes.
+        let mut stmt = self.conn.prepare("PRAGMA table_info(items)")?;
+        let has_origin = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == "origin");
+        drop(stmt);
+        if !has_origin {
+            if let Err(e) = self.conn.execute_batch(
+                "ALTER TABLE items ADD COLUMN origin TEXT NOT NULL DEFAULT 'local';",
+            ) {
+                // Another process may have added it between the check and the ALTER.
+                if !e.to_string().contains("duplicate column name") {
+                    return Err(e.into());
+                }
+            }
+        }
         Ok(())
     }
 
@@ -288,6 +308,72 @@ impl Catalog {
         )?;
         self.increment_version()?;
         Ok(())
+    }
+
+    /// Add a STAC item received from a peer (`origin = 'remote'`).
+    ///
+    /// Never overwrites a locally ingested item: on an id conflict the row is
+    /// only updated when its existing `origin` is `'remote'`. The check is part
+    /// of the statement, so there is no read-then-write race.
+    /// Returns whether anything was written.
+    pub fn add_remote_item(&self, item: &StacItem) -> Result<bool> {
+        // Ensure collection exists
+        if self.get_collection(&item.collection)?.is_none() {
+            self.add_collection(&StacCollection {
+                id: item.collection.clone(),
+                title: item.collection.clone(),
+                description: String::new(),
+            })?;
+        }
+
+        let hashes_json = serde_json::to_string(&item.chunk_hashes)?;
+        let props_json = serde_json::to_string(&item.properties)?;
+
+        let geom_json = item.geometry.as_ref()
+            .map(|g| serde_json::to_string(g).unwrap_or_default());
+
+        let affected = self.conn.execute(
+            "INSERT INTO items (id, collection, bbox_west, bbox_south, bbox_east, bbox_north, properties_json, chunk_hashes_json, created_at, geometry_json, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'remote')
+             ON CONFLICT(id) DO UPDATE SET
+                collection = excluded.collection,
+                bbox_west = excluded.bbox_west,
+                bbox_south = excluded.bbox_south,
+                bbox_east = excluded.bbox_east,
+                bbox_north = excluded.bbox_north,
+                properties_json = excluded.properties_json,
+                chunk_hashes_json = excluded.chunk_hashes_json,
+                created_at = excluded.created_at,
+                geometry_json = excluded.geometry_json
+             WHERE items.origin = 'remote'",
+            params![
+                item.id,
+                item.collection,
+                item.bbox[0],
+                item.bbox[1],
+                item.bbox[2],
+                item.bbox[3],
+                props_json,
+                hashes_json,
+                item.created_at,
+                geom_json,
+            ],
+        )?;
+        if affected > 0 {
+            self.increment_version()?;
+        }
+        Ok(affected > 0)
+    }
+
+    /// The `origin` (`'local'` or `'remote'`) of the item with this id, if any.
+    pub fn item_origin(&self, id: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT origin FROM items WHERE id = ?1")?;
+        let mut rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(Ok(origin)) => Ok(Some(origin)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
     }
 
     /// Get an item by ID.
@@ -829,5 +915,94 @@ mod tests {
             .unwrap();
         assert!(catalog.delete_item("del").unwrap());
         assert!(catalog.get_item("del").unwrap().is_none());
+    }
+
+    fn origin_of(catalog: &Catalog, id: &str) -> String {
+        catalog
+            .conn
+            .query_row("SELECT origin FROM items WHERE id = ?1", params![id], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_add_remote_item_never_overwrites_local() {
+        let catalog = Catalog::in_memory().unwrap();
+        let local = StacItem {
+            id: "shared-id".to_string(),
+            collection: "s2".to_string(),
+            bbox: [12.0, 55.0, 13.0, 56.0],
+            properties: serde_json::json!({"datetime": "2026-03-11"}),
+            chunk_hashes: vec!["abc123".to_string()],
+            created_at: now_ts(),
+            geometry: None,
+        };
+        catalog.add_item(&local).unwrap();
+        assert_eq!(origin_of(&catalog, "shared-id"), "local");
+        let version = catalog.catalog_version().unwrap();
+
+        // Same id from a peer, different collection and chunks: refused.
+        let mut remote = local.clone();
+        remote.collection = "landsat".to_string();
+        remote.chunk_hashes = vec!["evil".to_string()];
+        assert!(!catalog.add_remote_item(&remote).unwrap());
+        let kept = catalog.get_item("shared-id").unwrap().unwrap();
+        assert_eq!(kept.collection, "s2");
+        assert_eq!(kept.chunk_hashes, vec!["abc123".to_string()]);
+        assert_eq!(origin_of(&catalog, "shared-id"), "local");
+        assert_eq!(catalog.catalog_version().unwrap(), version);
+
+        // A remote item may be inserted, and updated by a later remote copy.
+        remote.id = "remote-id".to_string();
+        assert!(catalog.add_remote_item(&remote).unwrap());
+        assert_eq!(origin_of(&catalog, "remote-id"), "remote");
+        remote.chunk_hashes = vec!["updated".to_string()];
+        assert!(catalog.add_remote_item(&remote).unwrap());
+        let updated = catalog.get_item("remote-id").unwrap().unwrap();
+        assert_eq!(updated.chunk_hashes, vec!["updated".to_string()]);
+
+        // Local ingestion of that id takes the row over and marks it local.
+        catalog.add_item(&remote).unwrap();
+        assert_eq!(origin_of(&catalog, "remote-id"), "local");
+    }
+
+    #[test]
+    fn test_origin_migration_on_existing_table() {
+        // A database created before the origin column existed.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE collections (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE items (
+                id TEXT PRIMARY KEY,
+                collection TEXT NOT NULL,
+                bbox_west REAL NOT NULL,
+                bbox_south REAL NOT NULL,
+                bbox_east REAL NOT NULL,
+                bbox_north REAL NOT NULL,
+                properties_json TEXT NOT NULL DEFAULT '{}',
+                chunk_hashes_json TEXT NOT NULL DEFAULT '[]',
+                created_at REAL DEFAULT (strftime('%s','now')),
+                geometry_json TEXT,
+                FOREIGN KEY (collection) REFERENCES collections(id)
+            );
+            INSERT INTO collections (id, title) VALUES ('s2', 's2');
+            INSERT INTO items (id, collection, bbox_west, bbox_south, bbox_east, bbox_north, chunk_hashes_json, created_at)
+                VALUES ('old-item', 's2', 12.0, 55.0, 13.0, 56.0, '[\"abc123\"]', 1.0);",
+        )
+        .unwrap();
+        let catalog = Catalog { conn };
+        catalog.init_tables().unwrap();
+        // Idempotent: a second start must not try to add the column again.
+        catalog.init_tables().unwrap();
+
+        assert_eq!(origin_of(&catalog, "old-item"), "local");
+        let item = catalog.get_item("old-item").unwrap().unwrap();
+        assert_eq!(item.collection, "s2");
+        assert_eq!(item.bbox, [12.0, 55.0, 13.0, 56.0]);
+        assert_eq!(item.chunk_hashes, vec!["abc123".to_string()]);
+        assert!(item.geometry.is_none());
     }
 }
