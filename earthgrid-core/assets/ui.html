@@ -931,8 +931,9 @@ function initFetchMap() {
   const lightTile = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     attribution: '\u00a9 OSM \u00a9 CARTO', maxZoom: 19
   });
-  const osmTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '\u00a9 OSM', maxZoom: 19
+  const osmTile = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '\u00a9 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    referrerPolicy: 'strict-origin-when-cross-origin', maxZoom: 19
   });
   osmTile.addTo(_fetchMap);
   L.control.layers({'Dark': darkTile, 'Light': lightTile, 'OSM': osmTile}, null, {position: 'topright'}).addTo(_fetchMap);
