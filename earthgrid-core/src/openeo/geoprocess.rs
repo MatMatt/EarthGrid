@@ -6,6 +6,8 @@ use std::process::Command;
 use chrono::{Datelike, NaiveDate};
 use serde_json::Value;
 
+use crate::reconstruct::{parse_allowed_crs, AllowedCrs};
+
 // ---------------------------------------------------------------------------
 // Reducer + temporal period labels
 // ---------------------------------------------------------------------------
@@ -206,6 +208,20 @@ pub fn gdal_warp_geotiff(src_tiff: &[u8], cfg: &ResampleSpatialConfig) -> Result
         );
     }
 
+    // gdalwarp hands `-t_srs` to OSRSetFromUserInput, which would also open a
+    // URL or a path, so the projection text goes through the CRS allowlist —
+    // before any temp file is written.
+    let t_srs = if let Some(epsg) = cfg.epsg {
+        Some(format!("EPSG:{epsg}"))
+    } else if let Some(ref wkt) = cfg.wkt {
+        Some(match parse_allowed_crs(wkt).map_err(|e| format!("resample_spatial: {e}"))? {
+            AllowedCrs::Epsg(code) => format!("EPSG:{code}"),
+            AllowedCrs::Wkt(wkt) => wkt.to_string(),
+        })
+    } else {
+        None
+    };
+
     let id = uuid::Uuid::new_v4();
     let tmp_dir = std::env::temp_dir();
     let src_path = tmp_dir.join(format!("eg_warp_src_{id}.tif"));
@@ -221,10 +237,8 @@ pub fn gdal_warp_geotiff(src_tiff: &[u8], cfg: &ResampleSpatialConfig) -> Result
         .arg("-r")
         .arg(gdal_resample_flag(&cfg.method));
 
-    if let Some(epsg) = cfg.epsg {
-        cmd.arg("-t_srs").arg(format!("EPSG:{epsg}"));
-    } else if let Some(ref wkt) = cfg.wkt {
-        cmd.arg("-t_srs").arg(wkt);
+    if let Some(t_srs) = t_srs {
+        cmd.arg("-t_srs").arg(t_srs);
     }
 
     if cfg.change_resolution {

@@ -5,8 +5,13 @@ use axum::{
     Json,
 };
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::auth::AccessLevel;
+use crate::catalog::StacItem;
+use crate::chunk_store::ChunkStore;
+use crate::reconstruct::{self, ChunkSource};
 use crate::server::{AppState, err, authorize, LimitQuery};
 
 
@@ -93,11 +98,52 @@ pub(crate) async fn audit_log(
 // Reconstruct COG from chunks and stream to client.
 // ---------------------------------------------------------------------------
 
+/// Chunk source for a reconstruction running on a blocking thread: takes the
+/// shared store lock once per chunk, never for the whole reconstruction.
+struct SharedChunkStore(Arc<Mutex<ChunkStore>>);
+
+impl ChunkSource for SharedChunkStore {
+    fn get(&self, hash: &str) -> crate::error::Result<Option<Vec<u8>>> {
+        self.0.blocking_lock().get(hash)
+    }
+
+    fn has(&self, hash: &str) -> bool {
+        self.0.blocking_lock().has(hash)
+    }
+
+    fn chunk_size(&self, hash: &str) -> crate::error::Result<u64> {
+        self.0.blocking_lock().chunk_size(hash)
+    }
+}
+
+// Each reconstruction may allocate its whole budget and outlives a cancelled request, so only two run at once.
+static RECONSTRUCT_SLOTS: Semaphore = Semaphore::const_new(2);
+
+/// Reconstruct `item` off the async workers and off the store lock.
+///
+/// Reconstruction is CPU- and allocation-heavy (GDAL, whole rasters in memory),
+/// so it runs under `spawn_blocking`, and `store` is locked only around each
+/// individual chunk read. A slot in `RECONSTRUCT_SLOTS` is taken before the
+/// work is dispatched and travels with it, so it is released when the work
+/// finishes — not when the request that asked for it goes away.
+async fn reconstruct_off_lock(store: Arc<Mutex<ChunkStore>>, item: StacItem) -> Result<Vec<u8>, String> {
+    let slot = RECONSTRUCT_SLOTS
+        .acquire()
+        .await
+        .map_err(|e| format!("Reconstruction limit unavailable: {}", e))?;
+    let mut source = SharedChunkStore(store);
+    tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        reconstruct::reconstruct_cog(&item, &mut source, None).map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Reconstruction task failed: {}", e)))
+}
+
 pub(crate) async fn download_item(
     State(state): State<AppState>,
     Path((collection_id, item_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    use crate::reconstruct;
     use axum::body::Body;
 
     let item = {
@@ -122,6 +168,12 @@ pub(crate) async fn download_item(
             eprintln!("📡 Download {}: {} missing chunks, fetching from peers...", item_id, missing.len());
             for sha in &missing {
                 if let Some(data) = crate::routes::chunks::fetch_chunk_from_peers(&state, sha).await {
+                    // Verify hash before storing — peer data is untrusted
+                    let actual_sha = ChunkStore::hash_bytes(&data);
+                    if actual_sha != *sha {
+                        eprintln!("⚠️ Download {}: chunk {:?} hash mismatch from peer (got {}), discarding", item_id, sha, actual_sha);
+                        continue;
+                    }
                     let mut store = state.store.lock().await;
                     let _ = store.put(&data);
                 }
@@ -129,12 +181,9 @@ pub(crate) async fn download_item(
         }
     }
 
-    let tiff_bytes = {
-        let mut store = state.store.lock().await;
-        match reconstruct::reconstruct_cog(&item, &mut store, None) {
-            Ok(b) => b,
-            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
-        }
+    let tiff_bytes = match reconstruct_off_lock(state.store.clone(), item).await {
+        Ok(b) => b,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e).into_response(),
     };
 
     // Record download stats
@@ -656,4 +705,67 @@ pub(crate) async fn session_me_dispatch(
         return ui_disabled_response();
     }
     session_me(State(state), headers, ConnectInfo(addr)).await.into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The download path reconstructs on a blocking thread and takes the store
+    /// lock per chunk. An ordinary item must still come back byte-for-byte, and
+    /// the lock must be free again afterwards.
+    #[tokio::test]
+    async fn reconstruct_off_lock_roundtrips_ordinary_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        let original: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let src = dir.path().join("scene.tif");
+        std::fs::write(&src, &original).unwrap();
+        let item = crate::ingest::ingest_file(&src, "test-collection", 64 * 1024, &mut store).unwrap();
+
+        let store = Arc::new(Mutex::new(store));
+        let rebuilt = reconstruct_off_lock(store.clone(), item).await.unwrap();
+        assert_eq!(rebuilt, original, "download must return the original bytes");
+        assert!(store.try_lock().is_ok(), "store lock must not be left held");
+    }
+
+    /// With both slots taken a reconstruction must wait, and must run once a
+    /// slot is free again. The item has no chunks, so running means failing fast.
+    #[tokio::test]
+    async fn reconstruct_off_lock_waits_for_a_free_slot() {
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+        let store = Arc::new(Mutex::new(store));
+        let item = StacItem {
+            id: "empty".to_string(),
+            collection: "c".to_string(),
+            bbox: [0.0, 0.0, 1.0, 1.0],
+            properties: serde_json::json!({}),
+            chunk_hashes: vec![],
+            created_at: 0.0,
+            geometry: None,
+        };
+
+        let held = RECONSTRUCT_SLOTS.acquire_many(2).await.unwrap();
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(200),
+            reconstruct_off_lock(store.clone(), item.clone()),
+        )
+        .await;
+        assert!(waiting.is_err(), "a third reconstruction must wait for a slot");
+
+        drop(held);
+        let err = tokio::time::timeout(Duration::from_secs(30), reconstruct_off_lock(store, item))
+            .await
+            .expect("a freed slot must let the reconstruction run")
+            .unwrap_err();
+        assert!(err.contains("no chunks"), "unexpected error: {err}");
+    }
 }

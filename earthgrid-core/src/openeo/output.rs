@@ -1,10 +1,10 @@
 //! GeoTIFF / netCDF packaging and decode helpers for openEO results.
 
 use gdal::raster::{Buffer, RasterCreationOptions};
-use gdal::spatial_ref::SpatialRef;
 use gdal::DriverManager;
 
 use crate::openeo::types::RasterMeta;
+use crate::reconstruct::parse_allowed_crs;
 use super::geoprocess::{self, ResampleSpatialConfig};
 
 pub fn canonical_format(fmt: &str) -> &str {
@@ -46,6 +46,9 @@ pub fn wrap_output(
 }
 
 pub fn wrap_geotiff(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> {
+    // `meta.crs` can be item-provided text; refuse it, or a value GDAL cannot
+    // build, before the dataset exists.
+    let crs = parse_allowed_crs(&meta.crs)?.build()?;
     let bands = meta.band_count.max(1);
     let pixel_count = (meta.width * meta.height) as usize;
     let per_band = pixel_count * 4;
@@ -78,9 +81,7 @@ pub fn wrap_geotiff(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String>
 
     ds.set_geo_transform(&meta.transform)
         .map_err(|e| format!("GDAL set geotransform: {e}"))?;
-    if let Ok(srs) = SpatialRef::from_definition(&meta.crs) {
-        let _ = ds.set_spatial_ref(&srs);
-    }
+    crs.assign_to(&mut ds)?;
 
     for b in 0..bands {
         let off = b * per_band;
@@ -110,6 +111,9 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
             "netCDF export with multiple bands is not yet supported; use GTiff.".to_string(),
         );
     }
+    // `meta.crs` can be item-provided text; refuse it, or a value GDAL cannot
+    // build, before the dataset exists.
+    let crs = parse_allowed_crs(&meta.crs)?.build()?;
     let pixel_count = meta.width * meta.height;
     let expected = pixel_count * 4;
     if pixels.len() < expected {
@@ -143,9 +147,7 @@ pub fn wrap_netcdf(pixels: &[u8], meta: &RasterMeta) -> Result<Vec<u8>, String> 
         })?;
 
     let _ = ds.set_geo_transform(&meta.transform);
-    if let Ok(srs) = SpatialRef::from_definition(&meta.crs) {
-        let _ = ds.set_spatial_ref(&srs);
-    }
+    crs.assign_to(&mut ds)?;
 
     let mut band = ds.rasterband(1).map_err(|e| format!("GDAL rasterband: {e}"))?;
     let mut buf = Buffer::new((w, h), floats);
@@ -250,4 +252,40 @@ pub fn apply_resample_if_needed(
     let warped = geoprocess::gdal_warp_geotiff(&tiff, cfg)?;
     let (px, m2) = decode_geotiff_bsq_f32(&warped)?;
     Ok((px, Some(m2)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta_1x1(crs: &str) -> RasterMeta {
+        RasterMeta {
+            width: 1,
+            height: 1,
+            crs: crs.to_string(),
+            transform: [0.0, 1.0, 0.0, 1.0, 0.0, -1.0],
+            dtype: "float32".to_string(),
+            band_count: 1,
+        }
+    }
+
+    /// `EPSG:999999` passes the lexical gate and GDAL cannot build it. Both
+    /// writers must return that as an error naming the value, not write an
+    /// output without a CRS.
+    #[test]
+    fn wrap_output_rejects_unbuildable_crs() {
+        let pixels = 1.0f32.to_le_bytes();
+        let meta = meta_1x1("EPSG:999999");
+
+        for result in [wrap_geotiff(&pixels, &meta), wrap_netcdf(&pixels, &meta)] {
+            let err = result.unwrap_err();
+            assert!(err.contains("Cannot build CRS"), "unexpected error: {err}");
+            assert!(err.contains("EPSG:999999"), "error must name the value: {err}");
+        }
+
+        // A CRS GDAL can build still comes out with that CRS.
+        let tiff = wrap_geotiff(&pixels, &meta_1x1("EPSG:32632")).unwrap();
+        let (_, decoded) = decode_geotiff_bsq_f32(&tiff).unwrap();
+        assert_eq!(decoded.crs, "EPSG:32632");
+    }
 }
