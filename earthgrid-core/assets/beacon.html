@@ -162,7 +162,9 @@ function initCoverageMap() {
   const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     maxZoom: 18, subdomains: 'abcd',
   });
-  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  const osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    referrerPolicy: 'strict-origin-when-cross-origin',
     maxZoom: 19,
   });
   osmLayer.addTo(covMap);
@@ -176,7 +178,8 @@ function initCoverageMap() {
       '<i style="background:#3fb950"></i> &gt;50%<br>' +
       '<i style="background:#58a6ff"></i> 20–50%<br>' +
       '<i style="background:#d29922"></i> 5–20%<br>' +
-      '<i style="background:#f85149"></i> &lt;5%';
+      '<i style="background:#f85149"></i> &lt;5%' +
+      '<br><span style="font-size:10px">© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors</span>';
     return div;
   };
   legend.addTo(covMap);
@@ -1142,9 +1145,9 @@ function switchTab(id) {
 // Discover beacon from beacons.json (same repo), fallback to localhost
 // Load from static stats.json (updated every 10 min by cron)
 function sensorLabel(col) {
-  return col.replace(/_derived$/, '')
+  return esc(col.replace(/_derived$/, '')
     .replace(/sentinel-(\d+)-(.+)/i, (_, n, lvl) => 'Sentinel-' + n + ' ' + lvl.toUpperCase())
-    .replace(/landsat-(.+)/i, (_, rest) => 'Landsat ' + rest.toUpperCase());
+    .replace(/landsat-(.+)/i, (_, rest) => 'Landsat ' + rest.toUpperCase()));
 }
 
 // Helper: escape HTML entities to prevent XSS
@@ -1174,7 +1177,7 @@ function renderNodes(nodes) {
     const stored = n.chunks_bytes ? fmtBytes(n.chunks_bytes) : (n.storage_gb ? fmtGB(n.storage_gb) : '0 B');
     const items = (n.items || n.item_count || 0).toLocaleString();
     const chunks = n.chunks ? n.chunks.toLocaleString() + ' chunks' : '';
-    const cols = (n.collections || []).join(', ') || '—';
+    const cols = (n.collections || []).map(esc).join(', ') || '—';
     const seen = n.last_seen ? fmtTime(n.last_seen) : '—';
     const pubUrl = n.public_url ? '<a href="' + esc(n.public_url) + '" target="_blank">' + esc(n.public_url) + '</a>' : '';
     html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem">';
