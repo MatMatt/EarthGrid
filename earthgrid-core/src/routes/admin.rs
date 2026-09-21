@@ -58,11 +58,11 @@ pub(crate) async fn admin_activity(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    if let Err(e) = authorize(&state.auth, state.user_auth.as_deref(), &headers, addr, AccessLevel::Write, &state.data_dir) {
+    if let Err(e) = authorize(&state.auth, state.user_auth.as_deref(), &headers, addr, AccessLevel::Admin, &state.data_dir) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
-    let limit = q.limit.unwrap_or(50);
+    let limit = q.limit.unwrap_or(50).min(500);
     let entries = state.audit.recent(limit);
     let count = entries.len();
     (StatusCode::OK, Json(serde_json::json!({"activity": entries, "count": count}))).into_response()

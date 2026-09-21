@@ -601,7 +601,7 @@ function switchTab(tab) {
   const idx = tabs.indexOf(tab);
   document.querySelectorAll('.tab')[idx].classList.add('active');
   document.getElementById('panel-' + tab).classList.add('active');
-  if (tab === 'data') { setTimeout(initFetchMap, 100); setTimeout(loadFetchQueue, 200); }
+  if (tab === 'data') { setTimeout(initFetchMap, 100); setTimeout(() => { if (currentRole !== 'readonly') loadFetchQueue(); }, 200); }
   loadSession();
 refreshCurrent();
 }
@@ -1037,14 +1037,14 @@ async function previewFetch() {
   try {
     const data = await apiFetch('/fetch/preview?' + params.toString());
     fetchLog('\ud83d\udce1 Found <b>' + data.total_found + '</b> scenes on Element84', 'success');
-    fetchLog('\ud83d\uddfa Tiles: ' + (data.tiles||[]).join(', '));
-    fetchLog('\ud83d\udcc5 ' + data.unique_dates + ' unique dates' + (data.date_range ? ' (' + data.date_range.filter(Boolean).join(' \u2192 ') + ')' : ''));
+    fetchLog('\ud83d\uddfa Tiles: ' + esc((data.tiles||[]).join(', ')));
+    fetchLog(esc('\ud83d\udcc5 ' + data.unique_dates + ' unique dates' + (data.date_range ? ' (' + data.date_range.filter(Boolean).join(' \u2192 ') + ')' : '')));
     fetchLog('\u2705 Already stored: <b>' + data.already_stored + '</b> | New: <b>' + data.new_items + '</b>');
     if (data.new_items > 0) {
       fetchLog('\ud83d\udce6 Est. download: ~' + data.est_download_mb + ' MB');
     }
     if (data.errors && data.errors.length) {
-      data.errors.forEach(e => fetchLog('\u26a0 ' + e, 'warn'));
+      data.errors.forEach(e => fetchLog('\u26a0 ' + esc(e), 'warn'));
     }
 
     // Show preview panel with item list and confirm button
@@ -1066,9 +1066,9 @@ async function previewFetch() {
         const statusColor = item.stored ? 'var(--green)' : 'var(--accent)';
         const statusText = item.stored ? '\u2713 stored' : '\u2b07 new';
         html += '<tr style="border-bottom:1px solid var(--border)">';
-        html += '<td style="padding:3px 4px;font-family:monospace;font-size:11px;color:var(--muted)">' + item.id + '</td>';
-        html += '<td style="padding:3px 4px;text-align:center">' + item.tile + '</td>';
-        html += '<td style="padding:3px 4px;text-align:center;font-size:11px">' + (item.datetime||'').split('T')[0] + '</td>';
+        html += '<td style="padding:3px 4px;font-family:monospace;font-size:11px;color:var(--muted)">' + esc(item.id) + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center">' + esc(item.tile) + '</td>';
+        html += '<td style="padding:3px 4px;text-align:center;font-size:11px">' + esc((item.datetime||'').split('T')[0]) + '</td>';
         html += '<td style="padding:3px 4px;text-align:center">' + item.cloud_cover + '</td>';
         html += '<td style="padding:3px 4px;text-align:center">' + item.bands + '</td>';
         html += '<td style="padding:3px 4px;text-align:center;color:' + statusColor + '">' + statusText + '</td>';
@@ -1082,7 +1082,7 @@ async function previewFetch() {
     document.getElementById('fetch-preview').style.display = 'block';
     showAlert('fetch-result', '\ud83d\udd0d Preview ready \u2014 ' + data.new_items + ' new items to fetch', data.new_items > 0 ? 'success' : 'info');
   } catch(err) {
-    fetchLog('\u274c ' + err.message, 'error');
+    fetchLog('\u274c ' + esc(err.message), 'error');
     showAlert('fetch-result', 'Error: ' + err.message, 'error');
   }
 }
@@ -1118,16 +1118,16 @@ async function confirmFetch() {
       fetchLog('\ud83d\udce6 Total: ' + size + ' downloaded');
     }
     if (data.errors && data.errors.length) {
-      data.errors.forEach(e => fetchLog('\u274c ' + e, 'error'));
+      data.errors.forEach(e => fetchLog('\u274c ' + esc(e), 'error'));
     }
     if (data.message) {
-      fetchLog(data.message, data.errors && data.errors.length ? 'warn' : 'success');
+      fetchLog(esc(data.message), data.errors && data.errors.length ? 'warn' : 'success');
     }
     showAlert('fetch-result', '\u2713 Fetch complete', 'success');
     document.getElementById('fetch-preview').style.display = 'none';
     setTimeout(() => loadItems(), 2000);
   } catch(err) {
-    fetchLog('\u274c ' + err.message, 'error');
+    fetchLog('\u274c ' + esc(err.message), 'error');
     showAlert('fetch-result', 'Error: ' + err.message, 'error');
   }
 }
@@ -1139,6 +1139,13 @@ async function confirmFetch() {
 let _queueRefreshTimer = null;
 
 async function loadFetchQueue() {
+  // Queue listing requires write access: only request it for roles known to have it
+  if (currentRole === null) await loadSession();
+  if (currentRole !== 'admin' && currentRole !== 'user' && currentRole !== 'member') {
+    const el = document.getElementById('fetch-queue-list');
+    if (el) el.innerHTML = '<div style="color:var(--muted);font-size:12px">Could not load queue.</div>';
+    return;
+  }
   try {
     const data = await apiFetch('/fetch/queue');
     const jobs = data.jobs || [];
@@ -1572,11 +1579,12 @@ async function submitNodeRename() {
 async function loadActivity() {
   const days = parseInt(document.getElementById('activity-days').value) || 7;
   try {
+    if (currentRole === null) await loadSession();
     // Load grid-relevant stats
     const [statsData, ingestData, activityData] = await Promise.all([
       apiFetch('/stats').catch(() => null),
       apiFetch('/stats/ingest?period_days=' + days).catch(() => null),
-      apiFetch('/admin/activity?days=' + days).catch(() => null),
+      currentRole === 'admin' ? apiFetch('/admin/activity?days=' + days).catch(() => null) : Promise.resolve(null),
     ]);
 
     // Ongoing jobs

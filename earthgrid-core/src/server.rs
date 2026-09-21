@@ -137,7 +137,7 @@ pub(crate) fn authorize(
                 let has_role = match level {
                     crate::auth::AccessLevel::Admin => role == "admin",
                     crate::auth::AccessLevel::Write => {
-                        role == "admin" || role == "user" || role == "member" || role == "readonly"
+                        role == "admin" || role == "user" || role == "member"
                     }
                 };
                 if has_role {
@@ -306,6 +306,10 @@ pub fn router(state: AppState) -> Router {
                 .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             perf_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            crate::ratelimit::RateLimiter::new(300, 60).with_api_key(state.auth.api_key.clone()),
+            crate::ratelimit::rate_limit_middleware,
         ))
         .layer(CorsLayer::permissive())
         .with_state(state)
