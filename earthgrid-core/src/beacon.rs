@@ -404,20 +404,6 @@ impl BeaconRegistry {
         let _ = self.conn.execute_batch(
             "ALTER TABLE beacon_node_pins ADD COLUMN last_digest TEXT NOT NULL DEFAULT '';",
         );
-        // Safe migration: add dates_json and bands_json to beacon_node_tiles
-        let _ = self.conn.execute_batch(
-            "ALTER TABLE beacon_node_tiles ADD COLUMN dates_json TEXT NOT NULL DEFAULT '[]';",
-        );
-        let _ = self.conn.execute_batch(
-            "ALTER TABLE beacon_node_tiles ADD COLUMN bands_json TEXT NOT NULL DEFAULT '[]';",
-        );
-        let _ = self.conn.execute_batch(
-            "ALTER TABLE beacon_node_tiles ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0;",
-        );
-        let _ = self.conn.execute_batch(
-            "ALTER TABLE beacon_node_tiles ADD COLUMN polygon_json TEXT;",
-        );
-
         // Spatial coverage tiles aggregated from all nodes
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS beacon_node_tiles (
@@ -432,6 +418,7 @@ impl BeaconRegistry {
                 item_count INTEGER NOT NULL DEFAULT 0,
                 dates_json TEXT NOT NULL DEFAULT '[]',
                 bands_json TEXT NOT NULL DEFAULT '[]',
+                polygon_json TEXT,
                 PRIMARY KEY (node_id, collection, tile_id)
             );
             CREATE INDEX IF NOT EXISTS idx_bnt_node ON beacon_node_tiles(node_id);
@@ -450,6 +437,20 @@ impl BeaconRegistry {
                 PRIMARY KEY (node_id)
             );"
         )?;
+        // Safe migration: add dates_json, bands_json, item_count and polygon_json
+        // to a beacon_node_tiles table created by an older version
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_tiles ADD COLUMN dates_json TEXT NOT NULL DEFAULT '[]';",
+        );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_tiles ADD COLUMN bands_json TEXT NOT NULL DEFAULT '[]';",
+        );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_tiles ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0;",
+        );
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE beacon_node_tiles ADD COLUMN polygon_json TEXT;",
+        );
 
         Ok(())
     }
@@ -473,7 +474,7 @@ impl BeaconRegistry {
             node_url: row.get(12)?,
             group_id: row.get(13)?,
             uptime_seconds: row.get(14)?,
-            catalog_version: row.get::<_, i64>(15).unwrap_or(0) as u64,
+            catalog_version: row.get::<_, i64>(15)? as u64,
             alive: is_alive(last_seen),
         })
     }
@@ -638,8 +639,9 @@ impl BeaconRegistry {
         self.conn.execute(
             "INSERT INTO beacon_nodes
                 (node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
-                 can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0)
+                 can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds,
+                 catalog_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0, ?15)
              ON CONFLICT(node_id) DO UPDATE SET
                 node_name = excluded.node_name,
                 url = excluded.url,
@@ -653,7 +655,8 @@ impl BeaconRegistry {
                 sponsor_name = excluded.sponsor_name,
                 sponsor_url = excluded.sponsor_url,
                 node_url = excluded.node_url,
-                group_id = excluded.group_id",
+                group_id = excluded.group_id,
+                catalog_version = excluded.catalog_version",
             params![
                 req.node_id,
                 req.node_name.as_deref().unwrap_or(""),
@@ -670,6 +673,7 @@ impl BeaconRegistry {
                 req.sponsor_url.as_deref(),
                 req.node_url.as_deref(),
                 req.group.as_deref(),
+                req.catalog_version.unwrap_or(0) as i64,
             ],
         )?;
         self.get(&req.node_id)?.ok_or_else(|| crate::error::EarthGridError::Other("Node not found after insert".to_string()))
@@ -807,7 +811,8 @@ impl BeaconRegistry {
     pub fn get(&self, node_id: &str) -> Result<Option<BeaconNode>> {
         let mut stmt = self.conn.prepare(
             "SELECT node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
-                    can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds
+                    can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds,
+                    catalog_version
              FROM beacon_nodes WHERE node_id = ?1",
         )?;
         let mut rows = stmt.query_map(params![node_id], Self::row_to_node)?;
@@ -824,13 +829,15 @@ impl BeaconRegistry {
             let threshold = now_ts() - 300.0;
             format!(
                 "SELECT node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
-                        can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds
+                        can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds,
+                        catalog_version
                  FROM beacon_nodes WHERE last_seen > {} ORDER BY last_seen DESC",
                 threshold
             )
         } else {
             "SELECT node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
-                    can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds
+                    can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds,
+                    catalog_version
              FROM beacon_nodes ORDER BY last_seen DESC"
                 .to_string()
         };
@@ -850,6 +857,10 @@ impl BeaconRegistry {
         let affected = self
             .conn
             .execute("DELETE FROM beacon_nodes WHERE node_id = ?1", params![node_id])?;
+        self.conn
+            .execute("DELETE FROM beacon_node_tiles WHERE node_id = ?1", params![node_id])?;
+        self.conn
+            .execute("DELETE FROM beacon_node_stats WHERE node_id = ?1", params![node_id])?;
         let unpinned = self
             .conn
             .execute("DELETE FROM beacon_node_pins WHERE node_id = ?1", params![node_id])?;
@@ -880,6 +891,15 @@ impl BeaconRegistry {
         let affected = self.conn.execute(
             "DELETE FROM beacon_nodes WHERE last_seen < ?1",
             params![threshold],
+        )?;
+        // Sweep tiles whose node row is gone, however it went
+        self.conn.execute(
+            "DELETE FROM beacon_node_tiles WHERE node_id NOT IN (SELECT node_id FROM beacon_nodes)",
+            [],
+        )?;
+        self.conn.execute(
+            "DELETE FROM beacon_node_stats WHERE node_id NOT IN (SELECT node_id FROM beacon_nodes)",
+            [],
         )?;
         if affected > 0 {
             println!("Pruned {} stale beacon node(s)", affected);
@@ -992,6 +1012,7 @@ Ok(affected)
             "SELECT collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north,
                     dates_json, bands_json, node_id, item_count, polygon_json
              FROM beacon_node_tiles
+             WHERE node_id IN (SELECT node_id FROM beacon_nodes)
              ORDER BY collection, tile_id"
         )?;
 
@@ -1137,7 +1158,7 @@ Ok(affected)
                     s.bytes_ingested, s.bytes_served, s.chunks_served,
                     s.requests_total, s.collections_json
              FROM beacon_node_stats s
-             LEFT JOIN beacon_nodes n ON s.node_id = n.node_id
+             JOIN beacon_nodes n ON s.node_id = n.node_id
              ORDER BY s.total_bytes DESC"
         )?;
         let mut nodes = Vec::new();
@@ -1188,7 +1209,8 @@ Ok(affected)
     /// Count tiles stored for a node.
     pub fn node_tile_count(&self, node_id: &str) -> Result<usize> {
         let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM beacon_node_tiles WHERE node_id = ?1",
+            "SELECT COUNT(*) FROM beacon_node_tiles
+             WHERE node_id = ?1 AND node_id IN (SELECT node_id FROM beacon_nodes)",
             params![node_id],
             |row| row.get(0),
         )?;
@@ -1233,8 +1255,9 @@ Ok(affected)
                     can_source = ?5,
                     storage_limit_gb = ?6,
                     last_seen = ?7,
-                    uptime_seconds = ?8
-                 WHERE node_id = ?9",
+                    uptime_seconds = ?8,
+                    catalog_version = ?9
+                 WHERE node_id = ?10",
                 rusqlite::params![
                     collections_json,
                     node.item_count,
@@ -1244,6 +1267,7 @@ Ok(affected)
                     node.storage_limit_gb,
                     node.last_seen,
                     node.uptime_seconds,
+                    node.catalog_version as i64,
                     node.node_id,
                 ],
             )?;
@@ -1255,8 +1279,9 @@ Ok(affected)
         self.conn.execute(
             "INSERT INTO beacon_nodes
                 (node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
-                 can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                 can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds,
+                 catalog_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
              ON CONFLICT(node_id) DO UPDATE SET
                 node_name = excluded.node_name,
                 url = excluded.url,
@@ -1271,7 +1296,8 @@ Ok(affected)
                 sponsor_url = excluded.sponsor_url,
                 node_url = excluded.node_url,
                 group_id = excluded.group_id,
-                uptime_seconds = excluded.uptime_seconds",
+                uptime_seconds = excluded.uptime_seconds,
+                catalog_version = excluded.catalog_version",
             rusqlite::params![
                 node.node_id,
                 node.node_name,
@@ -1288,6 +1314,7 @@ Ok(affected)
                 node.node_url,
                 node.group_id,
                 node.uptime_seconds,
+                node.catalog_version as i64,
             ],
         )?;
         Ok(())
@@ -2190,5 +2217,166 @@ mod tests {
         sign_heartbeat(&owner, &mut hb);
         assert!(auth_heartbeat(&reg, &hb).is_ok());
         assert_eq!(reg.heartbeat(&hb).unwrap().unwrap().storage_limit_gb, 250.123);
+    }
+
+    #[test]
+    fn test_fresh_db_has_every_tile_column() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+
+        // The real coverage INSERT must work on a brand new database
+        let coverage = serde_json::json!({
+            "collections": {
+                "alpha": {
+                    "cells": [{
+                        "tile_id": "t1",
+                        "polygon": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]],
+                        "date_count": 1,
+                        "item_count": 3,
+                        "dates": ["2024-01-01"],
+                        "bands": ["B02"]
+                    }]
+                }
+            }
+        });
+        assert_eq!(reg.store_node_tiles("n1", &coverage).unwrap(), 1);
+
+        let mut stmt = reg.conn.prepare("PRAGMA table_info(beacon_node_tiles)").unwrap();
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(|c| c.unwrap())
+            .collect();
+        for name in [
+            "node_id", "collection", "tile_id", "bbox_west", "bbox_south", "bbox_east",
+            "bbox_north", "date_count", "item_count", "dates_json", "bands_json", "polygon_json",
+        ] {
+            assert!(columns.iter().any(|c| c == name), "missing column {}", name);
+        }
+        assert_eq!(columns.len(), 12);
+    }
+
+    #[test]
+    fn test_coverage_ignores_tiles_of_removed_nodes() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        reg.register(&unsigned_register("n1", "http://node.example:8400", Some("alpha"), now_ts() as u64)).unwrap();
+
+        // One tile for a node that exists, one left behind by a node that does not
+        for node_id in ["n1", "ghost"] {
+            reg.conn.execute(
+                "INSERT INTO beacon_node_tiles (node_id, collection, tile_id, bbox_west, bbox_south, bbox_east, bbox_north, date_count, item_count, dates_json, bands_json)
+                 VALUES (?1, 'alpha', ?2, 0.0, 0.0, 1.0, 1.0, 1, 1, '[]', '[]')",
+                params![node_id, format!("tile-of-{}", node_id)],
+            ).unwrap();
+        }
+
+        let cov = reg.get_aggregated_coverage().unwrap();
+        let cells = cov["collections"]["alpha"]["cells"].as_array().unwrap();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0]["tile_id"], "tile-of-n1");
+        assert_eq!(reg.node_tile_count("ghost").unwrap(), 0);
+
+        // The sweep in prune_stale removes the orphan row, and only that row
+        let orphans = |reg: &BeaconRegistry| -> i64 {
+            reg.conn.query_row(
+                "SELECT COUNT(*) FROM beacon_node_tiles WHERE node_id = 'ghost'",
+                [],
+                |row| row.get(0),
+            ).unwrap()
+        };
+        assert_eq!(orphans(&reg), 1);
+        assert_eq!(reg.prune_stale(3600.0).unwrap(), 0);
+        assert_eq!(orphans(&reg), 0);
+        assert_eq!(reg.node_tile_count("n1").unwrap(), 1);
+
+        // An explicit remove takes the node's tiles with it
+        assert!(reg.remove("n1").unwrap());
+        let left: i64 = reg.conn.query_row("SELECT COUNT(*) FROM beacon_node_tiles", [], |row| row.get(0)).unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn test_catalog_version_is_read_through_get_and_list() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        reg.register(&unsigned_register("n1", "http://node.example:8400", Some("alpha"), now_ts() as u64)).unwrap();
+        reg.conn.execute("UPDATE beacon_nodes SET catalog_version = 21677 WHERE node_id = 'n1'", []).unwrap();
+
+        assert_eq!(reg.get("n1").unwrap().unwrap().catalog_version, 21677);
+        assert_eq!(reg.list(false).unwrap()[0].catalog_version, 21677);
+        assert_eq!(reg.list(true).unwrap()[0].catalog_version, 21677);
+
+        // A SELECT that leaves the column out must fail, not read zero
+        let mut stmt = reg.conn.prepare(
+            "SELECT node_id, node_name, url, collections_json, item_count, chunk_count, chunks_bytes,
+                    can_source, storage_limit_gb, last_seen, sponsor_name, sponsor_url, node_url, group_id, uptime_seconds
+             FROM beacon_nodes WHERE node_id = 'n1'",
+        ).unwrap();
+        let mut rows = stmt.query_map([], BeaconRegistry::row_to_node).unwrap();
+        assert!(rows.next().unwrap().is_err());
+    }
+
+    #[test]
+    fn test_catalog_version_is_stored_by_register_and_federated_upsert() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+
+        // Register stores the version it was given
+        let mut req = unsigned_register("n1", "http://node.example:8400", Some("alpha"), now_ts() as u64);
+        req.catalog_version = Some(42);
+        reg.register(&req).unwrap();
+        assert_eq!(reg.get("n1").unwrap().unwrap().catalog_version, 42);
+
+        // Re-registering updates it
+        req.catalog_version = Some(43);
+        reg.register(&req).unwrap();
+        assert_eq!(reg.get("n1").unwrap().unwrap().catalog_version, 43);
+
+        // A federated upsert of a pinned node updates the stored value
+        let (id, _dir) = test_identity();
+        accept_register(&reg, &signed_register(&id, "p1", "http://pinned.example:8400", "pinned"));
+        assert_eq!(reg.get("p1").unwrap().unwrap().catalog_version, 0);
+        let mut node = federated_node("p1", "pinned", "http://pinned.example:8400");
+        node.catalog_version = 77;
+        reg.federated_upsert(&node).unwrap();
+        assert_eq!(reg.get("p1").unwrap().unwrap().catalog_version, 77);
+
+        // And of an unpinned node too
+        let mut node = federated_node("f1", "fed", "http://fed.example:8400");
+        node.catalog_version = 5;
+        reg.federated_upsert(&node).unwrap();
+        assert_eq!(reg.get("f1").unwrap().unwrap().catalog_version, 5);
+    }
+
+    #[test]
+    fn test_grid_stats_ignore_rows_of_removed_nodes() {
+        let reg = BeaconRegistry::in_memory().unwrap();
+        reg.register(&unsigned_register("n1", "http://node.example:8400", Some("alpha"), now_ts() as u64)).unwrap();
+
+        // One stats row for a node that exists, one left behind by a node that does not
+        for node_id in ["n1", "ghost"] {
+            reg.conn.execute(
+                "INSERT INTO beacon_node_stats (node_id, updated_at, total_items, total_bytes)
+                 VALUES (?1, 1.0, 10, 1000)",
+                params![node_id],
+            ).unwrap();
+        }
+
+        let stats = reg.get_grid_node_stats().unwrap();
+        let nodes = stats["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0]["node_id"], "n1");
+        assert_eq!(stats["node_count"], 1);
+        assert_eq!(stats["totals"]["items"], 10);
+        assert_eq!(stats["totals"]["bytes"], 1000);
+
+        // The sweep in prune_stale removes the orphan row, and only that row
+        assert!(reg.has_node_stats("ghost"));
+        assert_eq!(reg.prune_stale(3600.0).unwrap(), 0);
+        assert!(!reg.has_node_stats("ghost"));
+        assert!(reg.has_node_stats("n1"));
+
+        // An explicit remove takes the node's stats row with it
+        assert!(reg.remove("n1").unwrap());
+        assert!(!reg.has_node_stats("n1"));
+        let left: i64 = reg.conn.query_row("SELECT COUNT(*) FROM beacon_node_stats", [], |row| row.get(0)).unwrap();
+        assert_eq!(left, 0);
     }
 }
