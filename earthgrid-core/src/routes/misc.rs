@@ -95,6 +95,7 @@ pub(crate) async fn audit_log(
 
 pub(crate) async fn download_item(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((collection_id, item_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     use crate::reconstruct;
@@ -119,9 +120,13 @@ pub(crate) async fn download_item(
         drop(store);
 
         if !missing.is_empty() {
-            eprintln!("📡 Download {}: {} missing chunks, fetching from peers...", item_id, missing.len());
+            // No peer lookup if a peer forwarded this request
+            let forwarded = crate::routes::chunks::is_forwarded(&headers);
+            if !forwarded {
+                eprintln!("📡 Download {}: {} missing chunks, fetching from peers...", item_id, missing.len());
+            }
             for sha in &missing {
-                if let Some(data) = crate::routes::chunks::fetch_chunk_from_peers(&state, sha).await {
+                if let Some(data) = crate::routes::chunks::fetch_chunk_from_peers(&state, sha, forwarded).await {
                     let mut store = state.store.lock().await;
                     let _ = store.put(&data);
                 }

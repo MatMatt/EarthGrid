@@ -8,6 +8,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::server::{AppState, err};
+use crate::routes::chunks::{fanout_targets, is_forwarded, read_bounded, HOP_HEADER, MAX_PEER_RESPONSE_BYTES};
 use crate::catalog::{DatetimeFilter, StacItem};
 
 
@@ -214,7 +215,7 @@ pub(crate) fn build_search_response(
 }
 
 
-pub(crate) async fn stac_search(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> impl IntoResponse {
+pub(crate) async fn stac_search(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<SearchQuery>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     let limit = q.limit.unwrap_or(50).min(1000);
     let offset = q.offset.unwrap_or(0);
@@ -247,6 +248,8 @@ pub(crate) async fn stac_search(State(state): State<AppState>, Query(q): Query<S
                     .map(|p| p.url.clone())
                     .collect()
             };
+            // None if a peer forwarded this request; capped otherwise.
+            let peer_urls = fanout_targets(is_forwarded(&headers), peer_urls);
             if peer_urls.is_empty() {
                 let body = build_search_response(vec![], 0, limit, 0, "/stac/search");
                 return (StatusCode::OK, Json(body)).into_response();
@@ -279,10 +282,11 @@ pub(crate) async fn stac_search(State(state): State<AppState>, Query(q): Query<S
                     if let Some(b) = &q_bbox { params.push(("bbox", b.clone())); }
                     if let Some(d) = &q_dt { params.push(("datetime", d.clone())); }
                     let resp = client.get(format!("{}/api/stac/search", url))
-                        .query(&params).send().await;
+                        .query(&params).header(HOP_HEADER, "1").send().await;
                     match resp {
                         Ok(r) if r.status().is_success() => {
-                            r.json::<serde_json::Value>().await.ok()
+                            read_bounded(r, MAX_PEER_RESPONSE_BYTES).await
+                                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
                                 .and_then(|d| d.get("features").and_then(|f| f.as_array().cloned()))
                                 .unwrap_or_default()
                                 .into_iter()

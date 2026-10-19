@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::catalog::StacItem;
+use crate::routes::chunks::HOP_HEADER;
 
 // ---------------------------------------------------------------------------
 // Search parameters
@@ -45,7 +46,8 @@ struct StacSearchResponse {
 
 /// Fan out a STAC search to all `peers`, merge and deduplicate results.
 ///
-/// Each peer is queried at `<peer>/stac/search` with `GET` params.
+/// Each peer is queried at `<peer>/stac/search` with `GET` params and the hop
+/// marker, so a peer answers from its own catalog and does not fan out again.
 /// Results are deduplicated by STAC item ID.
 /// Returns at most `query.limit` items total.
 ///
@@ -130,7 +132,7 @@ async fn search_peer(
     }
 
     let url = format!("{}/stac/search", base_url);
-    let resp = match client.get(&url).query(&params).send().await {
+    let resp = match client.get(&url).query(&params).header(HOP_HEADER, "1").send().await {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };

@@ -13,6 +13,7 @@ use crate::{
     catalog::{Catalog, StacItem},
     chunk_store::ChunkStore,
     error::EarthGridError,
+    routes::chunks::{read_bounded, HOP_HEADER, MAX_PEER_RESPONSE_BYTES},
 };
 
 const CHUNK_CONCURRENCY: usize = 10;
@@ -249,11 +250,15 @@ impl Replicator {
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await;
                 let url = format!("{}/api/chunks/{}", peer_url, hash);
-                match client.get(&url).send().await {
+                // Hop marker: on a local miss the peer answers 404 instead of fanning out.
+                match client.get(&url).header(HOP_HEADER, "1").send().await {
                     Ok(resp) if resp.status().is_success() => {
-                        match resp.bytes().await {
-                            Ok(bytes) => Ok((hash, bytes.to_vec())),
-                            Err(e) => Err(format!("Failed to read chunk {}: {}", hash, e)),
+                        match read_bounded(resp, MAX_PEER_RESPONSE_BYTES).await {
+                            Some(bytes) => Ok((hash, bytes)),
+                            None => Err(format!(
+                                "Failed to read chunk {}: unreadable or larger than {} bytes",
+                                hash, MAX_PEER_RESPONSE_BYTES
+                            )),
                         }
                     }
                     Ok(resp) => Err(format!(
@@ -324,5 +329,72 @@ impl Replicator {
         }
         let body: ItemsResponse = resp.json().await.context("parse items")?;
         Ok(body.features)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests (a throwaway peer on a loopback port — no external network)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+
+    type Seen = Arc<std::sync::Mutex<Vec<HeaderMap>>>;
+
+    /// Serve `body` for every chunk request, recording the request headers.
+    /// Returns the peer's base URL.
+    async fn spawn_peer(body: Vec<u8>, seen: Seen) -> String {
+        let app = axum::Router::new().route(
+            "/api/chunks/{sha}",
+            axum::routing::get(move |headers: HeaderMap| {
+                let (body, seen) = (body.clone(), seen.clone());
+                async move {
+                    seen.lock().unwrap().push(headers);
+                    body
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{}", addr)
+    }
+
+    fn client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_chunk_requests_carry_hop_marker() {
+        let seen = Seen::default();
+        let body = b"chunk-bytes".to_vec();
+        let hash = ChunkStore::hash_bytes(&body);
+        let peer = spawn_peer(body.clone(), seen.clone()).await;
+
+        let (downloaded, bytes, errors) =
+            Replicator::download_chunks(&client(), &peer, &[hash.clone()]).await;
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(bytes, body.len() as u64);
+        assert_eq!(downloaded, vec![(hash, body)]);
+
+        // The header map the peer actually received carries the marker, and the
+        // inbound check the chunk and search handlers use recognises it.
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].get(HOP_HEADER).and_then(|v| v.to_str().ok()), Some("1"));
+        assert!(crate::routes::chunks::is_forwarded(&seen[0]));
+    }
+
+    #[tokio::test]
+    async fn test_oversized_chunk_response_is_rejected() {
+        let hash = ChunkStore::hash_bytes(b"oversized");
+        let peer = spawn_peer(vec![0u8; MAX_PEER_RESPONSE_BYTES + 1], Seen::default()).await;
+
+        let (downloaded, bytes, errors) = Replicator::download_chunks(&client(), &peer, &[hash]).await;
+        assert!(downloaded.is_empty());
+        assert_eq!(bytes, 0);
+        assert_eq!(errors.len(), 1, "{errors:?}");
     }
 }

@@ -11,11 +11,62 @@ use std::net::SocketAddr;
 use crate::auth::AccessLevel;
 use crate::server::{AppState, api_key, authorize, err, LimitQuery};
 use crate::replication::Replicator;
+use crate::chunk_store::ChunkStore;
 
 
+/// Hop marker set on every request this node forwards to a peer. A node that
+/// receives it serves its local result only, so a fan-out never travels more
+/// than one hop across the grid.
+pub(crate) const HOP_HEADER: &str = "X-EarthGrid-Hop";
+
+/// Upper bound on the peers contacted for a single inbound request.
+pub(crate) const MAX_FANOUT_PEERS: usize = 8;
+
+/// Upper bound on a peer response body read into memory (8x the default chunk size).
+pub(crate) const MAX_PEER_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+
+/// Whether the inbound request was already forwarded by a peer.
+pub(crate) fn is_forwarded(headers: &HeaderMap) -> bool {
+    headers.contains_key(HOP_HEADER)
+}
+
+/// Peers one inbound request may be forwarded to: none if the request was
+/// itself forwarded by a peer, otherwise at most `MAX_FANOUT_PEERS`.
+pub(crate) fn fanout_targets(forwarded: bool, mut peer_urls: Vec<String>) -> Vec<String> {
+    if forwarded {
+        return Vec::new();
+    }
+    peer_urls.truncate(MAX_FANOUT_PEERS);
+    peer_urls
+}
+
+/// Peers to ask for chunk `sha`. `sha` is placed in the peer URL, so anything
+/// that is not a canonical hash gets no peers at all.
+fn chunk_fanout_targets(sha: &str, forwarded: bool, peer_urls: Vec<String>) -> Vec<String> {
+    if !ChunkStore::is_valid_hash(sha) {
+        return Vec::new();
+    }
+    fanout_targets(forwarded, peer_urls)
+}
+
+/// Read a peer response body, giving up once it exceeds `max` bytes.
+pub(crate) async fn read_bounded(mut resp: reqwest::Response, max: usize) -> Option<Vec<u8>> {
+    if resp.content_length().is_some_and(|n| n > max as u64) {
+        return None;
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await.ok()? {
+        if buf.len() + chunk.len() > max {
+            return None;
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Some(buf)
+}
 
 /// Fetch a chunk from alive peers. Returns the raw bytes on first success.
-pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str) -> Option<Vec<u8>> {
+/// `forwarded` is true when the inbound request carried the hop marker.
+pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str, forwarded: bool) -> Option<Vec<u8>> {
     let peer_urls: Vec<String> = {
         let registry = state.peers.lock().await;
         registry.list().into_iter()
@@ -23,6 +74,7 @@ pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str) -> Optio
             .map(|p| p.url.clone())
             .collect()
     };
+    let peer_urls = chunk_fanout_targets(sha, forwarded, peer_urls);
     if peer_urls.is_empty() { return None; }
 
     let client = reqwest::Client::builder()
@@ -43,11 +95,12 @@ pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str) -> Optio
             if crate::url_policy::validate_outbound_url_async(&url, crate::url_policy::operator_hosts()).await.is_err() {
                 return;
             }
-            let resp = client.get(format!("{}/api/chunks/{}", url, sha)).send().await;
+            let resp = client.get(format!("{}/api/chunks/{}", url, sha))
+                .header(HOP_HEADER, "1").send().await;
             if let Ok(r) = resp {
                 if r.status().is_success() {
-                    if let Ok(bytes) = r.bytes().await {
-                        let _ = tx.send(bytes.to_vec()).await;
+                    if let Some(bytes) = read_bounded(r, MAX_PEER_RESPONSE_BYTES).await {
+                        let _ = tx.send(bytes).await;
                     }
                 }
             }
@@ -57,7 +110,13 @@ pub(crate) async fn fetch_chunk_from_peers(state: &AppState, sha: &str) -> Optio
     rx.recv().await
 }
 
-pub(crate) async fn get_chunk(State(state): State<AppState>, Path(sha): Path<String>) -> impl IntoResponse {
+pub(crate) async fn get_chunk(State(state): State<AppState>, headers: HeaderMap, Path(sha): Path<String>) -> impl IntoResponse {
+    // `sha` ends up in peer URLs — anything that is not a canonical hash is
+    // answered here, before the store or any peer sees it.
+    if !ChunkStore::is_valid_hash(&sha) {
+        return err(StatusCode::NOT_FOUND, "Chunk not found on any node").into_response();
+    }
+
     // 1. Try local store first
     {
         let store = state.store.lock().await;
@@ -68,9 +127,12 @@ pub(crate) async fn get_chunk(State(state): State<AppState>, Path(sha): Path<Str
         }
     }
 
-    // 2. Chunk not local — try alive peers
-    eprintln!("📡 Chunk {} not local, trying peers...", &sha[..8.min(sha.len())]);
-    match fetch_chunk_from_peers(&state, &sha).await {
+    // 2. Chunk not local — try alive peers, unless a peer forwarded this request
+    let forwarded = is_forwarded(&headers);
+    if !forwarded {
+        eprintln!("📡 Chunk {} not local, trying peers...", &sha[..8.min(sha.len())]);
+    }
+    match fetch_chunk_from_peers(&state, &sha, forwarded).await {
         Some(data) => {
             // Verify hash before caching — peer data is untrusted
             let actual_sha = hex::encode(Sha256::digest(&data));
@@ -479,5 +541,47 @@ pub(crate) async fn point_extract(
         "collection": collection_id,
         "dtype": dtype,
     }))).into_response()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderName, HeaderValue};
+
+    fn peers(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("https://peer{}.example.com", i)).collect()
+    }
+
+    fn hop_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(HeaderName::from_bytes(HOP_HEADER.as_bytes()).unwrap(), HeaderValue::from_static("1"));
+        headers
+    }
+
+    #[test]
+    fn test_invalid_hash_never_contacts_peers() {
+        let uppercase = "A".repeat(64);
+        let too_long = "a".repeat(65);
+        for bad in ["", "abc", "../../../etc/passwd", "aaaa?x=1", uppercase.as_str(), too_long.as_str()] {
+            assert!(chunk_fanout_targets(bad, false, peers(3)).is_empty(), "fan-out for {bad:?}");
+        }
+        let valid = ChunkStore::hash_bytes(b"hello");
+        assert_eq!(chunk_fanout_targets(&valid, false, peers(3)).len(), 3);
+    }
+
+    #[test]
+    fn test_hop_marker_suppresses_fanout() {
+        let valid = ChunkStore::hash_bytes(b"hello");
+        assert!(!is_forwarded(&HeaderMap::new()));
+        assert!(is_forwarded(&hop_headers()));
+        assert!(chunk_fanout_targets(&valid, is_forwarded(&hop_headers()), peers(3)).is_empty());
+        assert!(fanout_targets(is_forwarded(&hop_headers()), peers(3)).is_empty());
+    }
+
+    #[test]
+    fn test_fanout_is_capped() {
+        assert_eq!(fanout_targets(false, peers(MAX_FANOUT_PEERS + 5)).len(), MAX_FANOUT_PEERS);
+    }
 }
 

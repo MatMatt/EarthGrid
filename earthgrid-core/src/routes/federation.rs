@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 
 use crate::auth::AccessLevel;
 use crate::server::{AppState, api_key, authorize, err};
+use crate::routes::chunks::{is_forwarded, HOP_HEADER};
 use crate::peers::NodeInfo;
 
 
@@ -138,7 +139,7 @@ pub(crate) async fn federation_sync(
         }
         // Try /node-info first, then fall back to /
         let info_url = format!("{}/api/node-info", url);
-        match client.get(&info_url).send().await {
+        match client.get(&info_url).header(HOP_HEADER, "1").send().await {
             Ok(resp) if resp.status().is_success() => {
                 if let Ok(info) = resp.json::<NodeInfo>().await {
                     let mut registry = state.peers.lock().await;
@@ -174,6 +175,7 @@ pub(crate) async fn federation_sync(
 /// GET /federation/search — federated STAC search across all alive peers + local
 pub(crate) async fn federation_search(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<crate::routes::stac::SearchQuery>,
 ) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(100).min(1000);
@@ -189,8 +191,10 @@ pub(crate) async fn federation_search(
         catalog.search(collection, bbox, datetime.as_ref(), limit, 0).unwrap_or_default()
     };
 
-    // 2. Build params for peer queries
-    let peer_urls: Vec<String> = {
+    // 2. Build params for peer queries — no peers if a peer forwarded this request
+    let peer_urls: Vec<String> = if is_forwarded(&headers) {
+        Vec::new()
+    } else {
         let registry = state.peers.lock().await;
         registry.list().into_iter()
             .filter(|p| p.alive())
@@ -244,6 +248,7 @@ pub(crate) async fn federation_search(
             let resp = client
                 .get(format!("{}/api/stac/search", url))
                 .query(&params)
+                .header(HOP_HEADER, "1")
                 .send()
                 .await;
 
@@ -442,5 +447,68 @@ pub(crate) async fn federation_import_users(
         "updated": 0,
         "skipped": skipped,
     }))).into_response()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderName, HeaderValue};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Mutex;
+
+    fn test_state(dir: &std::path::Path) -> AppState {
+        AppState {
+            store: Arc::new(Mutex::new(crate::chunk_store::ChunkStore::new(&dir.join("store"), 0.0).unwrap())),
+            catalog: Arc::new(Mutex::new(crate::catalog::Catalog::new(&dir.join("catalog.db")).unwrap())),
+            audit: Arc::new(crate::audit::AuditLog::new(&dir.join("audit.jsonl"))),
+            auth: crate::auth::AuthConfig { api_key: String::new(), admin_key: String::new() },
+            peers: Arc::new(Mutex::new(crate::peers::PeerRegistry::new())),
+            stats: Arc::new(crate::stats::StatsEngine::new(&dir.join("stats.db")).unwrap()),
+            perf: Arc::new(crate::perf::PerfRecorder::new()),
+            gamification: Arc::new(crate::gamification::GamificationEngine::new(&dir.join("gamification.db")).unwrap()),
+            version: String::new(),
+            node_id: String::new(),
+            node_name: String::new(),
+            user_auth: None,
+            node_identity: None,
+            storage_limit_gb: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            data_dir: dir.to_path_buf(),
+            active_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            is_beacon: false,
+            ui_enabled: true,
+            tile_grid: Arc::new(std::collections::HashMap::new()),
+            fetch_queue: Arc::new(crate::fetch_queue::FetchQueueBackend::Local(
+                crate::fetch_queue::LocalFetchQueue::new(&dir.join("fetch_queue.db")).unwrap(),
+            )),
+        }
+    }
+
+    /// Run the handler while this test holds the peer registry lock. It can
+    /// only finish within `wait` if it never reads the peer list.
+    async fn finishes_without_peer_list(headers: HeaderMap, wait: Duration) -> bool {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let _registry = state.peers.lock().await;
+        let q = crate::routes::stac::SearchQuery {
+            collection: None, collections: None, bbox: None, datetime: None, limit: None, offset: None,
+        };
+        tokio::time::timeout(wait, federation_search(State(state.clone()), headers, Query(q))).await.is_ok()
+    }
+
+    #[tokio::test]
+    async fn test_forwarded_search_never_reads_peer_list() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HeaderName::from_bytes(HOP_HEADER.as_bytes()).unwrap(), HeaderValue::from_static("1"));
+        assert!(finishes_without_peer_list(headers, Duration::from_secs(10)).await);
+    }
+
+    #[tokio::test]
+    async fn test_unmarked_search_reads_peer_list() {
+        // Same setup without the marker: the handler waits on the registry, so
+        // the test above fails if the guard is removed.
+        assert!(!finishes_without_peer_list(HeaderMap::new(), Duration::from_millis(300)).await);
+    }
 }
 
