@@ -156,19 +156,12 @@ function initCoverageMap() {
     attributionControl: false,
   }).setView([50, 12], 4);
 
-  const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 18, subdomains: 'abcd',
-  });
-  const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 18, subdomains: 'abcd',
-  });
   const osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     referrerPolicy: 'strict-origin-when-cross-origin',
     maxZoom: 19,
   });
   osmLayer.addTo(covMap);
-  L.control.layers({'Dark': darkLayer, 'Light': lightLayer, 'OSM': osmLayer}, null, {position: 'topright'}).addTo(covMap);
 
   // Legend
   const legend = L.control({position:'bottomright'});
