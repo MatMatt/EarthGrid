@@ -556,6 +556,64 @@ impl Catalog {
         Ok(tiles)
     }
 
+}
+
+/// Result of `Catalog::chunk_reference_counts`.
+#[derive(Debug, Default)]
+pub struct ChunkReferenceCounts {
+    /// How many item rows list each chunk hash.
+    pub counts: std::collections::HashMap<String, u32>,
+    /// True only if every item row was read and parsed. When false, some
+    /// references are unknown and a hash with no positive count may still be
+    /// in use, so callers must keep it rather than delete it.
+    pub complete: bool,
+}
+
+impl Catalog {
+    /// Count how many item rows reference each chunk hash, in one pass over
+    /// the items table.
+    ///
+    /// Chunks are content addressed and shared between items (and datasets),
+    /// and the catalogue has no reference table — only the hash list inside
+    /// every item row. So before deleting a chunk, callers build this map
+    /// once, then do in-memory bookkeeping: decrement once per listed hash as
+    /// items are removed, and delete the chunk only when its count reaches
+    /// zero. A hash listed twice in one item counts twice, which keeps the
+    /// count in step with that per-hash decrement.
+    ///
+    /// Items of `exclude_collection` are left out, for the case where that
+    /// whole collection is about to be deleted.
+    ///
+    /// If the hash list of any row cannot be parsed, that row's references are
+    /// unknown and `complete` is false. The counts are then only a lower
+    /// bound, so callers must not delete a chunk just because its count is
+    /// zero or missing: missing information means keep.
+    pub fn chunk_reference_counts(
+        &self,
+        exclude_collection: Option<&str>,
+    ) -> Result<ChunkReferenceCounts> {
+        let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut complete = true;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT chunk_hashes_json FROM items WHERE ?1 IS NULL OR collection != ?1")?;
+        let rows = stmt.query_map(params![exclude_collection], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            let hashes: Vec<String> = match serde_json::from_str(&row?) {
+                Ok(h) => h,
+                Err(_) => {
+                    // Unreadable row: its chunks are unknown, not unreferenced.
+                    complete = false;
+                    continue;
+                }
+            };
+            for h in hashes {
+                *counts.entry(h).or_insert(0) += 1;
+            }
+        }
+        Ok(ChunkReferenceCounts { counts, complete })
+    }
+
     /// Delete an item by ID.
     pub fn delete_item(&self, id: &str) -> Result<bool> {
         let affected = self

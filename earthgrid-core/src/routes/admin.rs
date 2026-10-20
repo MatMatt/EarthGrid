@@ -137,17 +137,36 @@ pub(crate) async fn admin_delete_collection(
     let chunk_hashes: Vec<String> = items.iter()
         .flat_map(|i| i.chunk_hashes.iter().cloned())
         .collect();
+    // Chunks are content addressed and shared between collections. Count, in
+    // one pass, how many items OUTSIDE this collection still reference each
+    // hash; a chunk with any such reference must survive the delete below.
+    let other_refs = match catalog.chunk_reference_counts(Some(&collection_id)) {
+        Ok(m) => m,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    };
+    if !other_refs.complete {
+        tracing::warn!(
+            "Deleting collection {}: chunk references are incomplete (some catalogue rows could not be read); no chunk will be deleted unless proven unreferenced, so nothing unproven will be removed",
+            collection_id
+        );
+    }
     // Delete all items + collection in one call
     if let Err(e) = catalog.delete_collection(&collection_id) {
         return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
     }
     drop(catalog);
 
-    // Attempt to remove chunks from store (best-effort)
+    // Attempt to remove chunks from store (best-effort), keeping shared ones
     let removed_chunks = {
         let mut store = state.store.lock().await;
         let mut count = 0usize;
         for hash in &chunk_hashes {
+            if other_refs.counts.get(hash).copied().unwrap_or(0) > 0 {
+                continue; // still referenced by another collection — keep it
+            }
+            if !other_refs.complete {
+                continue; // references incomplete: a missing count is not proof — keep it
+            }
             if store.delete(hash).unwrap_or(false) {
                 count += 1;
             }
@@ -308,5 +327,104 @@ pub(crate) async fn delete_node(
         "status": "removed",
         "node_id": node_id,
     }))).into_response()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    fn test_state(dir: &std::path::Path) -> AppState {
+        AppState {
+            store: Arc::new(Mutex::new(crate::chunk_store::ChunkStore::new(&dir.join("store"), 0.0).unwrap())),
+            catalog: Arc::new(Mutex::new(crate::catalog::Catalog::new(&dir.join("catalog.db")).unwrap())),
+            audit: Arc::new(crate::audit::AuditLog::new(&dir.join("audit.jsonl"))),
+            auth: crate::auth::AuthConfig { api_key: String::new(), admin_key: String::new() },
+            peers: Arc::new(Mutex::new(crate::peers::PeerRegistry::new())),
+            stats: Arc::new(crate::stats::StatsEngine::new(&dir.join("stats.db")).unwrap()),
+            perf: Arc::new(crate::perf::PerfRecorder::new()),
+            gamification: Arc::new(crate::gamification::GamificationEngine::new(&dir.join("gamification.db")).unwrap()),
+            version: String::new(),
+            node_id: String::new(),
+            node_name: String::new(),
+            user_auth: None,
+            node_identity: None,
+            storage_limit_gb: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            data_dir: dir.to_path_buf(),
+            active_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            is_beacon: false,
+            ui_enabled: true,
+            tile_grid: Arc::new(std::collections::HashMap::new()),
+            fetch_queue: Arc::new(crate::fetch_queue::FetchQueueBackend::Local(
+                crate::fetch_queue::LocalFetchQueue::new(&dir.join("fetch_queue.db")).unwrap(),
+            )),
+        }
+    }
+
+    fn item(id: &str, collection: &str, hashes: Vec<String>) -> crate::catalog::StacItem {
+        crate::catalog::StacItem {
+            id: id.to_string(),
+            collection: collection.to_string(),
+            bbox: [0.0, 0.0, 1.0, 1.0],
+            properties: serde_json::json!({}),
+            chunk_hashes: hashes,
+            created_at: 0.0,
+            geometry: None,
+        }
+    }
+
+    /// Deleting a collection must only delete the chunks no other collection
+    /// references: the shared chunk stays and the other collection's item
+    /// still reconstructs, while the unshared chunk is removed.
+    #[tokio::test]
+    async fn delete_collection_keeps_chunks_shared_with_another_collection() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+
+        let (shared, only_a) = {
+            let mut store = state.store.lock().await;
+            (
+                store.put(b"shared between two collections").unwrap(),
+                store.put(b"only in collection a").unwrap(),
+            )
+        };
+        let b = item("b-1", "coll-b", vec![shared.clone()]);
+        {
+            let catalog = state.catalog.lock().await;
+            for id in ["coll-a", "coll-b"] {
+                catalog.add_collection(&crate::catalog::StacCollection {
+                    id: id.to_string(),
+                    title: id.to_string(),
+                    description: String::new(),
+                }).unwrap();
+            }
+            catalog.add_item(&item("a-1", "coll-a", vec![shared.clone(), only_a.clone()])).unwrap();
+            catalog.add_item(&b).unwrap();
+        }
+
+        let addr = SocketAddr::from(([127, 0, 0, 1], 1));
+        let resp = admin_delete_collection(
+            State(state.clone()),
+            HeaderMap::new(),
+            ConnectInfo(addr),
+            Path("coll-a".to_string()),
+        )
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut store = state.store.lock().await;
+        assert!(!store.has(&only_a), "unshared chunk of the deleted collection must be removed");
+        assert!(store.has(&shared), "chunk still referenced by coll-b must be kept");
+
+        let catalog = state.catalog.lock().await;
+        assert!(catalog.get_collection("coll-a").unwrap().is_none());
+        let b_again = catalog.get_item(&b.id).unwrap().expect("item in coll-b must survive");
+        let bytes = crate::reconstruct::reconstruct_raw(&b_again, &mut store)
+            .expect("item in coll-b must still reconstruct after deleting coll-a");
+        assert_eq!(bytes, b"shared between two collections");
+    }
 }
 

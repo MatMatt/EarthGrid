@@ -7,7 +7,7 @@
 //!
 //! Safety: NEVER delete the last replica of an item in the grid.
 
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, ChunkReferenceCounts};
 use crate::chunk_store::ChunkStore;
 use crate::error::Result;
 
@@ -88,6 +88,17 @@ pub fn evict_with_beacon_url(
         eviction_score(b).total_cmp(&eviction_score(a))
     });
 
+    // Chunks are content addressed and shared between items, so a chunk of
+    // the item being evicted may still be needed by another item (possibly in
+    // another dataset). Build the reference counts once for this run; the
+    // loop below decrements them in memory, no per-chunk SQL.
+    let mut chunk_refs = catalog.chunk_reference_counts(None)?;
+    if !chunk_refs.complete {
+        eprintln!(
+            "⚠️  Eviction: chunk references are incomplete (some catalogue rows could not be read); no chunk will be deleted unless proven unreferenced, so nothing unproven will be removed"
+        );
+    }
+
     let mut freed: i64 = 0;
     let mut deleted = 0;
     let mut kept = 0;
@@ -103,14 +114,29 @@ pub fn evict_with_beacon_url(
             continue;
         }
 
-        // Delete all chunks for this item
-        let mut item_freed: i64 = 0;
-        for hash in &candidate.chunk_hashes {
-            if let Ok(true) = store.delete(hash) {
-                // Get chunk size (estimate from total / count if needed)
-                item_freed += candidate.bytes / candidate.chunk_hashes.len().max(1) as i64;
-            }
+        // Safety: a collection claim is not proof that THIS item is held
+        // elsewhere. `replica_count` comes from build_replica_map, which only
+        // counts nodes that claim the whole collection in the beacon registry;
+        // a laptop that claims a collection while holding a handful of its
+        // items would make every item here look replicated. Deleting on that
+        // count could drop the only copy, so until replication of the item is
+        // proven it is kept. The count still drives the ordering above.
+        if !item_replication_proven(candidate) {
+            kept += 1;
+            eprintln!(
+                "  🔒 Kept: {} ({}) — {} node(s) claim the collection, but replication of this item is not proven; not deleting",
+                candidate.item_id,
+                candidate.collection,
+                candidate.replica_count
+            );
+            continue;
         }
+
+        // Delete the chunks of this item that no other item still references
+        let deleted_chunks = release_item_chunks(store, &candidate.chunk_hashes, &mut chunk_refs);
+        // Get chunk size (estimate from total / count if needed)
+        let item_freed: i64 = deleted_chunks as i64
+            * (candidate.bytes / candidate.chunk_hashes.len().max(1) as i64);
 
         // Delete catalog entry
         let _ = catalog.delete_item(&candidate.item_id);
@@ -134,7 +160,7 @@ pub fn evict_with_beacon_url(
             format!("Freed {:.1} GB to meet {:.0} GB limit", freed as f64 / 1_073_741_824.0, target_gb)
         } else {
             format!(
-                "Could only free {:.1} GB of {:.1} GB needed (kept {} items as last replica)",
+                "Could only free {:.1} GB of {:.1} GB needed (kept {} items: no proven replica elsewhere)",
                 freed as f64 / 1_073_741_824.0,
                 bytes_to_free as f64 / 1_073_741_824.0,
                 kept
@@ -150,6 +176,53 @@ fn eviction_score(c: &EvictionCandidate) -> f64 {
     let age_days = (now_ts() - c.created_at) / 86400.0;
     let age_factor = (age_days / 30.0).min(5.0); // older items score higher, cap at 5
     replica_factor + age_factor
+}
+
+/// Whether replication of this specific item on another node is proven.
+///
+/// The beacon registry only records which collections each node claims, not
+/// which items it actually holds, so `replica_count` is a per-collection
+/// guess, not a per-item fact. A real proof needs the per-item holder map
+/// (each node reporting the item ids it holds); that map does not exist yet,
+/// so this always returns false and eviction keeps every item. When the item
+/// map lands, this is the one place to look it up.
+fn item_replication_proven(_candidate: &EvictionCandidate) -> bool {
+    false
+}
+
+/// Delete the chunks of a removed item that no other catalogue item still
+/// references.
+///
+/// `chunk_refs` holds how many item rows point at each hash, built once per
+/// run by `Catalog::chunk_reference_counts`. Each listed hash is decremented;
+/// the chunk is only deleted from the store once its count reaches zero.
+/// Missing information means keep: a hash with no count entry is never
+/// deleted (the catalogue never told us who uses it), and when the counts are
+/// incomplete no chunk is deleted at all, because a zero count may just mean
+/// an unreadable row.
+/// Returns the number of chunks actually deleted.
+fn release_item_chunks(
+    store: &mut ChunkStore,
+    chunk_hashes: &[String],
+    chunk_refs: &mut ChunkReferenceCounts,
+) -> usize {
+    let mut deleted = 0usize;
+    for hash in chunk_hashes {
+        let Some(remaining) = chunk_refs.counts.get_mut(hash) else {
+            continue; // no count for this hash: unknown, not unreferenced — keep it
+        };
+        *remaining = remaining.saturating_sub(1);
+        if *remaining > 0 {
+            continue; // still referenced by another item — keep it
+        }
+        if !chunk_refs.complete {
+            continue; // references incomplete: a zero count is not proof — keep it
+        }
+        if let Ok(true) = store.delete(hash) {
+            deleted += 1;
+        }
+    }
+    deleted
 }
 
 /// Build a map of item_id → replica count from beacon DB.
@@ -341,5 +414,179 @@ mod tests {
             joined.err()
         );
         assert!(joined.unwrap().is_ok(), "eviction returned an error");
+    }
+
+    fn item(id: &str, collection: &str, hashes: Vec<String>) -> crate::catalog::StacItem {
+        crate::catalog::StacItem {
+            id: id.to_string(),
+            collection: collection.to_string(),
+            bbox: [0.0, 0.0, 1.0, 1.0],
+            properties: serde_json::json!({}),
+            chunk_hashes: hashes,
+            created_at: now_ts(),
+            geometry: None,
+        }
+    }
+
+    /// Chunks are content addressed and shared between datasets. Evicting an
+    /// item must only delete the chunks nothing else references: the shared
+    /// chunk stays, the other item still reconstructs, the unshared chunk goes.
+    ///
+    /// Goes through the chunk-release step of the eviction loop directly,
+    /// because the loop itself never deletes until item replication is proven
+    /// (see `collection_claim_alone_keeps_item`).
+    #[test]
+    fn evicting_an_item_keeps_chunks_shared_with_another_collection() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::new(&dir.path().join("catalog.db")).unwrap();
+        let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        let shared = store.put(b"shared between two datasets").unwrap();
+        let only_a = store.put(b"only in dataset a").unwrap();
+
+        let a = item("a-1", "dataset-a", vec![shared.clone(), only_a.clone()]);
+        let b = item("b-1", "dataset-b", vec![shared.clone()]);
+        catalog.add_item(&a).unwrap();
+        catalog.add_item(&b).unwrap();
+
+        let mut chunk_refs = catalog.chunk_reference_counts(None).unwrap();
+        assert!(chunk_refs.complete);
+        assert_eq!(chunk_refs.counts.get(&shared), Some(&2));
+        assert_eq!(chunk_refs.counts.get(&only_a), Some(&1));
+
+        // Evict item a
+        let deleted = release_item_chunks(&mut store, &a.chunk_hashes, &mut chunk_refs);
+        catalog.delete_item(&a.id).unwrap();
+
+        assert_eq!(deleted, 1, "only the unshared chunk may be deleted");
+        assert!(!store.has(&only_a), "unshared chunk of the evicted item must be deleted");
+        assert!(store.has(&shared), "chunk still referenced by dataset-b must be kept");
+
+        let b_again = catalog.get_item(&b.id).unwrap().expect("item b must survive");
+        let bytes = crate::reconstruct::reconstruct_raw(&b_again, &mut store)
+            .expect("item b must still reconstruct after evicting item a");
+        assert_eq!(bytes, b"shared between two datasets");
+    }
+
+    /// A catalogue row whose chunk hash list cannot be parsed must not make
+    /// its chunks look unreferenced. The counting pass must report that the
+    /// references are incomplete, and releasing an item's chunks must then
+    /// keep every chunk, even one whose count dropped to zero.
+    #[test]
+    fn unparseable_catalog_row_keeps_chunks_and_reports_incomplete() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("catalog.db");
+        let catalog = Catalog::new(&db_path).unwrap();
+        let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        let shared = store.put(b"also used by the unreadable row").unwrap();
+        let only_a = store.put(b"only listed by item a").unwrap();
+        let a = item("a-1", "dataset-a", vec![shared.clone(), only_a.clone()]);
+        catalog.add_item(&a).unwrap();
+
+        // A second row whose hash list is not valid JSON. In truth it uses
+        // `shared`, but the counting pass cannot know that.
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute(
+                "INSERT INTO collections (id, title) VALUES ('dataset-b', 'dataset-b')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO items (id, collection, bbox_west, bbox_south, bbox_east, bbox_north, chunk_hashes_json)
+                 VALUES ('broken-1', 'dataset-b', 0.0, 0.0, 1.0, 1.0, 'not a json list')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let mut chunk_refs = catalog.chunk_reference_counts(None).unwrap();
+        assert!(!chunk_refs.complete, "an unreadable row must be reported as incomplete references");
+        // The readable row still counts; the broken one adds nothing.
+        assert_eq!(chunk_refs.counts.get(&shared), Some(&1));
+        assert_eq!(chunk_refs.counts.get(&only_a), Some(&1));
+
+        let deleted = release_item_chunks(&mut store, &a.chunk_hashes, &mut chunk_refs);
+
+        assert_eq!(deleted, 0, "with incomplete references nothing may be deleted");
+        assert!(store.has(&shared), "chunk of the unreadable row must be kept");
+        assert!(store.has(&only_a), "a zero count is not proof when references are incomplete");
+    }
+
+    /// A hash with no entry in the reference count map is unknown, not
+    /// unreferenced: it must be kept, even when the counts are complete.
+    #[test]
+    fn hash_without_count_entry_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::new(&dir.path().join("catalog.db")).unwrap();
+        let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        let counted = store.put(b"listed in the catalogue").unwrap();
+        let uncounted = store.put(b"not listed anywhere the count can see").unwrap();
+        catalog.add_item(&item("a-1", "dataset-a", vec![counted.clone()])).unwrap();
+
+        let mut chunk_refs = catalog.chunk_reference_counts(None).unwrap();
+        assert!(chunk_refs.complete);
+        assert_eq!(chunk_refs.counts.get(&uncounted), None);
+
+        // Release an item that lists both hashes: the counted one reaches
+        // zero and goes, the one with no entry stays.
+        let deleted = release_item_chunks(
+            &mut store,
+            &[counted.clone(), uncounted.clone()],
+            &mut chunk_refs,
+        );
+
+        assert_eq!(deleted, 1, "only the hash with a proven zero count may be deleted");
+        assert!(!store.has(&counted));
+        assert!(store.has(&uncounted), "a hash with no count entry must be kept");
+    }
+
+    /// A node that merely claims a collection in the beacon registry is not
+    /// proof that it holds this item. Such an item must be kept (and counted
+    /// as kept), never deleted, even though the replica map scores it as
+    /// replicated.
+    #[test]
+    fn collection_claim_alone_keeps_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::new(&dir.path().join("catalog.db")).unwrap();
+        let mut store = ChunkStore::new(&dir.path().join("store"), 0.0).unwrap();
+
+        let hash = store.put(b"the only copy of this item").unwrap();
+        let it = item("s2-1", "sentinel-2", vec![hash.clone()]);
+        catalog.add_item(&it).unwrap();
+
+        // Beacon registry: two live nodes both claim "sentinel-2".
+        let beacon_db = dir.path().join("beacon.db");
+        {
+            let conn = rusqlite::Connection::open(&beacon_db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE beacon_nodes (
+                    node_name TEXT NOT NULL,
+                    collections_json TEXT NOT NULL,
+                    item_count INTEGER NOT NULL,
+                    last_seen REAL NOT NULL
+                );",
+            )
+            .unwrap();
+            for name in ["beacon", "laptop"] {
+                conn.execute(
+                    "INSERT INTO beacon_nodes (node_name, collections_json, item_count, last_seen) VALUES (?1, '[\"sentinel-2\"]', 1, ?2)",
+                    rusqlite::params![name, now_ts()],
+                )
+                .unwrap();
+            }
+        }
+        // The claim does make the collection look replicated...
+        assert_eq!(build_replica_map(Some(beacon_db.as_path())).get("sentinel-2"), Some(&1));
+
+        // ...but that is not proof, so the item is kept.
+        let result = evict(&catalog, &mut store, 0.0, Some(beacon_db.as_path())).unwrap();
+        assert_eq!(result.items_deleted, 0, "unproven replication must not delete");
+        assert_eq!(result.items_kept, 1, "the item must be counted as kept");
+        assert_eq!(result.bytes_freed, 0);
+        assert!(store.has(&hash), "the only copy must stay in the store");
+        assert!(catalog.get_item(&it.id).unwrap().is_some(), "catalog entry must stay");
     }
 }
