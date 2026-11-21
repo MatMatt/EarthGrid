@@ -703,7 +703,15 @@ pub async fn serve(
                     auth: auth.clone(),
                     federation_auth: crate::beacon_federation::FederationAuth::from_env(),
                 };
-                app = app.merge(beacon_router(beacon_state.clone()));
+                // The layers in `router()` only wrap the routes that existed when
+                // they were applied, so the beacon routes merged here need the
+                // rate limit put on them explicitly.
+                app = app.merge(beacon_router(beacon_state.clone()).layer(
+                    axum::middleware::from_fn_with_state(
+                        crate::ratelimit::RateLimiter::new(300, 60).with_api_key(auth.api_key.clone()),
+                        crate::ratelimit::rate_limit_middleware,
+                    ),
+                ));
                 println!("🔦 Beacon registry enabled ({}) [beacon_id={}]", beacon_db_path.display(), &beacon_id[..8]);
 
                 // Self-registration: register this node in its own beacon DB

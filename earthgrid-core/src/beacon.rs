@@ -31,6 +31,22 @@ use crate::beacon_federation::FederationState;
 use crate::node_identity::NodeIdentity;
 
 // ---------------------------------------------------------------------------
+// Admission limits
+// ---------------------------------------------------------------------------
+
+/// Most nodes the registry admits. Any keypair can sign a registration, so
+/// without a ceiling the table — and the coverage syncs every row triggers —
+/// grows with whatever is sent. Stale rows are pruned, which frees places.
+const MAX_REGISTERED_NODES: i64 = 1000;
+
+/// Most coverage cells stored for one node, all collections together.
+const MAX_TILES_PER_NODE: usize = 100_000;
+
+// A coverage sync is three outbound requests to a URL the node chose, each
+// response held in memory, so only this many run at once.
+static COVERAGE_SYNC_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+// ---------------------------------------------------------------------------
 // Data types
 // ---------------------------------------------------------------------------
 
@@ -608,6 +624,20 @@ impl BeaconRegistry {
                     req.node_id, old_url
                 )));
             }
+        } else {
+            // Admission ceiling, for a node_id not yet in the registry only:
+            // a registered node can always refresh its own row.
+            let registered: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM beacon_nodes",
+                [],
+                |row| row.get(0),
+            )?;
+            if registered >= MAX_REGISTERED_NODES {
+                return Err(crate::error::EarthGridError::Other(format!(
+                    "beacon registry is full ({} nodes). Try again later.",
+                    MAX_REGISTERED_NODES
+                )));
+            }
         }
 
         // Reject if node_name already exists under a different node_id
@@ -943,6 +973,26 @@ Ok(affected)
 
     /// Replace all tiles for a node with fresh data from /coverage/spatial.
     pub fn store_node_tiles(&self, node_id: &str, coverage: &serde_json::Value) -> Result<usize> {
+        // The coverage document is node-supplied and every cell is one insert
+        // made while the registry is locked — refuse an absurd one up front,
+        // before the node's current tiles are dropped.
+        let cell_total = coverage
+            .get("collections")
+            .and_then(|c| c.as_object())
+            .map(|collections| {
+                collections
+                    .values()
+                    .filter_map(|data| data.get("cells").and_then(|c| c.as_array()))
+                    .map(|cells| cells.len())
+                    .sum::<usize>()
+            })
+            .unwrap_or(0);
+        if cell_total > MAX_TILES_PER_NODE {
+            return Err(crate::error::EarthGridError::Other(format!(
+                "coverage lists {} cells, more than {}",
+                cell_total, MAX_TILES_PER_NODE
+            )));
+        }
         self.conn.execute(
             "DELETE FROM beacon_node_tiles WHERE node_id = ?1",
             params![node_id],
@@ -1423,12 +1473,7 @@ async fn register_node(
                 return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
             }
             // First registration → fetch coverage
-            let node_url = node.url.clone();
-            let node_id = node.node_id.clone();
-            let reg_clone = state.registry.clone();
-            tokio::spawn(async move {
-                fetch_and_store_coverage(&reg_clone, &node_id, &node_url).await;
-            });
+            spawn_coverage_sync(state.registry.clone(), node.node_id.clone(), node.url.clone());
             (StatusCode::CREATED, Json(serde_json::to_value(node).unwrap())).into_response()
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
@@ -1442,10 +1487,6 @@ async fn heartbeat_node(
     if req.node_id.is_empty() {
         return err(StatusCode::BAD_REQUEST, "node_id is required").into_response();
     }
-
-    // Always refresh coverage on heartbeat.
-    // Skip HTTP round-trip for the beacon's own node — read local catalog directly.
-    let needs_coverage = true;
 
     let registry = state.registry.lock().await;
     // Fail closed, as in register_node: a heartbeat can change url, node_name,
@@ -1472,15 +1513,8 @@ async fn heartbeat_node(
             {
                 return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
             }
-            // Spawn async coverage fetch if version changed or no tiles yet
-            if needs_coverage {
-                let node_url = node.url.clone();
-                let node_id = node.node_id.clone();
-                let reg_clone = state.registry.clone();
-                tokio::spawn(async move {
-                    fetch_and_store_coverage(&reg_clone, &node_id, &node_url).await;
-                });
-            }
+            // Refresh coverage on every heartbeat, as far as the sync slots allow
+            spawn_coverage_sync(state.registry.clone(), node.node_id.clone(), node.url.clone());
             // Include known beacons in response so nodes can discover new beacons
             let known_beacons = registry.known_beacon_urls();
             let mut resp = serde_json::to_value(&node).unwrap();
@@ -1547,6 +1581,29 @@ async fn remove_node(
 // Async coverage fetch helper
 // ---------------------------------------------------------------------------
 
+/// Start a coverage sync for a node, unless every slot is busy.
+///
+/// Register and heartbeat requests arrive at whatever rate their senders
+/// choose, and each used to spawn a sync of its own. A request that finds no
+/// free slot starts nothing and nothing is queued: the node's next heartbeat
+/// asks again. The slot travels with the task and is released when it ends.
+fn spawn_coverage_sync(registry: Arc<Mutex<BeaconRegistry>>, node_id: String, node_url: String) {
+    let Ok(slot) = COVERAGE_SYNC_SLOTS.try_acquire() else {
+        return;
+    };
+    tokio::spawn(async move {
+        let _slot = slot;
+        fetch_and_store_coverage(&registry, &node_id, &node_url).await;
+    });
+}
+
+/// Read a node's JSON response, giving up once the body exceeds
+/// `MAX_PEER_RESPONSE_BYTES`. `None` if it is unreadable, too large or not JSON.
+async fn bounded_json(resp: reqwest::Response) -> Option<serde_json::Value> {
+    let body = crate::routes::chunks::read_bounded(resp, crate::routes::chunks::MAX_PEER_RESPONSE_BYTES).await?;
+    serde_json::from_slice(&body).ok()
+}
+
 /// Fetch /coverage/spatial and /stats from a node and store in the beacon DB.
 async fn fetch_and_store_coverage(
     registry: &Arc<Mutex<BeaconRegistry>>,
@@ -1580,10 +1637,15 @@ async fn fetch_and_store_coverage(
     let coverage_url = format!("{}/api/coverage/spatial?source=local", base);
     let coverage = match client.get(&coverage_url).send().await {
         Ok(resp) if resp.status().is_success() => {
-            match resp.json::<serde_json::Value>().await {
-                Ok(c) => Some(c),
-                Err(e) => { eprintln!("⚠️  Coverage parse failed for {}: {}", nid, e); None }
+            let parsed = bounded_json(resp).await;
+            if parsed.is_none() {
+                eprintln!(
+                    "⚠️  Coverage parse failed for {}: unreadable, not JSON or larger than {} bytes",
+                    nid,
+                    crate::routes::chunks::MAX_PEER_RESPONSE_BYTES
+                );
             }
+            parsed
         }
         Ok(resp) => { eprintln!("⚠️  Coverage fetch {} returned {}", nid, resp.status()); None }
         Err(e) => { eprintln!("⚠️  Coverage fetch failed for {}: {}", nid, e); None }
@@ -1602,11 +1664,11 @@ async fn fetch_and_store_coverage(
     let stats_cov_url = format!("{}/api/stats/coverage", base);
 
     let stats = match client.get(&stats_url).send().await {
-        Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
+        Ok(resp) if resp.status().is_success() => bounded_json(resp).await,
         _ => None,
     };
     let stats_coverage = match client.get(&stats_cov_url).send().await {
-        Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
+        Ok(resp) if resp.status().is_success() => bounded_json(resp).await,
         _ => None,
     };
 
