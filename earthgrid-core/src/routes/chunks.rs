@@ -160,6 +160,9 @@ pub(crate) async fn list_chunks(State(state): State<AppState>, Query(q): Query<L
 }
 
 
+// Verifying an item reads and hashes every one of its chunks and outlives a cancelled request, so only two run at once.
+static VERIFY_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
 pub(crate) async fn verify_item(State(state): State<AppState>, Path(item_id): Path<String>) -> impl IntoResponse {
     let catalog = state.catalog.lock().await;
     let item = match catalog.get_item(&item_id) {
@@ -169,22 +172,41 @@ pub(crate) async fn verify_item(State(state): State<AppState>, Path(item_id): Pa
     };
     drop(catalog);
 
-    let store = state.store.lock().await;
     let total = item.chunk_hashes.len();
-    let mut valid = 0usize;
-    let mut missing = 0usize;
-    let mut corrupted = 0usize;
 
-    for hash in &item.chunk_hashes {
-        if !store.has(hash) {
-            missing += 1;
-        } else {
-            match store.verify(hash) {
-                Ok(true) => valid += 1,
-                _ => corrupted += 1,
+    // This endpoint is anonymous. The hashing runs on a blocking thread and the
+    // shared store lock is taken per chunk, never for the whole item, so one
+    // verify cannot hold every other store user behind it. The slot travels
+    // with the work and is released when the work finishes.
+    let slot = match VERIFY_SLOTS.acquire().await {
+        Ok(s) => s,
+        Err(e) => return err(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()).into_response(),
+    };
+    let store = state.store.clone();
+    let hashes = item.chunk_hashes;
+    let counts = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        let mut valid = 0usize;
+        let mut missing = 0usize;
+        let mut corrupted = 0usize;
+        for hash in &hashes {
+            let store = store.blocking_lock();
+            if !store.has(hash) {
+                missing += 1;
+            } else {
+                match store.verify(hash) {
+                    Ok(true) => valid += 1,
+                    _ => corrupted += 1,
+                }
             }
         }
-    }
+        (valid, missing, corrupted)
+    })
+    .await;
+    let (valid, missing, corrupted) = match counts {
+        Ok(c) => c,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Verify task failed: {}", e)).into_response(),
+    };
 
     let ok = corrupted == 0 && missing == 0;
     (
