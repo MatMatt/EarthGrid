@@ -1065,8 +1065,11 @@ fn prompt(label: &str, default: &str) -> anyhow::Result<String> {
 
 fn find_cargo() -> String {
     // Try common locations
+    let home_cargo = std::env::var("HOME")
+        .map(|h| format!("{h}/.cargo/bin/cargo"))
+        .unwrap_or_default();
     let candidates = [
-        "/home/matteo/.cargo/bin/cargo",
+        home_cargo.as_str(),
         "/root/.cargo/bin/cargo",
         "cargo",
     ];

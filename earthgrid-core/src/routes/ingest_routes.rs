@@ -1,12 +1,14 @@
 use axum::{
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
+use std::net::SocketAddr;
 
-use crate::server::{AppState, api_key, err};
+use crate::auth::AccessLevel;
+use crate::server::{AppState, api_key, authorize, err};
 use crate::server::ActiveRequestGuard;
 use std::sync::atomic::Ordering;
 use crate::fetcher;
@@ -420,17 +422,43 @@ pub(crate) async fn fetch_queue_enqueue(
 /// GET /api/fetch/queue — list jobs
 pub(crate) async fn fetch_queue_list(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<QueueStatusQuery>,
 ) -> impl IntoResponse {
-    let jobs = state.fetch_queue.list(q.status.as_deref()).unwrap_or_default();
-    (StatusCode::OK, Json(serde_json::json!({ "jobs": jobs, "count": jobs.len() }))).into_response()
+    if let Err(e) = authorize(
+        &state.auth,
+        state.user_auth.as_deref(),
+        &headers,
+        addr,
+        AccessLevel::Write,
+        &state.data_dir,
+    ) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+    match state.fetch_queue.list(q.status.as_deref()) {
+        Ok(jobs) => (StatusCode::OK, Json(serde_json::json!({ "jobs": jobs, "count": jobs.len() }))).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+    }
 }
 
 /// GET /api/fetch/queue/{id} — get a single job
 pub(crate) async fn fetch_queue_get(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> impl IntoResponse {
+    if let Err(e) = authorize(
+        &state.auth,
+        state.user_auth.as_deref(),
+        &headers,
+        addr,
+        AccessLevel::Write,
+        &state.data_dir,
+    ) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
     match state.fetch_queue.get(id) {
         Ok(Some(job)) => (StatusCode::OK, Json(serde_json::to_value(job).unwrap_or_default())).into_response(),
         Ok(None) => err(StatusCode::NOT_FOUND, "Job not found").into_response(),

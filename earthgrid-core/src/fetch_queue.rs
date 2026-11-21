@@ -505,20 +505,29 @@ impl RemoteFetchQueue {
     }
 
     async fn list(&self, status_filter: Option<&str>) -> Result<Vec<FetchJob>, EarthGridError> {
-        let mut url = format!("{}/api/fetch/queue", self.beacon_url);
+        let mut req = self.client.get(format!("{}/api/fetch/queue", self.beacon_url))
+            .header("x-api-key", &self.grid_key);
         if let Some(s) = status_filter {
-            url.push_str(&format!("?status={}", s));
+            req = req.query(&[("status", s)]);
         }
-        let resp = self.client.get(&url)
-            .header("x-api-key", &self.grid_key)
+        let resp = req
             .send().await
             .map_err(|e| EarthGridError::Other(format!("beacon list: {}", e)))?;
+
+        if !resp.status().is_success() {
+            return Err(EarthGridError::Other(format!("beacon list: HTTP {}", resp.status())));
+        }
 
         let data: serde_json::Value = resp.json().await
             .map_err(|e| EarthGridError::Other(format!("beacon list parse: {}", e)))?;
 
-        let jobs: Vec<FetchJob> = serde_json::from_value(data["jobs"].clone())
-            .unwrap_or_default();
+        let jobs_value = match data.get("jobs") {
+            Some(v) if v.is_array() => v.clone(),
+            Some(_) => return Err(EarthGridError::Other("beacon list: 'jobs' field is not an array".to_string())),
+            None => return Err(EarthGridError::Other("beacon list: response has no 'jobs' field".to_string())),
+        };
+        let jobs: Vec<FetchJob> = serde_json::from_value(jobs_value)
+            .map_err(|e| EarthGridError::Other(format!("beacon list deserialize: {}", e)))?;
         Ok(jobs)
     }
 
@@ -530,6 +539,9 @@ impl RemoteFetchQueue {
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(EarthGridError::Other(format!("beacon get: HTTP {}", resp.status())));
         }
 
         let job: FetchJob = resp.json().await

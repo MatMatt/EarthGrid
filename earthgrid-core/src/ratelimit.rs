@@ -3,7 +3,8 @@
 //! Ported from ratelimit.py.
 //!
 //! - Per-client-IP sliding window (1-minute and 2-second burst)
-//! - Exempt: `/health`, `/` and LAN addresses
+//! - Exempt: `/health`, `/api/health`, `/`, `/assets/*`, LAN addresses and
+//!   `/api/chunks/*` requests presenting the grid key
 //! - Returns 429 with `Retry-After` header when exceeded
 
 use std::collections::HashMap;
@@ -29,6 +30,8 @@ pub struct RateLimiter {
     burst: usize,
     /// IP → timestamps of recent requests
     windows: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+    /// Expected grid API key; requests presenting it are not limited. Empty = no exemption.
+    api_key: String,
 }
 
 impl RateLimiter {
@@ -41,7 +44,14 @@ impl RateLimiter {
             requests_per_minute,
             burst,
             windows: Arc::new(Mutex::new(HashMap::new())),
+            api_key: String::new(),
         }
+    }
+
+    /// Exempt requests that present this key as `x-api-key` (inter-node traffic).
+    pub fn with_api_key(mut self, key: String) -> Self {
+        self.api_key = key;
+        self
     }
 }
 
@@ -57,20 +67,26 @@ impl Default for RateLimiter {
 
 /// Extract client IP from request headers / socket address.
 fn client_ip(req: &Request<Body>) -> String {
-    // Respect X-Forwarded-For when behind a reverse proxy
-    if let Some(fwd) = req.headers().get("x-forwarded-for") {
-        if let Ok(s) = fwd.to_str() {
-            if let Some(first) = s.split(',').next() {
-                return first.trim().to_string();
-            }
-        }
-    }
     // Axum stores the socket address as a request extension
     if let Some(addr) = req
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
     {
-        return addr.ip().to_string();
+        let peer = addr.ip();
+        // Only the same-host ingress proxy (loopback or the docker bridge
+        // 172.17.0.1) is trusted to report the real client via X-Real-IP.
+        // Client-settable headers such as X-Forwarded-For are never read.
+        let trusted_proxy = peer.is_loopback()
+            || peer == std::net::IpAddr::V4(std::net::Ipv4Addr::new(172, 17, 0, 1));
+        if trusted_proxy {
+            if let Some(real) = req.headers().get("x-real-ip").and_then(|v| v.to_str().ok()) {
+                let real = real.trim();
+                if !real.is_empty() {
+                    return real.to_string();
+                }
+            }
+        }
+        return peer.to_string();
     }
     "unknown".to_string()
 }
@@ -106,8 +122,9 @@ pub async fn rate_limit_middleware(
 ) -> Response {
     let path = req.uri().path().to_string();
 
-    // Always pass through health + root
-    if path == "/health" || path == "/" {
+    // Always pass through health + root + static assets (a dashboard page
+    // load pulls the vendored Leaflet files alongside ~15 API calls)
+    if path == "/health" || path == "/api/health" || path == "/" || path.starts_with("/assets/") {
         return next.run(req).await;
     }
 
@@ -116,6 +133,14 @@ pub async fn rate_limit_middleware(
     // Exempt LAN/localhost clients
     if is_lan_ip(&ip) {
         return next.run(req).await;
+    }
+
+    // Exempt authenticated inter-node chunk transfers (replication presents the grid key)
+    if !limiter.api_key.is_empty() && path.starts_with("/api/chunks/") {
+        let presented = req.headers().get("x-api-key").and_then(|v| v.to_str().ok());
+        if presented.is_some_and(|k| crate::auth::constant_time_eq_str(k, &limiter.api_key)) {
+            return next.run(req).await;
+        }
     }
 
     let now = Instant::now();

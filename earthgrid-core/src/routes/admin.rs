@@ -58,11 +58,11 @@ pub(crate) async fn admin_activity(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<LimitQuery>,
 ) -> impl IntoResponse {
-    if let Err(e) = authorize(&state.auth, state.user_auth.as_deref(), &headers, addr, AccessLevel::Write, &state.data_dir) {
+    if let Err(e) = authorize(&state.auth, state.user_auth.as_deref(), &headers, addr, AccessLevel::Admin, &state.data_dir) {
         return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
     }
 
-    let limit = q.limit.unwrap_or(50);
+    let limit = q.limit.unwrap_or(50).min(500);
     let entries = state.audit.recent(limit);
     let count = entries.len();
     (StatusCode::OK, Json(serde_json::json!({"activity": entries, "count": count}))).into_response()
@@ -422,7 +422,7 @@ mod tests {
         let catalog = state.catalog.lock().await;
         assert!(catalog.get_collection("coll-a").unwrap().is_none());
         let b_again = catalog.get_item(&b.id).unwrap().expect("item in coll-b must survive");
-        let bytes = crate::reconstruct::reconstruct_raw(&b_again, &mut store)
+        let bytes = crate::reconstruct::reconstruct_raw(&b_again, &mut *store)
             .expect("item in coll-b must still reconstruct after deleting coll-a");
         assert_eq!(bytes, b"shared between two collections");
     }
