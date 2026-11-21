@@ -38,8 +38,23 @@ pub struct FetchQuery {
 /// GET /fetch/preview — search Element84 STAC without downloading (dry run).
 pub(crate) async fn fetch_preview(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<FetchQuery>,
 ) -> impl IntoResponse {
+    // A preview makes this node search the upstream catalogue on the caller's
+    // behalf, so it needs the same access as the fetch it prepares.
+    if let Err(e) = authorize(
+        &state.auth,
+        state.user_auth.as_deref(),
+        &headers,
+        addr,
+        AccessLevel::Write,
+        &state.data_dir,
+    ) {
+        return err(StatusCode::UNAUTHORIZED, &e.to_string()).into_response();
+    }
+
     // Resolve bbox
     let tile_filter = q.tile.as_ref().map(|t| t.trim().to_uppercase());
     let bbox = if let Some(s) = q.bbox.as_deref() {
@@ -62,7 +77,8 @@ pub(crate) async fn fetch_preview(
     let start_date = q.start_date.as_deref().unwrap_or("");
     let end_date = q.end_date.as_deref().unwrap_or("");
     let cloud_cover = q.cloud_cover.unwrap_or(30.0);
-    let limit = q.limit.unwrap_or(100);
+    // Same ceiling as the limit field in the UI
+    let limit = q.limit.unwrap_or(100).min(10_000);
     let collection = q.collection.as_deref().unwrap_or("sentinel-2-l2a");
 
     let (results, errors) = fetcher::search_element84(bbox, start_date, end_date, cloud_cover, limit, collection).await;

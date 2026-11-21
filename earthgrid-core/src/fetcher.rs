@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use chrono::{Datelike, NaiveDate};
 use futures::future::join_all;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{info, warn};
@@ -296,7 +297,16 @@ async fn search_one_range(
     (results, errors)
 }
 
+/// Most yearly ranges one search may be split into. The dates are caller-supplied
+/// and each range is an upstream search of its own, so a start date in year 1
+/// used to mean some two thousand of them. Landsat reaches back to 1972.
+const MAX_SEARCH_RANGES: usize = 64;
+
+/// Yearly range searches in flight at once for one call.
+const SEARCH_CONCURRENCY: usize = 4;
+
 /// Split a date range into yearly chunks. Returns (start, end) pairs as strings.
+/// Never returns more than `MAX_SEARCH_RANGES + 1` entries.
 fn yearly_chunks(start_date: &str, end_date: &str) -> Vec<(String, String)> {
     let parse = |s: &str| -> Option<NaiveDate> {
         // Accept ISO 8601: "2020-01-01" or "2020-01-01T00:00:00Z"
@@ -322,7 +332,8 @@ fn yearly_chunks(start_date: &str, end_date: &str) -> Vec<(String, String)> {
     let mut chunks = Vec::new();
     let mut current = start;
 
-    while current <= end {
+    // One entry past the cap is enough for the caller to see the range is too long.
+    while current <= end && chunks.len() <= MAX_SEARCH_RANGES {
         let chunk_end = NaiveDate::from_ymd_opt(current.year(), 12, 31)
             .unwrap_or(end)
             .min(end);
@@ -359,10 +370,19 @@ pub async fn search_element84(
         .unwrap_or_default();
 
     let chunks = yearly_chunks(start_date, end_date);
+    if chunks.len() > MAX_SEARCH_RANGES {
+        return (
+            Vec::new(),
+            vec![format!(
+                "Date range spans more than {} years; narrow start_date/end_date",
+                MAX_SEARCH_RANGES
+            )],
+        );
+    }
     let per_chunk_limit = (limit + chunks.len() - 1) / chunks.len().max(1);
 
-    // Search all chunks in parallel
-    let futures: Vec<_> = chunks
+    // Search the chunks, `SEARCH_CONCURRENCY` at a time
+    let searches: Vec<_> = chunks
         .iter()
         .map(|(s, e)| {
             let client = client.clone();
@@ -375,7 +395,10 @@ pub async fn search_element84(
         })
         .collect();
 
-    let all = join_all(futures).await;
+    let all: Vec<_> = futures::stream::iter(searches)
+        .buffered(SEARCH_CONCURRENCY)
+        .collect()
+        .await;
 
     let mut results = Vec::new();
     let mut errors = Vec::new();
